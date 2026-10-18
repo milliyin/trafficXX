@@ -1,0 +1,3 @@
+subscription_id    = "YOUR-SUBSCRIPTION-ID"
+location           = "eastus2"
+state_account_name = "REPLACE_WITH_UNIQUE_LOWERCASE_NAME"

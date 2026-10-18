@@ -5,3 +5,11 @@ __pycache__/
 .env.*
 !.env.example
 test-results/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfbackend
+crash.log
+crash.*.log

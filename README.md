@@ -23,9 +23,18 @@ http://localhost:8002/docs. See [local setup and examples](docs/local-developmen
 the [implemented design and API contract](docs/architecture.md), and the
 [running work log](memeory.md).
 
-This is a local correctness baseline. Identity is simulated, and Azure infrastructure
-has not been implemented. The platform
-architecture and phases below describe the broader target.
+This is a local application correctness baseline; customer identity is simulated.
+Terraform bootstrap and foundation resources have been created through user-run
+Azure Cloud Shell commands. The [AKS cluster](docs/aks.md) has also been created;
+the user verified four Ready nodes and Kubernetes access through Entra sign-in.
+The [private PostgreSQL server](docs/postgresql.md) has been created in Central US
+after East US provisioning restrictions, with private peering to AKS. User-run
+checks verified private DNS and Entra administrator SQL access over verified TLS 1.3.
+Application identities/deployment and Azure messaging are still ahead.
+The [workload identities and trust records](docs/workload-identity.md) have been
+created, matching Kubernetes service accounts are installed, and browse token
+exchange has been verified. Application SQL permissions are next.
+The architecture and phases below describe the broader target.
 
 **Production-Grade High-Traffic, Self-Healing Platform on Microsoft Azure**
 

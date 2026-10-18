@@ -1,0 +1,5 @@
+resource_group_name  = "trafficxx-tfstate-rg"
+storage_account_name = "REPLACE_WITH_YOUR_STATE_ACCOUNT"
+container_name       = "tfstate"
+key                  = "lab/foundation.tfstate"
+use_azuread_auth     = true

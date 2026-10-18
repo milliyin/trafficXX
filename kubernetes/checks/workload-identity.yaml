@@ -1,0 +1,109 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: workload-identity-check
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: workload-identity-check
+        azure.workload.identity/use: "true"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: browse
+      automountServiceAccountToken: false
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: check
+          image: python:3.12-slim-trixie
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: EXPECTED_CLIENT_ID
+              value: "851cbe64-04d0-416a-8ebb-7c43b9e18aa5"
+            - name: EXPECTED_TENANT_ID
+              value: "d2828580-3217-43ad-9f3f-8d430998b86e"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          command:
+            - python
+            - -u
+            - -c
+            - |
+              import base64
+              import json
+              import os
+              from pathlib import Path
+              import sys
+              import urllib.error
+              import urllib.parse
+              import urllib.request
+
+              def check():
+                  client = os.environ["AZURE_CLIENT_ID"]
+                  tenant = os.environ["AZURE_TENANT_ID"]
+                  if client != os.environ["EXPECTED_CLIENT_ID"] or tenant != os.environ["EXPECTED_TENANT_ID"]:
+                      raise ValueError("Unexpected injected identity")
+                  assertion = Path(os.environ["AZURE_FEDERATED_TOKEN_FILE"]).read_text().strip()
+                  payload = assertion.split(".")[1]
+                  claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                  subject = "system:serviceaccount:trafficxx:browse"
+                  if claims.get("sub") != subject:
+                      raise ValueError("Unexpected service-account subject")
+                  # Reading the subject is only a diagnostic check. Entra validates
+                  # the assertion signature, issuer, audience and federated trust.
+                  body = urllib.parse.urlencode({
+                      "client_id": client,
+                      "scope": "https://ossrdbms-aad.database.windows.net/.default",
+                      "grant_type": "client_credentials",
+                      "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                      "client_assertion": assertion,
+                  }).encode()
+                  request = urllib.request.Request(
+                      "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token",
+                      data=body, headers={"Content-Type": "application/x-www-form-urlencoded"},
+                  )
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      result = json.load(response)
+                  if not result.get("access_token") or result.get("token_type", "").lower() != "bearer":
+                      raise ValueError("No bearer token returned")
+                  print(json.dumps({"result": "TOKEN_EXCHANGE_OK", "service_account": subject,
+                                    "client_id": client, "expires_in_seconds": result.get("expires_in")}))
+
+              try:
+                  check()
+              except urllib.error.HTTPError as error:
+                  # Never print response bodies or exception text that could carry tokens.
+                  try:
+                      details = json.load(error)
+                      codes = [code for code in details.get("error_codes", []) if type(code) is int]
+                  except (ValueError, TypeError, AttributeError):
+                      codes = []
+                  print(json.dumps({"result": "TOKEN_EXCHANGE_FAILED", "http_status": error.code,
+                                    "entra_error_codes": codes}))
+                  sys.exit(1)
+              except Exception as error:
+                  print(json.dumps({"result": "CHECK_FAILED", "error_type": type(error).__name__}))
+                  sys.exit(1)
