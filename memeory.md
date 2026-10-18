@@ -303,6 +303,16 @@ Queue backlog monitoring detects delayed messages that reached the queue. It can
 - This verification closeout changes only the work log. The hosted success above applies to the implementation commit; work-log-only pushes intentionally skip redundant CI runs.
 - No Azure resources, image registry publication, branch protection, or deployment settings were changed.
 
+### Hosted broker coverage enabled and verified
+
+- User configured repository Actions variable `SERVICEBUS_ACCEPT_EULA=Y` and supplied a screenshot, enabling the emulator and SQL Server license opt-in for GitHub CI runners.
+- Manually dispatched the existing CI workflow on `main` at commit `5aeb98b45055c8652c9472953466181859e32a6e`. No source change was needed to enable the job.
+- Full hosted run completed with **success**: https://github.com/milliyin/trafficXX/actions/runs/39126094347.
+- All five jobs passed: workflow/shell validation, PostgreSQL correctness tests, Service Bus emulator tests, runtime image/security/SBOM, and broker-coverage reporting. The broker job ran successfully rather than being skipped.
+- Verified uploads of `broker-test-evidence`, `database-test-evidence`, and `runtime-security-evidence`. The configured retention is seven days.
+- The security gate still allows findings without available fixes; the earlier documented unfixed HIGH advisories remain unresolved. A green workflow does not establish that the image has no vulnerabilities.
+- Recorded this result as a work-log-only change so its push does not start a redundant CI run. No Azure deployment or infrastructure provisioning was performed.
+
 ### Next milestone
 
 - Prepare the Azure Terraform foundation and deployment identity after establishing the desired Azure region and usable sponsorship credit limits. The current CI checks can validate container changes before any cloud deployment.
