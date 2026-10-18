@@ -287,8 +287,22 @@ Queue backlog monitoring detects delayed messages that reached the queue. It can
 
 - The first isolated broker CI run stopped before pytest: SQL Server was still upgrading system databases when the inherited lab health-check budget expired.
 - Failure logs and cleanup evidence were retained; the failed CI project was removed without affecting the demo.
-- Added a CI-only health-check override with a three-minute startup grace period and one hundred subsequent checks. It still requires a successful SQL query; readiness is not bypassed. The corrected isolated broker run is in progress.
+- Added a CI-only health-check override with a three-minute startup grace period and one hundred subsequent checks. It still requires a successful SQL query; readiness is not bypassed. The corrected isolated broker run passed all five tests.
 
-### Publication and remaining verification
+### Publication and hosted verification
 
-- Initial publication to the supplied repository and hosted GitHub Actions verification are the next steps after source review. No hosted passing result is claimed in this entry yet.
+- Committed the initial project and CI setup as `2cdc10a8815a7fd5bcd19c4e05ac7e8b5bd75670` and pushed `main` to the user-supplied origin. No force push was used.
+- First hosted run completed with **success**: https://github.com/milliyin/trafficXX/actions/runs/39125451031.
+- Hosted workflow/shell validation, PostgreSQL correctness tests, runtime image/security/SBOM, and broker-coverage reporting all passed. Hosted broker tests were explicitly skipped because CI license acceptance is not configured.
+- Verified successful upload of `database-test-evidence` and `runtime-security-evidence`, with seven-day retention. The image archive was not uploaded.
+- Confirmed `.env`, `.venv`, and generated test results were excluded from the initial commit. The live demo remained running throughout.
+- Corrected local broker CI rerun: **5 passed in 211.97 seconds**, including emulator readiness time. Its JUnit report records five tests and zero failures; together with the database suite, **42 local tests passed**.
+- Verified both local CI scripts exited successfully and removed their isolated containers and networks. Reports and cleanup logs remain under ignored `test-results/ci/`; the ordinary demo was not stopped or reset.
+- Reusing the same local CI project name replaced the earlier failure log files on rerun; the confirmed diagnosis and fix remain recorded above. Hosted runs use unique run/attempt project names and separate uploaded artifacts.
+- Saved the verified local vulnerability summary as `test-results/ci/security/security-summary.md`. Unfixed HIGH findings remain visible and unresolved.
+- This verification closeout changes only the work log. The hosted success above applies to the implementation commit; work-log-only pushes intentionally skip redundant CI runs.
+- No Azure resources, image registry publication, branch protection, or deployment settings were changed.
+
+### Next milestone
+
+- Prepare the Azure Terraform foundation and deployment identity after establishing the desired Azure region and usable sponsorship credit limits. The current CI checks can validate container changes before any cloud deployment.
