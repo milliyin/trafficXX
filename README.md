@@ -1,17 +1,58 @@
 # Azure TrafficForge
 
-## Local backend - first implementation
+trafficXX is a learning project for building a reliable ticket reservation backend
+and operating it on Azure. We build in small steps, test failures, and record what
+we learn in [memeory.md](memeory.md).
 
-The local backend now includes separate Dockerized FastAPI browse and booking APIs,
-PostgreSQL, a reservation-expiry worker, and PostgreSQL integration tests.
-It supports general admission and assigned seats, atomic group reservations,
-five-minute holds, idempotent creation, confirmation, and cancellation of active holds.
-An optional Docker messaging profile adds Service Bus publishing, an idempotent
-consumer, backlog metrics, and safe replay. See the [messaging setup](docs/messaging.md)
-for the emulator license acceptance and start command.
-GitHub Actions configuration adds container tests, workflow validation, a runtime
-vulnerability gate, and SBOM evidence. See [CI setup and coverage](docs/ci.md), including
-the separate license opt-in for broker tests on GitHub runners.
+## Verified progress - 2026-10-19
+
+| Part | Implemented and verified |
+|---|---|
+| Local backend | Dockerized FastAPI browse/booking APIs, PostgreSQL, five-minute holds, confirmation, cancellation, and expiry |
+| Booking correctness | Atomic group reservations, database locking, and customer-scoped idempotency; 37 PostgreSQL integration tests passed locally |
+| Messaging | Transactional outbox, stable message IDs, consumer inbox, retries, dead letters, and replay; five real-AMQP emulator tests passed locally |
+| Backlog recovery | Stopped the consumer, observed age/heartbeat alerts, restarted it, and verified that outstanding work drained |
+| Application CI | GitHub Actions builds/tests the application and produces vulnerability reports and an SBOM; [verified full run](https://github.com/milliyin/trafficXX/actions/runs/39126094347) included the broker tests |
+| Azure foundation | Terraform state storage, networking, ACR, and a Log Analytics workspace created through user-run Cloud Shell commands |
+| AKS | Standard cluster in East US; two system and two application nodes verified Ready, with system pod readiness checked |
+| Private database | PostgreSQL 17 in Central US, private DNS and VNet peering to AKS; administrator SQL login verified with certificate-checked TLS 1.3 |
+| Workload identity | Eight Azure identities, trust records, and Kubernetes service accounts installed; real browse token exchange verified |
+
+**The ticketing APIs and workers are not deployed to AKS yet.** Application SQL
+permissions, schema bootstrap/migrations, and application token renewal are the
+next steps. Azure Service Bus, ingress, GitOps, production customer authentication,
+load benchmarks, and restore experiments remain ahead. Customer identity in the
+local API is simulated. The logging workspace exists; cloud telemetry collection
+has not been enabled.
+
+The CI gate blocks fixable HIGH/CRITICAL findings. Previously recorded unfixed
+HIGH advisories remain unresolved; a passing gate does not mean the image is
+vulnerability-free. See [CI evidence and policy](docs/ci.md). Terraform formatting
+and validation have been run locally; the current application CI does not validate
+or deploy Terraform.
+
+### Current Azure layout
+
+```mermaid
+flowchart LR
+    AKS["East US: AKS / 10.40.0.0/16"] <-->|"Private VNet peering"| PGNET["Central US: database VNet / 10.50.0.0/16"]
+    PGNET --> PG[("PostgreSQL 17 / private access / Entra authentication")]
+    DNS["Private DNS zone linked to both VNets"] -.-> AKS
+    DNS -.-> PGNET
+```
+
+PostgreSQL provisioning was restricted for this subscription in East US and East
+US 2. Central US advertised support, so we kept AKS intact and added a separate
+database network. This introduces cross-region latency and data-transfer charges;
+it is not database high availability or disaster recovery. The original East US
+PostgreSQL subnet remains reserved and unused.
+
+## Run the local backend
+
+The optional [messaging profile](docs/messaging.md) adds Microsoft's Service Bus
+emulator and its separate SQL Server dependency. Its license acceptance must be
+configured for each environment. The commands below start the basic backend and
+run its database tests.
 
 ```powershell
 docker compose up --build -d db browse booking expiry-worker
@@ -23,20 +64,43 @@ http://localhost:8002/docs. See [local setup and examples](docs/local-developmen
 the [implemented design and API contract](docs/architecture.md), and the
 [running work log](memeory.md).
 
-This is a local application correctness baseline; customer identity is simulated.
-Terraform bootstrap and foundation resources have been created through user-run
-Azure Cloud Shell commands. The [AKS cluster](docs/aks.md) has also been created;
-the user verified four Ready nodes and Kubernetes access through Entra sign-in.
-The [private PostgreSQL server](docs/postgresql.md) has been created in Central US
-after East US provisioning restrictions, with private peering to AKS. User-run
-checks verified private DNS and Entra administrator SQL access over verified TLS 1.3.
-Application identities/deployment and Azure messaging are still ahead.
-The [workload identities and trust records](docs/workload-identity.md) have been
-created, matching Kubernetes service accounts are installed, and browse token
-exchange has been verified. Application SQL permissions are next.
-The architecture and phases below describe the broader target.
+### Local settings and credentials
 
-**Production-Grade High-Traffic, Self-Healing Platform on Microsoft Azure**
+- Put private local settings in `.env`, which Git and Docker build context ignore.
+  `.env.example` contains disposable examples, not production credentials.
+- `SERVICEBUS_SQL_PASSWORD` in `.env` matches the current local emulator setup.
+  This setting is separate from Azure PostgreSQL, which uses Entra authentication.
+- Azure access tokens are obtained at runtime. Keep them out of `.env`, source
+  files, screenshots, and logs; applications will use workload identity.
+- Real Terraform variable/backend files, state, plans, downloaded providers, and
+  generated test evidence are excluded from Git. Protect the bootstrap state in
+  Cloud Shell as well as the foundation's remote state in Azure.
+
+## Resume checkpoint
+
+Work is paused after the successful browse workload-token exchange. Next:
+
+1. Map the Azure identities to PostgreSQL roles and grant each workload only its
+   required permissions. The APIs must not use the human administrator identity.
+2. Bootstrap the empty application schema, then apply additive migrations. The
+   current local migration runner assumes the base outbox table already exists.
+3. Add application token acquisition/renewal and test both allowed and forbidden
+   database operations before deploying the APIs and workers.
+
+Azure commands are run personally in browser Cloud Shell from
+`~/trafficxx/foundation`. Azure resources remain running; local Docker services
+were stopped at the last checkpoint. Diagnostic Jobs have automatic cleanup;
+long-term stability, restore behavior, and application performance are unverified.
+
+Guides: [AKS](docs/aks.md), [private PostgreSQL](docs/postgresql.md),
+[workload identity](docs/workload-identity.md), [local architecture](docs/architecture.md),
+[messaging](docs/messaging.md), and [CI](docs/ci.md).
+
+## Target platform and roadmap
+
+The sections below describe the broader target, including features not yet built.
+
+**Target: high-traffic, self-healing platform on Microsoft Azure**
 
 > **Level:** Advanced / Expert DevOps · **Cloud:** Microsoft Azure · **Focus:** Traffic engineering, Kubernetes, platform engineering, reliability, security and disaster recovery
 
@@ -76,9 +140,9 @@ The platform must:
 - Survive simulated pod/node outages and support verified data restore.
 - Be provisioned and reproduced as code, with minimal manual portal steps.
 
-**Non-goals at first:** building a full payment gateway, multi-environment infrastructure, or a production-ready public ticket marketplace. Payments should be simulated; no actual card data is required. Begin in **one Azure region and one lab environment**, then introduce advanced resilience features after the core platform works.
+**Non-goals at first:** building a full payment gateway, multi-environment infrastructure, or a production-ready public ticket marketplace. Payments should be simulated; no actual card data is required. Begin with **one lab environment**, then introduce advanced resilience features after the core platform works. The current lab spans two regions because of PostgreSQL provisioning restrictions, as documented above.
 
-## 2. High-level architecture
+## 2. Target architecture
 
 ```mermaid
 flowchart TB
@@ -160,13 +224,16 @@ Use database transactions and properly constrained updates to prevent oversellin
 
 ### Functional
 
-- [ ] Browse catalog and inventory through HTTP APIs.
-- [ ] Reserve and confirm tickets without overselling.
-- [ ] Publish booking events and process them asynchronously.
-- [ ] Handle duplicate submissions through idempotency keys.
-- [ ] Expire unconfirmed reservations safely.
-- [ ] Provide useful health/readiness endpoints and structured logs.
-- [ ] Expose metrics and traces for key operations.
+Checked items below refer to the local implementation and its test coverage;
+they do not imply the application is deployed on Azure.
+
+- [x] Browse catalog and inventory through HTTP APIs.
+- [x] Reserve and confirm tickets with concurrency checks against overselling.
+- [x] Publish booking events and process them asynchronously using the local emulator.
+- [x] Handle duplicate submissions through idempotency keys.
+- [x] Expire unconfirmed reservations.
+- [x] Provide health/readiness endpoints and backlog metrics.
+- [ ] Add application-wide structured logging and distributed tracing.
 
 ### Reliability, operations and security
 
@@ -301,68 +368,31 @@ For every test, record:
 
 Do not run disruptive tests on shared or customer infrastructure. Load test only endpoints you own or are authorized to test.
 
-## 8. Repository layout
+## 8. Current repository layout
 
 ```text
-azure-trafficforge/
-├── apps/
-│   ├── browse-api/
-│   ├── booking-api/
-│   ├── reservation-worker/
-│   └── frontend/
-├── infrastructure/
-│   └── terraform/
-│       ├── bootstrap/
-│       ├── modules/
-│       │   ├── network/
-│       │   ├── aks/
-│       │   ├── acr/
-│       │   ├── database/
-│       │   ├── redis/
-│       │   ├── servicebus/
-│       │   ├── identity/
-│       │   └── ingress/
-│       └── stacks/
-│           ├── core/
-│           └── addons/
-├── kubernetes/
-│   ├── base/
-│   ├── helm/
-│   ├── gitops/
-│   ├── autoscaling/
-│   ├── policies/
-│   └── rollouts/
-├── observability/
-│   ├── dashboards/
-│   ├── alert-rules/
-│   ├── otel/
-│   └── slo/
-├── load-tests/
-│   ├── baseline.js
-│   ├── spike.js
-│   ├── stress.js
-│   └── soak.js
-├── chaos/
-│   ├── experiments/
-│   └── results/
-├── .github/
-│   └── workflows/
-│       ├── ci.yml
-│       ├── terraform-plan.yml
-│       ├── terraform-apply.yml
-│       ├── release.yml
-│       └── security.yml
-├── docs/
-│   ├── architecture.md
-│   ├── security.md
-│   ├── capacity-planning.md
-│   ├── incidents/
-│   ├── runbooks/
-│   └── disaster-recovery.md
-└── README.md
+trafficXX/
+|-- trafficxx/                  # APIs, reservation logic, messaging, workers
+|-- database/                   # Base schema, demo seed, additive migrations
+|-- infrastructure/
+|   |-- bootstrap/              # Terraform state storage
+|   `-- foundation/             # AKS, networking, PostgreSQL, workload identities
+|-- kubernetes/checks/          # Workload-identity diagnostic Job
+|-- scripts/                    # Backlog drill and administrator SQL/TLS check
+|-- messaging/                  # Local Service Bus emulator configuration
+|-- tests/                      # PostgreSQL and real-AMQP integration tests
+|-- ci/                         # Container CI wrappers and security summaries
+|-- .github/workflows/ci.yml     # Application CI
+|-- docs/                       # Architecture, setup, and learning guides
+|-- compose.yml                 # Local Docker environment
+|-- Dockerfile                  # Application runtime and test targets
+|-- .env.example                # Disposable local configuration examples
+|-- memeory.md                  # Decisions, errors, fixes, evidence, resume notes
+`-- README.md
 ```
 
-The repository layout is the **target design**, not a claim that the directories or services already exist.
+GitOps manifests, application deployments, infrastructure CI, dashboards, load
+tests, chaos experiments, and disaster-recovery runbooks are future additions.
 
 ## 9. Ten-week roadmap
 
