@@ -1,0 +1,149 @@
+name: trafficxx
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  environment:
+    DATABASE_URL: postgresql://trafficxx:local-only@db:5432/trafficxx
+  depends_on:
+    db:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+x-messaging: &messaging
+  <<: *app
+  profiles: [messaging]
+  environment:
+    DATABASE_URL: postgresql://trafficxx:local-only@db:5432/trafficxx
+    SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+    SERVICEBUS_QUEUE: reservation-events
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    servicebus:
+      condition: service_started
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: trafficxx
+      POSTGRES_PASSWORD: local-only
+      POSTGRES_DB: trafficxx
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/001-schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./database/002-seed.sql:/docker-entrypoint-initdb.d/002-seed.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U trafficxx -d trafficxx"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  browse:
+    <<: *app
+    command: [uvicorn, trafficxx.browse:app, --host, 0.0.0.0, --port, "8000"]
+    ports: ["127.0.0.1:8001:8000"]
+  booking:
+    <<: *app
+    ports: ["127.0.0.1:8002:8000"]
+  expiry-worker:
+    <<: *app
+    command: [python, -m, trafficxx.expiry]
+
+  migrate:
+    <<: *app
+    command: [python, -m, trafficxx.migrate]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  operations:
+    <<: *app
+    command: [uvicorn, trafficxx.operations:app, --host, 0.0.0.0, --port, "8000"]
+    ports: ["127.0.0.1:8003:8000"]
+
+  publisher:
+    <<: *messaging
+    command: [python, -m, trafficxx.publisher]
+  consumer:
+    <<: *messaging
+    command: [python, -m, trafficxx.consumer]
+
+  servicebus:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    profiles: [messaging, broker-test]
+    environment:
+      SQL_SERVER: servicebus-sql
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:-Local_only_ChangeMe!42}
+      ACCEPT_EULA: ${SERVICEBUS_ACCEPT_EULA:-N}
+      EMULATOR_HTTP_PORT: "5300"
+    volumes:
+      - ./messaging/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    depends_on:
+      servicebus-sql:
+        condition: service_healthy
+
+  servicebus-sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: [messaging, broker-test]
+    environment:
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${SERVICEBUS_SQL_PASSWORD:-Local_only_ChangeMe!42}
+      ACCEPT_EULA: ${SERVICEBUS_ACCEPT_EULA:-N}
+      MSSQL_MEMORY_LIMIT_MB: "2048"
+    healthcheck:
+      test: [CMD-SHELL, '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" -b -o /dev/null']
+      interval: 3s
+      timeout: 5s
+      start_period: 20s
+      retries: 40
+
+  test-db:
+    image: postgres:17
+    profiles: [test, broker-test]
+    environment:
+      POSTGRES_USER: trafficxx
+      POSTGRES_PASSWORD: test-only
+      POSTGRES_DB: trafficxx_test
+    tmpfs: [/var/lib/postgresql/data]
+    volumes:
+      - ./database/001-schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -h 127.0.0.1 -U trafficxx -d trafficxx_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  tests:
+    build:
+      context: .
+      target: test
+    profiles: [test]
+    environment:
+      DATABASE_URL: postgresql://trafficxx:test-only@test-db:5432/trafficxx_test
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+  broker-tests:
+    build:
+      context: .
+      target: test
+    profiles: [broker-test]
+    environment:
+      DATABASE_URL: postgresql://trafficxx:test-only@test-db:5432/trafficxx_test
+      SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+      SERVICEBUS_QUEUE: reservation-test-events
+      RUN_SERVICEBUS_TESTS: "1"
+    command: [python, -m, pytest, -x, -q, -p, "no:cacheprovider", tests/test_broker.py]
+    depends_on:
+      test-db:
+        condition: service_healthy
+      servicebus:
+        condition: service_started
+
+volumes:
+  postgres-data:

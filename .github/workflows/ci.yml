@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - memeory.md
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trafficxx-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-lint:
+    name: Workflow and shell validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate workflow and Bash scripts
+        run: |
+          source ci/tools.env
+          docker run --rm --mount "type=bind,source=$PWD,target=/workspace,readonly" --workdir /workspace "$ACTIONLINT_IMAGE" -color .github/workflows/ci.yml
+          docker run --rm --mount "type=bind,source=$PWD,target=/workspace,readonly" --workdir /workspace --entrypoint shellcheck "$ACTIONLINT_IMAGE" -x ci/test.sh ci/security.sh
+
+  database-tests:
+    name: PostgreSQL correctness tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI_COMPOSE_PROJECT: trafficxx-ci-db-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash ci/test.sh database
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: database-test-evidence
+          path: test-results/ci/
+          retention-days: 7
+          if-no-files-found: warn
+
+  broker-tests:
+    name: Service Bus emulator tests (license opt-in)
+    if: vars.SERVICEBUS_ACCEPT_EULA == 'Y'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI_COMPOSE_PROJECT: trafficxx-ci-broker-${{ github.run_id }}-${{ github.run_attempt }}
+      SERVICEBUS_ACCEPT_EULA: ${{ vars.SERVICEBUS_ACCEPT_EULA }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash ci/test.sh broker
+      - name: Upload broker test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: broker-test-evidence
+          path: test-results/ci/
+          retention-days: 7
+          if-no-files-found: warn
+
+  image-security:
+    name: Runtime image, vulnerability gate, and SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash ci/security.sh
+      - name: Show all vulnerability severities
+        if: always()
+        run: |
+          if [[ -f test-results/ci/security/security-summary.md ]]; then
+            cat test-results/ci/security/security-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-security-evidence
+          path: |
+            test-results/ci/security/*.json
+            test-results/ci/security/*.txt
+            test-results/ci/security/*.md
+          retention-days: 7
+          if-no-files-found: warn
+
+  broker-coverage:
+    name: Report broker coverage setting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Explain license gate
+        env:
+          EULA_ACCEPTED: ${{ vars.SERVICEBUS_ACCEPT_EULA }}
+        run: |
+          if [[ "$EULA_ACCEPTED" == Y ]]; then
+            echo 'Service Bus emulator tests are enabled by repository license acceptance.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Service Bus emulator tests are SKIPPED. After accepting both Microsoft licenses for CI, set repository variable SERVICEBUS_ACCEPT_EULA=Y. Database tests still run.' >> "$GITHUB_STEP_SUMMARY"
+          fi

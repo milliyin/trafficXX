@@ -1,0 +1,17 @@
+# Paths are relative to the first Compose file (the repository's compose.yml).
+services:
+  servicebus-sql:
+    healthcheck:
+      # Cold system-database upgrades can exceed the normal lab startup window.
+      start_period: 180s
+      retries: 100
+  tests:
+    user: "${CI_TEST_UID:-10001}:${CI_TEST_GID:-10001}"
+    volumes:
+      - ${CI_REPORT_DIR:-./test-results/ci}:/reports
+    command: [python, -m, pytest, -q, -p, "no:cacheprovider", "--ignore=tests/test_broker.py", "--junitxml=/reports/database.xml"]
+  broker-tests:
+    user: "${CI_TEST_UID:-10001}:${CI_TEST_GID:-10001}"
+    volumes:
+      - ${CI_REPORT_DIR:-./test-results/ci}:/reports
+    command: [python, -m, pytest, -x, -q, -p, "no:cacheprovider", "--junitxml=/reports/broker.xml", tests/test_broker.py]
