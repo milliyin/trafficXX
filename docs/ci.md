@@ -8,7 +8,7 @@ Pushes that change only `memeory.md` skip redundant runs. All pull requests stil
 
 | Job | Checks | Evidence |
 |---|---|---|
-| Workflow validation | actionlint and ShellCheck | Job output |
+| Workflow validation | actionlint, ShellCheck, and offline authentication/migration/permission unittests | Job output |
 | PostgreSQL tests | Reservation and messaging correctness tests in Docker | JUnit XML, Compose logs, cleanup log |
 | Broker tests | Real AMQP delivery, duplicates, retries, and dead letters | JUnit XML and logs; requires CI license opt-in |
 | Runtime security | Build the runtime target; inspect OS and installed Python package vulnerabilities | Full Trivy JSON, gate report, CycloneDX SBOM, image metadata |

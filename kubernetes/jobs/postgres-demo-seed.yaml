@@ -1,0 +1,108 @@
+# Controlled demo seed as migrator; does not reset existing bookings.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-demo-seed
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-demo-seed
+        azure.workload.identity/use: 'true'
+      annotations:
+        azure.workload.identity/skip-containers: install-dependencies
+    spec:
+      restartPolicy: Never
+      serviceAccountName: migrator
+      automountServiceAccountToken: false
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: dependencies
+        emptyDir:
+          sizeLimit: 256Mi
+      - name: temporary
+        emptyDir:
+          sizeLimit: 256Mi
+      - name: bootstrap-files
+        configMap:
+          name: postgres-demo-seed-files
+          defaultMode: 292
+      initContainers:
+      - name: install-dependencies
+        image: python:3.12-slim-trixie
+        command:
+        - python
+        - -m
+        - pip
+        - install
+        - --disable-pip-version-check
+        - --no-cache-dir
+        - '--only-binary=:all:'
+        - --target=/dependencies
+        - azure-identity==1.26.0
+        - psycopg[binary]==3.3.6
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: dependencies
+          mountPath: /dependencies
+        - name: temporary
+          mountPath: /tmp
+      containers:
+      - name: seed
+        image: python:3.12-slim-trixie
+        env:
+        - name: PYTHONPATH
+          value: /dependencies
+        - name: PYTHONDONTWRITEBYTECODE
+          value: '1'
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: dependencies
+          mountPath: /dependencies
+          readOnly: true
+        - name: temporary
+          mountPath: /tmp
+        - name: bootstrap-files
+          mountPath: /bootstrap
+          readOnly: true
+        command:
+        - python
+        - -u
+        - /bootstrap/bootstrap-azure-schema.py
+        - --seed-demo

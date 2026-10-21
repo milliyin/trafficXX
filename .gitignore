@@ -13,3 +13,4 @@ test-results/
 *.tfbackend
 crash.log
 crash.*.log
+browse-image.txt

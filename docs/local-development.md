@@ -45,9 +45,9 @@ The tests use a separate `trafficxx_test` database backed by temporary container
 
 ## Current scope and Azure path
 
-Both APIs use the same runtime image with different startup commands. The expiry worker uses that image too. The test image is a separate build target. `DATABASE_URL` supplies the database connection; Azure deployment can inject a PostgreSQL URL with TLS settings such as `sslmode=require`, rather than changing application code. Compose itself does not provision Azure or provide AKS manifests.
+Both APIs use the same runtime image with different startup commands. The expiry worker uses that image too. The test image is a separate build target. Local Compose uses the default DATABASE_AUTH_MODE=url with DATABASE_URL. Azure uses explicit workload-identity authentication and verify-full TLS instead of a saved database password; see [Browse API on Azure](browse-api-azure.md). Compose itself does not provision Azure.
 
-These are local lab services. `X-Customer-Id` simulates identity and is forgeable; it must be replaced by verified authentication before public exposure. The local database credentials are disposable examples, and the application currently uses the database owner account. Separate database roles, connection pooling, request telemetry, deployed Azure identity, TLS configuration, and deployment manifests are future milestones.
+These are local lab services. `X-Customer-Id` simulates identity and is forgeable; it must be replaced by verified authentication before public exposure. Local database credentials are disposable examples, and local Compose uses the database owner account. Azure browse/migrator roles, TLS and the real internal Browse API deployment have been verified separately. Other runtime roles, booking/worker deployment, connection pooling and request telemetry remain later milestones.
 
 Reservation changes write durable outbox records. Start the optional [messaging profile](messaging.md) to publish and consume them using Microsoft's Service Bus emulator. Without that profile, pending outbox records accumulate.
 
