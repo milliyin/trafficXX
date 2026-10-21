@@ -85,7 +85,7 @@ the [implemented design and API contract](docs/architecture.md), and the
 - `SERVICEBUS_SQL_PASSWORD` in `.env` matches the current local emulator setup.
   This setting is separate from Azure PostgreSQL, which uses Entra authentication.
 - Azure access tokens are obtained at runtime. Keep them out of `.env`, source
-  files, screenshots, and logs; applications will use workload identity.
+  files, screenshots, and logs; the deployed APIs use workload identity.
 - Real Terraform variable/backend files, state, plans, downloaded providers, and
   generated test evidence are excluded from Git. Protect the bootstrap state in
   Cloud Shell as well as the foundation's remote state in Azure.
@@ -94,7 +94,7 @@ the [implemented design and API contract](docs/architecture.md), and the
 
 Work resumed on 2026-10-22 in a new Cloud Shell session. The repository and
 existing remote foundation state were recovered; all four AKS nodes were Ready.
-The browse and migrator identities are registered and their real pod SQL logins
+The browse, migrator and booking identities are registered and their real pod SQL logins
 passed. Both schema migrations ran and ten tables have migrator ownership.
 Browse read grants have been applied and its real pod passed three allowed reads
 and nine forbidden operations with SQLSTATE 42501 over TLS 1.3, without admin
@@ -103,8 +103,9 @@ with two Ready replicas on separate apps nodes, zero restarts at that observatio
 and BROWSE_HTTP_OK. The controlled seed then created two events with 100 units
 each; BROWSE_DEMO_HTTP_OK reported two events and 100 available for both.
 The single-pod recovery drill passed in an observed 12.5 seconds, followed by
-healthy demo HTTP responses with inventory intact. Other runtime identities'
-SQL permissions remain pending.
+healthy demo HTTP responses with inventory intact. Booking's database grants and
+real API experiments also passed, as recorded below. Worker identities' SQL
+registration and permissions remain pending.
 Next:
 
 1. Booking's sequential [hold/retry/cancel experiment](docs/booking-api-azure.md#test-a-real-hold-retry-and-cancellation)
@@ -132,8 +133,8 @@ Guides: [AKS](docs/aks.md), [private PostgreSQL](docs/postgresql.md),
 
 The latest runtime experiments and commands are in the
 [Booking API guide](docs/booking-api-azure.md). Cloud Shell upload bundles are
-local convenience files and are excluded from Git. Once this checkpoint is
-pushed, use the repository files directly instead of uploading ZIPs:
+local convenience files and are excluded from Git. This checkpoint is published;
+use the repository files directly instead of uploading ZIPs:
 
 ```bash
 cd ~/trafficxx
@@ -152,13 +153,13 @@ The sections below describe the broader target, including features not yet built
 
 **Target: high-traffic, self-healing platform on Microsoft Azure**
 
-> **Level:** Advanced / Expert DevOps Â· **Cloud:** Microsoft Azure Â· **Focus:** Traffic engineering, Kubernetes, platform engineering, reliability, security and disaster recovery
+> **Level:** Advanced / Expert DevOps | **Cloud:** Microsoft Azure | **Focus:** Traffic engineering, Kubernetes, platform engineering, reliability, security and disaster recovery
 
 ## Overview
 
 Azure TrafficForge is a portfolio-grade DevOps project that simulates the infrastructure behind a high-demand concert ticketing service. During a flash sale, thousands of users browse events, reserve tickets and submit bookings at once. The main engineering challenge is not the frontend: it is keeping the platform responsive, consistent, secure, observable and recoverable under load.
 
-**Primary goal:** Build a reproducible Azure platform that can autoscale under traffic, tolerate component failures, safely roll back faulty releases, and recover from incidentsâ€”all demonstrated with repeatable experiments and measured evidence.
+**Primary goal:** Build a reproducible Azure platform that can autoscale under traffic, tolerate component failures, safely roll back faulty releases, and recover from incidents - all demonstrated with repeatable experiments and measured evidence.
 
 ### Project targets (aspirational, not guaranteed)
 
@@ -300,7 +301,7 @@ they do not imply the application is deployed on Azure.
 
 ## 5. Implementation phases
 
-### Phase 1 â€” Reproducible Azure foundation
+### Phase 1 - Reproducible Azure foundation
 
 **Build:** Terraform remote state, resource groups, Azure VNet/subnets, AKS Standard, separate system/user node pools, ACR, managed identities and role assignments, PostgreSQL, Service Bus, basic ingress and monitoring primitives.
 
@@ -310,7 +311,7 @@ they do not imply the application is deployed on Azure.
 
 **Exit criteria:** Documented `terraform plan`/`apply`, a working cluster, private-access decisions, successfully pulled container images and a clean reproducibility report.
 
-### Phase 2 â€” Traffic-ready application
+### Phase 2 - Traffic-ready application
 
 **Build:** Containerized browse API, booking API, worker, PostgreSQL schemas, Redis caching and Service Bus queues. Add readiness probes and structured logs.
 
@@ -318,15 +319,15 @@ they do not imply the application is deployed on Azure.
 
 **Exit criteria:** No overselling; duplicates handled safely; observable request and queue outcomes.
 
-### Phase 3 â€” Secure CI/CD and GitOps
+### Phase 3 - Secure CI/CD and GitOps
 
-**Build:** GitHub Actions tests; Trivy image and dependency scans; SBOM generation; immutable versioning by digest; optional image signing; Argo CD sync; Argo Rollouts canary steps of **5% â†’ 25% â†’ 50% â†’ 100%**.
+**Build:** GitHub Actions tests; Trivy image and dependency scans; SBOM generation; immutable versioning by digest; optional image signing; Argo CD sync; Argo Rollouts canary steps of **5% -> 25% -> 50% -> 100%**.
 
 **Experiment:** Deploy a deliberately slower or error-prone version and use verified rollout analysis to abort/roll back. Ensure Git's desired state and the rollback strategy cannot continuously reintroduce the broken artifact.
 
 **Exit criteria:** Traceable commit-to-cluster release, signed/scanned artifact evidence where implemented, and measured rollback duration.
 
-### Phase 4 â€” Observability and SLOs
+### Phase 4 - Observability and SLOs
 
 **Build:** OpenTelemetry traces, Prometheus metrics, Grafana dashboards, centrally searchable logs and actionable alert rules.
 
@@ -336,7 +337,7 @@ Instrument the **RED signals** (request rate, errors, duration), plus node CPU/m
 
 **Exit criteria:** Dashboard screenshots, trace examples, alert examples and a written root-cause walkthrough.
 
-### Phase 5 â€” Autoscaling and traffic engineering
+### Phase 5 - Autoscaling and traffic engineering
 
 **Build:** HPA for APIs, KEDA for Service Bus workers, AKS node autoscaling, PodDisruptionBudgets, topology spread constraints and realistic requests/limits.
 
@@ -344,7 +345,7 @@ Instrument the **RED signals** (request rate, errors, duration), plus node CPU/m
 
 **Exit criteria:** Demonstrate automatic scale-out and scale-in and distinguish application scaling bottlenecks from database and quota limits.
 
-### Phase 6 â€” Zero-trust-oriented hardening
+### Phase 6 - Zero-trust-oriented hardening
 
 **Build:** Microsoft Entra Workload ID, Key Vault access, GitHub OIDC to Azure, least-privilege Kubernetes and Azure RBAC, network policies, Kyverno policies and security scans.
 
@@ -352,7 +353,7 @@ Instrument the **RED signals** (request rate, errors, duration), plus node CPU/m
 
 **Exit criteria:** Failed unauthorized access attempts, passing policy tests and documented trust boundaries. Never print real secrets in public logs or screenshots.
 
-### Phase 7 â€” Chaos engineering and incident response
+### Phase 7 - Chaos engineering and incident response
 
 **Build:** Controlled experiments with pod termination, node drain, dependency network interruption, response delays and worker failures. Choose LitmusChaos or supported Azure Chaos Studio faults according to current availability.
 
@@ -360,7 +361,7 @@ Instrument the **RED signals** (request rate, errors, duration), plus node CPU/m
 
 **Exit criteria:** An incident timeline, dashboards and a blameless postmortem for every major scenario. Stop conditions and cleanup must be defined before tests.
 
-### Phase 8 â€” Disaster recovery and rebuild
+### Phase 8 - Disaster recovery and rebuild
 
 **Build:** Backup policy, restore playbooks, immutable image retention, infrastructure rebuild instructions, database recovery verification and optional secondary-region expansion.
 
@@ -374,10 +375,10 @@ Use k6 locally first. For higher loads, use dedicated/distributed generators or 
 
 | Test | Illustrative load | What it reveals |
 |---|---:|---|
-| Smoke | 10â€“50 RPS | Functional correctness and baseline instrumentation |
+| Smoke | 10-50 RPS | Functional correctness and baseline instrumentation |
 | Baseline | 100 RPS | Normal latency, resource use, error rates |
-| Ramp | 100 â†’ 1,000 RPS | Initial scaling behavior and bottlenecks |
-| Flash sale | 1,000 â†’ 5,000 RPS | Burst capacity and cold-start lag |
+| Ramp | 100 -> 1,000 RPS | Initial scaling behavior and bottlenecks |
+| Flash sale | 1,000 -> 5,000 RPS | Burst capacity and cold-start lag |
 | Extreme stretch | Up to 10,000 RPS | Capacity ceiling **only if quota and budget allow** |
 | Soak | Moderate sustained load | Leaks, gradual saturation and stability |
 | Failure during load | Controlled load + injected fault | Recovery, failover and error budget impact |
@@ -387,7 +388,7 @@ Use k6 locally first. For higher loads, use dedicated/distributed generators or 
 If a pod can sustainably serve `150 RPS` (measured in a real test) and you want 30% spare capacity:
 
 ```text
-usable throughput per pod = 150 Ã— (1 âˆ’ 0.30) = 105 RPS
+usable throughput per pod = 150 * (1 - 0.30) = 105 RPS
 estimated replicas at 1,000 RPS = ceil(1000 / 105) = 10 pods
 estimated replicas at 10,000 RPS = ceil(10000 / 105) = 96 pods
 ```
