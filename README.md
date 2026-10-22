@@ -16,7 +16,7 @@ we learn in [memeory.md](memeory.md).
 | Azure foundation | Terraform state storage, networking, ACR, and a Log Analytics workspace created through user-run Cloud Shell commands |
 | AKS | Standard cluster in East US; two system and two application nodes verified Ready, with system pod readiness checked |
 | Private database | PostgreSQL 17 in Central US, private DNS and VNet peering to AKS; administrator SQL login verified with certificate-checked TLS 1.3 |
-| Workload identity | Eight Azure identities, trust records, and Kubernetes service accounts installed; browse, migrator, booking, expiry and publisher pod SQL logins verified over TLS 1.3 with no administrator privileges |
+| Workload identity | Eight Azure identities, trust records, and Kubernetes service accounts installed; browse, migrator, booking, expiry, publisher and consumer pod SQL logins verified over TLS 1.3 with no administrator privileges |
 | Cloud database schema | Base and messaging migrations applied by the migrator identity; ten tables verified with migrator ownership |
 | Browse database permissions | Real browse pod passed three required reads and nine permission-denied checks, including writes, schema creation and private reservation data |
 | Browse API on AKS | ACR image built; two replicas Ready on separate apps nodes with zero restarts at rollout; health/readiness/events HTTP checks passed |
@@ -141,8 +141,10 @@ Next:
    passed a real send, persisted publication readback and heartbeat. The continuous
    publisher passed the read-only drain check: 12 published, zero pending and
    a fresh error-free heartbeat. Azure reported 12 active messages and zero dead
-   letters. Next run the prepared [consumer SQL identity setup](docs/consumer-azure.md),
-   then its table permissions and queue receive authorization before deployment.
+   letters. The [consumer workload SQL login](docs/consumer-azure.md) passed with
+   TLS 1.3 and no administrator privileges. Next run its prepared table-grant Job,
+   verify allowed/denied SQL operations, then configure queue receive authorization
+   before deployment.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -174,7 +176,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 162 offline tests; SDK/database responses and the expiry clock are mocked
+passes 170 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
