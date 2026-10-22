@@ -32,6 +32,7 @@ we learn in [memeory.md](memeory.md).
 | Private Service Bus access | Publisher resolved and connected to private endpoint 10.40.17.4 over TLS 1.3, opened a sender link and was denied receive access; that diagnostic sent zero messages |
 | First live outbox publication | Real application publisher sent outbox row 3 with stable message ID, received acknowledgement, confirmed its committed published marker and recorded a heartbeat; consumer processing is not yet verified |
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
+| Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
 | Queue before consumer | Azure reported 12 active messages, zero dead letters and 12 total messages, matching the published outbox count at this checkpoint |
 
@@ -146,8 +147,9 @@ Next:
    TLS 1.3 and no administrator privileges. Its table-grant Job and real SQL
    operation checks passed (14 allowed, 30 denials). Its receiver role plan matched
    the consumer and exact queue scope; foundation outputs were supplied after
-   the apply instruction. Next run the prepared private broker check for main/DLQ
-   peek access and send denial before consumer deployment.
+   the apply instruction. Its private broker check passed main/dead-letter peek
+   access and send denial over TLS 1.3 without consuming messages. Next run the
+   prepared consumer deployment, then verify persisted processing and queue drain.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

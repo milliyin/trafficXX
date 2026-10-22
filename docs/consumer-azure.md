@@ -225,9 +225,10 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/servicebus-consumer-access-check -c check
 ```
 
-Expected SERVICEBUS_CONSUMER_ACCESS_OK with private IP/TLS evidence,
-queue_peek_allowed=true, dead_letter_peek_allowed=true, send_denied=true and zero
-broker_messages_sent/received. Real Azure output is pending. If role propagation
+Verified SERVICEBUS_CONSUMER_ACCESS_OK from the user: private DNS/TLS peer
+10.40.17.4, TLSv1.3, receiver_link_open=true, queue_peek_allowed=true,
+dead_letter_peek_allowed=true, send_denied=true and zero broker messages sent
+or received, with the expected consumer client ID. If role propagation
 causes an authorization failure, wait up to five minutes and recreate only this
 short-lived diagnostic Job before retrying; do not broaden the role.
 
@@ -237,6 +238,47 @@ timeouts and raw error redaction. Tests assert zero prefetch and no calls to
 receive/send/complete/abandon/dead-letter operations. All 186 offline methods
 pass; real Azure broker evidence remains separate. Consumer deployment and
 end-to-end queue drain/projection checks follow only after this check passes.
+
+
+## Deploy the continuous consumer
+
+The Deployment runs one Recreate replica as consumer on an apps node, using
+its own PostgreSQL role and queue receiver authorization. It reuses the existing
+ACR image digest and runs python -u -m trafficxx.consumer. The broker credential
+chain is restricted to WorkloadIdentityCredential; no connection string or human
+credential fallback is configured. Security/resource settings match the publisher:
+non-root user, read-only root filesystem, dropped capabilities, bounded CPU/memory
+and a size-limited writable /tmp. No HTTP Service is created.
+
+**This starts real message processing.** Already-published historical events will
+be read from reservation-events, their inbox/projection changes committed, then
+acknowledged. A historical HELD event does not reactivate a reservation; this
+consumer updates the downstream status view, not the reservation itself. The
+outbox-ID guard protects the view against older events arriving after newer ones.
+Invalid messages can be dead-lettered; database failures follow bounded delivery
+retries. Stop other diagnostic mutations while evaluating this first rollout.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/deploy-consumer.sh
+kubectl logs -n trafficxx deployment/consumer --tail=50
+```
+
+Expected CONSUMER_DEPLOYED and event_delivery outcome=processed or duplicate
+logs. Real rollout/processing output is pending. A pod that is Running/Ready or
+emits some processed logs does not prove complete drain or projection agreement.
+The readiness probe checks only a database SELECT 1; it does not verify broker
+connectivity, heartbeat freshness or forward progress. There is no loop-progress
+liveness probe. Recreate updates can pause this single consumer temporarily;
+queued events remain broker work, subject to the configured TTL/delivery policy.
+
+Four mocked deploy-helper scenarios passed: success, wrong subscription, wrong
+cluster context and apply failure. Bash syntax/LF, manifest image/module/identity,
+credential configuration, security/resource settings and readiness Python syntax
+were checked. All 186 offline methods pass. After successful deployment, verify
+persisted inbox coverage, projection agreement and a fresh error-free heartbeat
+with a read-only observer, then obtain native active/dead-letter queue counts.
 
 
 The real consumer parses the event, atomically records the deduplication inbox
