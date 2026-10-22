@@ -123,8 +123,9 @@ Next:
    committed diagnostic changes. Its deployment produced authentication logs.
    Its [idle-hold observer experiment](docs/expiry-worker-azure.md#verify-idle-expiry-using-raw-stored-state)
    then verified worker readiness, stored expiry, assignment release and one
-   EXPIRED outbox row. Next check final Browse availability and prepare the
-   outbox publisher identity, permissions and Azure messaging infrastructure.
+   EXPIRED outbox row. Final Browse availability again showed 100 for both
+   demo events. Next run the [publisher SQL identity setup](docs/publisher-azure.md),
+   then its permission checks and Azure messaging infrastructure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
