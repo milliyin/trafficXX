@@ -4,7 +4,10 @@ The user reconnected on 2026-10-23 and verified all four AKS nodes Ready.
 Browse and Booking each still had two Ready Running replicas and zero restarts.
 The previous real five-minute expiry experiment passed using a booking
 transaction. The expiry login, grants and actual permission probe subsequently
-passed. Its worker deployment is prepared below; Azure rollout remains pending.
+passed. The user subsequently supplied logs from deployment/expiry-worker showing
+successful workload authentication and no visible sweep errors. A rollout/Ready
+transcript and successful background expiry are not yet supplied; the next
+experiment checks readiness and actual stored state.
 
 ## Register the worker's database identity
 
@@ -205,3 +208,57 @@ pass. No new image scan or local database-engine run was performed. After rollou
 create an idle hold and inspect its raw stored state without an API request that
 could trigger lazy expiry; verify worker-driven EXPIRED, assignment release and
 an expiry outbox row before claiming successful background cleanup.
+
+## Verify idle expiry using raw stored state
+
+The supplied worker logs contain SDK INFO output, including successful token
+requests. They do not show access-token values. Repeated get_token successes can
+use the SDK cache; the first HTTP exchange and subsequent success messages do
+not prove a network exchange on every sweep. They also do not prove that any
+reservation was expired. Container log timestamps are recorded as supplied;
+client-facing checkpoint date is 2026-10-23.
+
+Run from Cloud Shell after syncing the repository:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+python3 scripts/check-expiry-worker.py
+```
+
+Keep this command running for a little over five minutes, and leave other
+Booking experiments/API requests idle during the test. The script uses the
+existing two-pod connection helper, verifies the expiry Deployment is Ready
+with the reviewed image/command/service account, then creates an A2 hold.
+It creates a short-lived observer Job from the same image using the migrator
+service account. That observer's first SQL statement is SET TRANSACTION READ ONLY;
+it queries stored reservation, assignment and outbox state without importing or
+calling reservation/expiry service functions.
+
+Baseline must show HELD, one matching A2 assignment, one HELD outbox row and no
+EXPIRED outbox row. The helper prints WAITING_FOR_WORKER_EXPIRY and waits 310
+monotonic seconds after that baseline. It makes no Booking/Browse calls in this
+interval or during the final observation. A second read-only Job must find
+EXPIRED, zero assignments and exactly one EXPIRED outbox row. The Deployment
+UID/generation must be unchanged and still Ready. Only then EXPIRY_WORKER_OK is
+printed. Real results remain pending. This controlled lab experiment assumes
+no other actor triggers expiry for this event; it does not instrument the
+database writer identity or establish a background-expiry latency SLO.
+
+Observer Jobs are named uniquely, removed afterward and bounded by deadlines/TTL.
+They use the existing non-admin table-owning migrator identity only for reads;
+the worker receives no extra permissions. The expiry helper and observer files
+must both be present in scripts/. The worker's existing immutable image contains
+the database connection code; the observer code is passed as the Job command,
+so no image rebuild or package installation is needed.
+
+On experiment failure only, cleanup may replay the original customer/key and
+cancel/expire the diagnostic hold through Booking. Such cleanup never counts as
+worker evidence. If cleanup cannot be verified, inspect the reported original
+key; do not reset inventory or submit a new key. Successful experiments retain
+expired reservation and HELD/EXPIRED outbox history, not delivery to Service Bus.
+Post-test Browse availability is a separate check. Seven added offline methods
+cover read-only SQL, wrong metadata/state/counts, observer Job isolation,
+no API calls after create, failed-observer cleanup and Deployment changes;
+all 122 offline methods pass with a simulated wait. No new live background
+expiry result, continuous availability or token-expiry-boundary proof is claimed.
