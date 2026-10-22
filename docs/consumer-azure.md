@@ -357,5 +357,9 @@ The [controlled consumer outage/backlog experiment](consumer-backlog.md) also
 passed: two messages accumulated with zero consumer pods, then drained after
 restoration to one replica. Read-only SQL verified all 14 inbox records and seven
 latest projections with a fresh error-free heartbeat and no mismatch/failure rows.
-Crash boundaries, poison-message recovery, sustained throughput and token renewal
-across an actual expiry boundary remain unverified in Azure.
+The [invalid-schema experiment](consumer-poison.md) subsequently verified
+schema rejection, unchanged business state, targeted cleanup and normal follow-up
+processing: 16 inbox records/eight latest projections, one retained rejection
+audit, healthy heartbeat and native queue counts all zero. Crash boundaries,
+retry exhaustion, sustained throughput and token renewal across an actual expiry
+boundary remain unverified in Azure.

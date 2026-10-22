@@ -2,8 +2,8 @@
 
 The previous consumer-outage test passed with 14 inbox/outbox rows and seven
 latest projections. The invalid-message rejection, unchanged business state and
-targeted DLQ cleanup stages have now passed. Valid-message progress and retained
-SQL audit verification are the remaining checks.
+targeted DLQ cleanup stages have now passed. Valid-message progress and the retained SQL audit were subsequently verified,
+and final native queue counts were all zero.
 
 Diagnostic ID: bd7fe2e5-7631-4366-9594-69b82ba8d07a. Its JSON declares unsupported
 schema_version=999 and is intentionally missing reservation-event fields.
@@ -134,11 +134,27 @@ with no diagnostic inbox row. All SQL observations are read-only under migrator
 identity/verify-full TLS; no audit rows are removed. Native queue counts must be
 checked separately again for all zero after the valid flow.
 
-Actual POISON_RECOVERY_OK, retained SQL audit and final native queue evidence
-are pending. Four new offline methods cover read-only success, missing/wrong/
+Verified POISON_RECOVERY_OK from the user: 16 total outbox rows, zero pending,
+16 matching inbox records, eight matching latest projections, no missing/payload/
+projection/orphan mismatches and zero failure records. The diagnostic has zero
+inbox rows; its one retained audit record has sequence16 and INVALID_EVENT_SCHEMA.
+Consumer heartbeat age was3.842056seconds, present and error-free. The observer
+was read-only migrator over TLSv1.3. Native counts after the valid follow-up were
+active=0, dead_letters=0, total=0. A separate BOOKING_FLOW_OK transcript was not
+supplied; the observer verified the expected additional two events and projection.
+The historical observed_dead_letter_count=1 is a retained SQL audit count, not a
+live broker dead-letter count. This completes the controlled experiment. Four new offline methods cover read-only success, missing/wrong/
 duplicate audit, absent new valid work and forbidden diagnostic inbox presence.
 
 Eight added offline methods cover one send, non-destructive peek, exact cleanup,
 wrong/extra messages, unexpected receive abandonment, bounded empty peek, ambiguous
 completion and identity/action preflight. All 229 offline methods pass. Existing
 application image and runtime code remain unchanged.
+
+
+The diagnostic schema rejection, unchanged business-table fingerprints, targeted
+cleanup, retained audit and subsequent valid processing are now verified. No
+claim is made about all poison-message types, retry exhaustion, crash boundaries,
+sustained throughput or token renewal across an actual expiry boundary. Next
+priorities are operational backlog/heartbeat/dead-letter visibility and testing
+recovery under a failure during processing.

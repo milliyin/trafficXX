@@ -34,6 +34,7 @@ we learn in [memeory.md](memeory.md).
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
 | Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
+| Invalid message isolation and recovery | Unsupported schema was dead-lettered with INVALID_EVENT_SCHEMA; business-table fingerprints stayed unchanged; targeted cleanup emptied the queue. Follow-up SQL verified 16 events/eight latest projections, a retained rejection audit and healthy heartbeat; native queue counts all zero |
 | Azure consumer backlog recovery | With zero consumer pods, two hold/cancel events waited in the queue; restoring one replica drained it to zero. Read-only SQL verified all 14 inbox records and seven latest projections, with no mismatches/failure records and a healthy heartbeat |
 | Duplicate message delivery | One acknowledged resend of the original message produced a new duplicate outcome; all inbox/outbox/projection counts and full-row fingerprints stayed unchanged, and native queue counts returned to zero |
 | Consumer processing and drain | Read-only SQL verified all 12 inbox records and six latest projections with zero mismatches/orphans/failure records, plus an error-free heartbeat aged 2.81 seconds; Azure queue counts were active=0, dead_letters=0, total=0 |
@@ -55,7 +56,10 @@ token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. A controlled duplicate resend also passed with unchanged
 stored state and an empty queue. A controlled consumer pause also passed:
 two events waited, then drained after restart, with 14 inbox records and seven
-latest projections verified. Poison-message experiments,
+latest projections verified. An invalid-schema diagnostic was isolated and
+cleaned up without business-table changes; valid follow-up processing verified
+16 events/eight projections, with a retained rejection audit and empty queue.
+Further failure experiments,
 ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
@@ -169,8 +173,10 @@ Next:
    two events waited with zero consumer pods and drained after restoration. SQL
    verified 14 inbox rows and seven latest projections. The [invalid-message experiment](docs/consumer-poison.md) then verified
    INVALID_EVENT_SCHEMA dead-lettering, unchanged business-table fingerprints
-   and targeted cleanup back to an empty queue. Next run one normal booking
-   and the prepared read-only recovery/audit observer; that evidence is pending.
+   and targeted cleanup back to an empty queue. The follow-up read-only observer
+   verified 16 events/eight latest projections and the retained rejection audit;
+   native queue counts were all zero. Next improve operational backlog/heartbeat/
+   dead-letter visibility and test failures during processing.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
