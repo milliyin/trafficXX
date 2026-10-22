@@ -28,12 +28,13 @@ we learn in [memeory.md](memeory.md).
 | Duplicate requests across Booking replicas | One concurrent client request per pod returned 201/200 with the same reservation and expiry; both pods read the hold and its final CANCELLED status |
 | Assigned-seat contention across replicas | Different customers requested A1 concurrently: one 201 hold and one 409 SEAT_UNAVAILABLE; both replicas agreed on the winner and final CANCELLED status |
 | Real hold expiry and seat reuse | After a real 305-second wait, a booking transaction expired the old A1 hold and created a replacement; both replicas verified EXPIRED, old-key replay stayed expired and replacement was cancelled |
+| Background expiry worker | Own non-admin login and grants verified; nine allowed SQL operations and fourteen denials passed. Idle A2 hold became EXPIRED after a 310-second wait; read-only SQL found zero assignments and one EXPIRED outbox row with no expiry-triggering API calls after creation |
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
 passed with two Ready replicas on separate application nodes; its HTTP check
 verified health, database readiness, the correct API module and a missing reservation.
-The expiry worker has produced successful authentication logs; its Ready rollout
-and background expiry are being checked separately. Other workers are not deployed.
+The expiry worker is deployed and passed a controlled idle-hold expiry experiment
+with raw read-only SQL evidence. Other workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. Azure Service Bus, ingress, GitOps, production customer authentication,
@@ -116,13 +117,14 @@ Next:
    seat A1 also passed across both replicas; post-test Browse availability was
    100 for each demo event. Real five-minute expiry and seat reuse also passed
    via a booking transaction; final Browse HTTP again showed 100 available for
-   each event. Next register the expiry worker's SQL identity, test its permissions
-   and deploy it. Its [own SQL login](docs/expiry-worker-azure.md) now passed over
+   each event. The expiry worker's [own SQL login](docs/expiry-worker-azure.md) passed over
    TLS 1.3 without administrator privileges. Its table-grant Job also passed;
    its real probe passed nine allowed operations and fourteen denials without
    committed diagnostic changes. Its deployment produced authentication logs.
-   Run the [idle-hold observer experiment](docs/expiry-worker-azure.md#verify-idle-expiry-using-raw-stored-state)
-   to verify readiness, stored expiry, assignment release and expiry outbox creation.
+   Its [idle-hold observer experiment](docs/expiry-worker-azure.md#verify-idle-expiry-using-raw-stored-state)
+   then verified worker readiness, stored expiry, assignment release and one
+   EXPIRED outbox row. Next check final Browse availability and prepare the
+   outbox publisher identity, permissions and Azure messaging infrastructure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

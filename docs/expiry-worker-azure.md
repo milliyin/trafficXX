@@ -5,9 +5,8 @@ Browse and Booking each still had two Ready Running replicas and zero restarts.
 The previous real five-minute expiry experiment passed using a booking
 transaction. The expiry login, grants and actual permission probe subsequently
 passed. The user subsequently supplied logs from deployment/expiry-worker showing
-successful workload authentication and no visible sweep errors. A rollout/Ready
-transcript and successful background expiry are not yet supplied; the next
-experiment checks readiness and actual stored state.
+successful workload authentication and no visible sweep errors. The subsequent controlled idle-hold experiment verified Deployment readiness
+and actual background expiry with read-only stored-state evidence.
 
 ## Register the worker's database identity
 
@@ -181,8 +180,9 @@ bash scripts/deploy-expiry.sh
 kubectl logs -n trafficxx deployment/expiry-worker --tail=50
 ```
 
-Expected helper output is EXPIRY_DEPLOYED after rollout; real output remains
-pending. This reuses the digest-pinned image already running both APIs, which
+Expected helper output is EXPIRY_DEPLOYED after rollout. A separate helper
+transcript was not supplied; the subsequent experiment verified the existing
+worker Deployment Ready and stable before and after a successful expiry. This reuses the digest-pinned image already running both APIs, which
 contains trafficxx.expiry and workload-identity database connections. No image
 build, Service Bus setup or HTTP Service is needed. The helper checks the
 subscription/context before applying only the expiry Deployment.
@@ -241,7 +241,13 @@ monotonic seconds after that baseline. It makes no Booking/Browse calls in this
 interval or during the final observation. A second read-only Job must find
 EXPIRED, zero assignments and exactly one EXPIRED outbox row. The Deployment
 UID/generation must be unchanged and still Ready. Only then EXPIRY_WORKER_OK is
-printed. Real results remain pending. This controlled lab experiment assumes
+printed. The user supplied the baseline HELD observation and then real
+EXPIRY_WORKER_OK for reservation 2a6f5566-9870-45aa-9927-a85fd8e5f3a9: final
+status EXPIRED, remaining_assignments=0, held_outbox_rows=1,
+expired_outbox_rows=1, observation=read_only_sql and
+expiry_triggering_api_calls_after_create=0. Baseline had one assignment, one
+HELD message and zero EXPIRED messages. The worker Deployment was Ready and
+unchanged through the check. This controlled lab experiment assumes
 no other actor triggers expiry for this event; it does not instrument the
 database writer identity or establish a background-expiry latency SLO.
 
@@ -260,5 +266,7 @@ expired reservation and HELD/EXPIRED outbox history, not delivery to Service Bus
 Post-test Browse availability is a separate check. Seven added offline methods
 cover read-only SQL, wrong metadata/state/counts, observer Job isolation,
 no API calls after create, failed-observer cleanup and Deployment changes;
-all 122 offline methods pass with a simulated wait. No new live background
-expiry result, continuous availability or token-expiry-boundary proof is claimed.
+all 122 offline methods pass with a simulated wait. The corresponding real
+background expiry experiment subsequently passed. Continuous availability,
+precise expiry latency, sustained token renewal and outbox delivery are still
+unverified. Check final Browse availability separately.
