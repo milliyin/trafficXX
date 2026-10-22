@@ -2,9 +2,10 @@
 
 Prometheus collection passed in Azure: target up1, two actual samples, latest
 sample5.842seconds old,18processed events, zero pending/outstanding/active warnings
-and one historical dead-letter audit count. Dashboard deployment/browser results
-are still pending. The next step provisions twelve Grafana panels against the
-existing private Prometheus server, not a separate metrics or booking database.
+and one historical dead-letter audit count. The user-run GRAFANA_DASHBOARD_OK
+check now confirms Grafana database health, all twelve provisioned panels,
+datasource health and a real Prometheus query. Browser login remains pending.
+The panels use the existing private Prometheus server.
 
 ## What is prepared
 
@@ -22,8 +23,8 @@ Grafana13.2.4 uses an official version tag, not a digest pin. Its
 [release](https://github.com/grafana/grafana/releases/tag/v13.2.4),
 [file provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
 and [secret-file configuration](https://grafana.com/docs/grafana/latest/setup-grafana/configure-docker/)
-were checked. Actual image pull/server startup/provisioned API compatibility
-will be verified in the user-run rollout. No vulnerability scan is claimed here.
+were checked. The user-run API check confirmed version13.2.4 and working
+provisioning/query compatibility. No vulnerability scan is claimed here.
 
 There is one Recreate replica in trafficxx-monitoring with a dedicated5Gi
 managed-csi PVC for the Grafana SQLite database/settings. The datasource/dashboard
@@ -69,7 +70,11 @@ credentials in the shell command or local port-forwarding. It checks database
 health, the exact provisioned datasource/12-panel dashboard, datasource health,
 an actual Prometheus up query through Grafana and rejection of an unauthenticated
 dashboard API request with401. The result must contain no login/password values.
-Actual rollout, auth checks, provisioning and query output remain pending.
+Actual GRAFANA_DASHBOARD_OK confirmed database=ok, dashboard UID
+trafficxx-operations, title trafficXX | Operations, panel_count=12, datasource UID
+trafficxx-prometheus, datasource_health=OK and operations_up_via_datasource=1.
+Unauthenticated dashboard access was denied. This verifies the API checks;
+interactive browser login and panel rendering have not yet been verified.
 
 The deploy helper prechecks subscription/context/storage class and Prometheus
 rollout, then applies config and resources. It restarts an existing single Grafana
@@ -84,15 +89,28 @@ setup failure before applying Grafana resources. Bash/Python syntax, YAML image/
 Secret/identity/storage/Service wiring and dashboard references were validated.
 A Grafana container/browser was not run locally; actual cloud UI remains pending.
 
-## Opening the browser comes after API validation
+## Open the private dashboard
 
-The bootstrap login will be in ~/trafficxx/.env.grafana in Cloud Shell; view it
-privately when logging in, and do not paste its contents. We will use an explicit
-port-forward and Cloud Shell Web Preview for the private Service. Cloud Shell's
+The bootstrap login is in ~/trafficxx/.env.grafana in Cloud Shell; view it
+privately when logging in, and do not paste its contents. Then run:
+
+```bash
+kubectl port-forward -n trafficxx-monitoring \
+  --address=0.0.0.0 service/grafana 8081:3000
+```
+
+Keep the command running. In Cloud Shell, choose Web Preview, configure port8081
+and open the preview. Log in with the private credentials and open the trafficXX
+folder, then trafficXX | Operations. Ctrl+C stops the forward without stopping
+Grafana or deleting its data. If port8081 is already occupied by the earlier
+operations preview, stop that forward first or use another available preview port.
+
+Cloud Shell's
 preview URL can include a reverse-proxy path; Grafana may need its root_url
 configured for that actual URL/path so login redirects/assets work correctly.
 Do not guess a public hostname or assume localhost links work through the preview.
 See [Grafana reverse-proxy configuration](https://grafana.com/tutorials/run-grafana-behind-a-proxy/).
-The exact browser preview route will be checked after GRAFANA_DASHBOARD_OK; no
+If redirects or assets fail, inspect the preview origin/path without sharing
+session tokens or query parameters before configuring root_url. No
 public dashboard URL has been provisioned. External notifications remain future
 work and no messages are sent to any email/chat service by this setup.

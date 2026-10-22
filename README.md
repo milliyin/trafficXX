@@ -187,10 +187,12 @@ Next:
    drill then verified aged-backlog/stale-consumer warning gauges appeared and
    cleared after recovery, with18matching inbox records/nine projections and
    an empty native queue. The [private Prometheus collector](docs/prometheus-azure.md) passed stored-sample
-   verification. Next deploy the prepared [Grafana dashboard](docs/grafana-azure.md)
-   and verify its login, provisioned panels and datasource query before browser access.
+   verification. The [Grafana dashboard](docs/grafana-azure.md) API check passed:
+   twelve provisioned panels, a healthy datasource, a real Prometheus query and
+   rejection of unauthenticated dashboard access. Next verify browser login and
+   panel rendering through Cloud Shell Web Preview.
    Investigate the recorded send failure before claiming clean publication.
-   External metrics collection and alert delivery remain unconfigured.
+   External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

@@ -95,10 +95,12 @@ nonfinite/empty query results, successful retry and bounded failure (279 total).
 Six mocked deploy cases passed: new/existing collector, wrong subscription,
 context/storage class and apply failure. YAML wiring/config/security/PVC/Service,
 Python and Bash syntax/LF checks passed. Local promtool/container execution was
-not performed; init-container validation and real query evidence remain pending.
+not performed. The subsequent user-run PROMETHEUS_SCRAPE_OK confirmed a healthy
+target and at least two real stored samples; separate init-container logs were
+not supplied.
 No local Docker restart or Azure account access occurred.
 
 Scrape evidence passed; the [private Grafana dashboard](grafana-azure.md) is
-now prepared, pointing to
+now API-verified with twelve provisioned panels and a healthy datasource pointing to
 http://prometheus.trafficxx-monitoring.svc.cluster.local:9090. Alert rules,
 notification routing and native Azure queue metrics remain separate integrations.
