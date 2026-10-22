@@ -96,21 +96,46 @@ privately when logging in, and do not paste its contents. Then run:
 
 ```bash
 kubectl port-forward -n trafficxx-monitoring \
-  --address=0.0.0.0 service/grafana 8081:3000
+  --address=0.0.0.0 service/grafana 8091:3000
 ```
 
-Keep the command running. In Cloud Shell, choose Web Preview, configure port8081
+Keep the command running. In Cloud Shell, choose Web Preview, configure port8091
 and open the preview. Log in with the private credentials and open the trafficXX
 folder, then trafficXX | Operations. Ctrl+C stops the forward without stopping
-Grafana or deleting its data. If port8081 is already occupied by the earlier
-operations preview, stop that forward first or use another available preview port.
+Grafana or deleting its data. The user's preview dialog excludes ports8080-8090;
+the earlier8081 instructions were incorrect. If8091 is occupied, stop its previous
+forward first or choose another allowed free port.
 
 Cloud Shell's
 preview URL can include a reverse-proxy path; Grafana may need its root_url
 configured for that actual URL/path so login redirects/assets work correctly.
 Do not guess a public hostname or assume localhost links work through the preview.
 See [Grafana reverse-proxy configuration](https://grafana.com/tutorials/run-grafana-behind-a-proxy/).
-If redirects or assets fail, inspect the preview origin/path without sharing
-session tokens or query parameters before configuring root_url. No
+The user observed a redirect from the session's /proxy/8091/ route to the relay
+host's /login, which returned a Service Bus Atom feed. This is evidence that
+the preview prefix was lost during redirect, not a Grafana database failure.
+Configure the current session's full preview base URL as root_url, including its
+trailing slash. Keep serve_from_sub_path=false because the preview proxy handles
+the prefix; enabling it can redirect stripped upstream requests back into a loop.
+
+Stop the current port-forward with Ctrl+C, then run in Cloud Shell:
+
+```bash
+# Replace the placeholder with the current preview origin/path, no query tokens.
+kubectl set env -n trafficxx-monitoring deployment/grafana \
+  GF_SERVER_ROOT_URL='https://PREVIEW-HOST/SESSION/proxy/8091/' \
+  GF_SERVER_SERVE_FROM_SUB_PATH=false
+kubectl rollout status -n trafficxx-monitoring deployment/grafana --timeout=600s
+kubectl port-forward -n trafficxx-monitoring \
+  --address=0.0.0.0 service/grafana 8091:3000
+```
+
+Reopen the original full preview route, not the relay host's bare /login. This
+changes only Grafana's URL settings and restarts its single pod; its PVC and
+credential Secret are retained. The session URL is deliberately not hardcoded
+in the shared manifest. Update it if a later Cloud Shell session changes the
+preview route. The proposed redirect fix and interactive login remain unverified
+until the user opens the browser again. Never share session tokens or query
+parameters. No
 public dashboard URL has been provisioned. External notifications remain future
 work and no messages are sent to any email/chat service by this setup.
