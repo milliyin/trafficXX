@@ -116,8 +116,9 @@ Next:
    via a booking transaction; final Browse HTTP again showed 100 available for
    each event. Next register the expiry worker's SQL identity, test its permissions
    and deploy it. Its [own SQL login](docs/expiry-worker-azure.md) now passed over
-   TLS 1.3 without administrator privileges. The grant Job is prepared; actual
-   table grants, permission probes and worker deployment remain pending.
+   TLS 1.3 without administrator privileges. Its table-grant Job also passed;
+   the permission probe is prepared. Real permission-probe results and worker
+   deployment remain pending.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -149,7 +150,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 107 offline tests; SDK/database responses and the expiry clock are mocked
+passes 115 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

@@ -73,8 +73,8 @@ The derived login probe passed seven mocked scenarios: success, wrong client,
 wrong service account, missing CA, administrator role, SQL failure and token
 failure. YAML command element types and embedded Python syntax passed, with no
 fake token output. All 100 existing offline tests pass. These are local checks;
-the real worker SQL login subsequently passed. Table grants and worker deployment
-are still pending.
+the real worker SQL login and table grants subsequently passed. Worker deployment
+is still pending; actual worker-role query checks are the current next step.
 
 ## Grant the current sweep SQL permissions
 
@@ -95,7 +95,10 @@ kubectl logs -n trafficxx job/postgres-expiry-grants -c grant
 The existing migrator/table owner runs `--grant-expiry` in one transaction;
 success is printed only after commit. The grant action does not read migration
 payloads or rerun migrations/seeding. Expected result is EXPIRY_GRANTS_OK;
-actual Azure output remains pending.
+the user supplied real EXPIRY_GRANTS_OK: grantee trafficxx-lab-expiry,
+read_tables=[events,reservations], outbox_read=false, worker_table_access=false
+and destructive_table_access=false. This verifies the grant transaction and
+effective privilege checks; actual worker-role queries are tested below.
 
 The current worker uses SELECT * on events for row locking and UPDATE RETURNING *
 on reservations, so it receives full SELECT on those two tables. This includes
@@ -116,3 +119,49 @@ cover the contract, incorrect ownership, protected reads/writes, elevated/DDL
 access, missing grants/columns and destructive/reference privileges; all 107
 offline methods pass. Database-engine positive/negative expiry-role tests are
 the next stage before deployment; this grant Job is not those tests.
+
+## Test actual worker-role SQL permissions
+
+From the synced Cloud Shell clone:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap postgres-expiry-permission-files -n trafficxx \
+  --from-file=check-expiry-permissions.py=scripts/check-expiry-permissions.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/postgres-expiry-permissions.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/postgres-expiry-permissions-check --timeout=300s
+kubectl logs -n trafficxx job/postgres-expiry-permissions-check -c check
+```
+
+Expected: EXPIRY_PERMISSIONS_OK with nine allowed operations, fourteen denials
+with SQLSTATE 42501, diagnostic_rows_committed=false, SSL true and admin false.
+Real output remains pending. The probe authenticates as expiry, never migrator.
+
+The probe locks demo-seated and an existing expired demo reservation. It refuses
+to proceed if no expired history is available or that row still owns inventory.
+It temporarily marks that expired row HELD inside an uncommitted transaction,
+without changing its past expiry timestamp, finds it with the sweep's due query,
+and conditionally marks it EXPIRED again. It tests assignment lookup/release SQL
+permissions and outbox INSERT/default identity generation without SELECT/RETURNING.
+A unique diagnostic outbox event type avoids colliding with existing real EXPIRED
+history. No diagnostic row or state transition is committed.
+
+The release query matches zero rows because this fixture has no assigned ticket;
+this is permission evidence, not actual worker-driven inventory release. The
+outbox event is a diagnostic type, not proof of a committed EXPIRED message.
+Background expiry and its actual inventory/message effects need a later real
+worker experiment. Identity sequence counters can advance on rollback normally;
+no sequence grant or reset is added.
+
+Protected operations include reservation INSERT, ticket label reads/updates,
+changing customer/hold duration/event inventory, adding inventory, deleting
+reservations, reading/publishing outbox, worker/migration table reads and DDL.
+Each denied operation has a savepoint and must yield 42501. Unexpected successes
+are rolled back and fail the probe. The outer transaction is rolled back before
+success output, or on failure. Eight additional offline methods cover required
+queries/denials, unexpected success, wrong SQLSTATE, missing/bound history,
+failed expiry update, final rollback, failed outbox and wrong identity. All 115
+offline methods pass; real Azure permission-query output remains pending.
