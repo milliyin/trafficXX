@@ -186,8 +186,9 @@ Next:
    operations deployment and healthy HTTP/worker-metric checks passed. The live
    drill then verified aged-backlog/stale-consumer warning gauges appeared and
    cleared after recovery, with18matching inbox records/nine projections and
-   an empty native queue. Next connect collection, alert rules and notification
-   routing; investigate the recorded send failure before claiming clean publication.
+   an empty native queue. Next deploy the prepared [private Prometheus collector](docs/prometheus-azure.md)
+   and verify stored samples, then add Grafana charts and notification routing.
+   Investigate the recorded send failure before claiming clean publication.
    External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
@@ -220,7 +221,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 272 offline tests; SDK/database responses and the expiry clock are mocked
+passes 279 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

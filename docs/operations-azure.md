@@ -303,7 +303,9 @@ All272offline methods pass, plus Bash syntax/LF checks. The successful user-run 
 
 ## Remaining monitoring integration
 
-Connect a metrics scraper/collector, alert rules and notification routing
+The [private Prometheus collector](prometheus-azure.md) is now prepared; actual
+deployment and stored scrape evidence are pending. After that, add a private
+Grafana dashboard. Connect alert rules and notification routing
 separately: API flags and exported metrics alone do not notify anyone. The
 existing Log Analytics workspace alone does not collect application signals.
 Native Service Bus count monitoring needs a separate read/management path;

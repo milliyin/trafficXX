@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trafficxx-monitoring
+  labels:
+    app.kubernetes.io/part-of: trafficxx
+    pod-security.kubernetes.io/enforce: restricted
