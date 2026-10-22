@@ -1,4 +1,4 @@
-"""User-run migrator actions for Azure schema, browse grants and demo inventory."""
+"""User-run migrator actions for Azure schema, runtime grants and demo inventory."""
 import argparse
 import base64
 import hashlib
@@ -291,7 +291,78 @@ def grant_expiry(connection):
             'worker_table_access': False, 'destructive_table_access': False}
 
 
-def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False):
+PUBLISHER_READS = {'outbox'}
+PUBLISHER_READ_COLUMNS = {('worker_heartbeats', c) for c in ('name', 'last_error')}
+PUBLISHER_INSERTS = {('worker_heartbeats', c) for c in ('name', 'last_error')}
+PUBLISHER_UPDATES = {('outbox', c) for c in (
+    'published_at', 'last_error', 'publish_attempts', 'last_attempt_at', 'publish_failures', 'next_attempt_at')
+} | {('worker_heartbeats', c) for c in ('last_seen_at', 'last_error')}
+PUBLISHER_REQUIRED_OUTBOX = {('outbox', c) for c in (
+    'id', 'reservation_id', 'event_type', 'payload', 'created_at', 'published_at', 'message_id',
+    'publish_attempts', 'publish_failures', 'next_attempt_at', 'last_attempt_at', 'last_error')}
+
+
+def grant_publisher(connection):
+    """Grant the publisher service's current SQL contract, rejecting broader access."""
+    grantee = 'trafficxx-lab-publisher'
+    connection.execute('SELECT pg_advisory_xact_lock(7432002)')
+    owned = {row['relname']: row for row in relations(connection)}
+    if any(name not in owned or owned[name]['owner'] != ROLE or owned[name]['relkind'] != 'r'
+           for name in ('outbox', 'worker_heartbeats')):
+        raise ValueError('Migrator must own publisher source tables')
+    grants = (
+        'GRANT SELECT ON public.outbox',
+        'GRANT UPDATE (published_at, last_error, publish_attempts, last_attempt_at, publish_failures, next_attempt_at) ON public.outbox',
+        # ON CONFLICT(name) and EXCLUDED.last_error require matching SELECT.
+        'GRANT SELECT (name, last_error) ON public.worker_heartbeats',
+        'GRANT INSERT (name, last_error) ON public.worker_heartbeats',
+        'GRANT UPDATE (last_seen_at, last_error) ON public.worker_heartbeats',
+    )
+    for sql in grants:
+        connection.execute(sql + ' TO "trafficxx-lab-publisher"')
+    access = connection.execute("""
+        SELECT has_database_privilege(rolname, 'trafficxx', 'CONNECT') AS connect,
+               has_schema_privilege(rolname, 'public', 'USAGE') AS usage,
+               has_schema_privilege(rolname, 'public', 'CREATE') AS create_objects,
+               has_database_privilege(rolname, 'trafficxx', 'CREATE') AS create_schema,
+               pg_has_role(rolname, 'azure_pg_admin', 'MEMBER') AS admin,
+               rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+        FROM pg_roles WHERE rolname = %s
+    """, (grantee,)).fetchone()
+    if (not access or not access['connect'] or not access['usage']
+            or any(access[key] for key in ('create_objects', 'create_schema', 'admin', 'rolsuper',
+                                           'rolcreatedb', 'rolcreaterole', 'rolreplication', 'rolbypassrls'))):
+        raise ValueError('Unexpected effective publisher role privileges')
+    columns = connection.execute("""
+        SELECT c.relname, a.attname,
+               has_column_privilege(%s, c.oid, a.attnum, 'SELECT') AS can_read,
+               has_column_privilege(%s, c.oid, a.attnum, 'INSERT') AS can_insert,
+               has_column_privilege(%s, c.oid, a.attnum, 'UPDATE') AS can_update,
+               has_column_privilege(%s, c.oid, a.attnum, 'REFERENCES') AS can_reference,
+               has_table_privilege(%s, c.oid, 'DELETE,TRUNCATE,TRIGGER') AS destructive
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid
+        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+          AND a.attnum > 0 AND NOT a.attisdropped
+    """, (grantee,) * 5).fetchall()
+    seen = set()
+    for column in columns:
+        pair = (column['relname'], column['attname'])
+        seen.add(pair)
+        if (column['can_read'] != (pair[0] in PUBLISHER_READS or pair in PUBLISHER_READ_COLUMNS)
+                or column['can_insert'] != (pair in PUBLISHER_INSERTS)
+                or column['can_update'] != (pair in PUBLISHER_UPDATES)
+                or column['can_reference'] or column['destructive']):
+            raise ValueError('Unexpected effective publisher column/table permissions')
+    if not (PUBLISHER_INSERTS | PUBLISHER_UPDATES | PUBLISHER_READ_COLUMNS | PUBLISHER_REQUIRED_OUTBOX) <= seen:
+        raise ValueError('Required publisher columns are missing')
+    return {'result': 'PUBLISHER_GRANTS_OK', 'identity': ROLE, 'grantee': grantee,
+            'read_tables': ['outbox'], 'heartbeat_read_columns': ['last_error', 'name'],
+            'reservation_access': False, 'inventory_access': False,
+            'outbox_insert': False, 'destructive_table_access': False}
+
+
+def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False, publisher_only=False):
     from azure.identity import WorkloadIdentityCredential
     import psycopg
     from psycopg.rows import dict_row
@@ -310,7 +381,7 @@ def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False
         raise ValueError("Missing public CA bundle")
     folder = Path(__file__).resolve().parent
     # read_text normalizes CRLF, matching the existing additive migration runner.
-    payloads = {} if grant_only or seed_only or booking_only or expiry_only else {
+    payloads = {} if grant_only or seed_only or booking_only or expiry_only or publisher_only else {
         name: (folder / name).read_text(encoding="utf-8") for name in FILES
     }
     with WorkloadIdentityCredential(tenant_id=TENANT, client_id=CLIENT,
@@ -335,7 +406,9 @@ def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False
                     or not session["ssl"] or any(session[key] for key in (
                         "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls", "admin"))):
                 raise ValueError("Unexpected SQL identity, TLS or administrator privileges")
-            if expiry_only:
+            if publisher_only:
+                result = grant_publisher(connection)
+            elif expiry_only:
                 result = grant_expiry(connection)
             elif booking_only:
                 result = grant_booking(connection)
@@ -360,16 +433,18 @@ if __name__ == "__main__":
                          help="Grant the registered booking role its service SQL permissions")
     actions.add_argument("--grant-expiry", action="store_true",
                          help="Grant the registered expiry role its current sweep SQL permissions")
+    actions.add_argument("--grant-publisher", action="store_true",
+                         help="Grant publisher outbox and heartbeat SQL permissions")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     try:
         run(grant_only=args.grant_browse, seed_only=args.seed_demo, booking_only=args.grant_booking,
-            expiry_only=args.grant_expiry)
+            expiry_only=args.grant_expiry, publisher_only=args.grant_publisher)
     except Exception as error:
         state = getattr(error, "sqlstate", None)
         if not isinstance(state, str) or len(state) != 5 or not state.isalnum():
             state = None
-        result = 'EXPIRY_GRANTS_FAILED' if args.grant_expiry else 'BOOKING_GRANTS_FAILED' if args.grant_booking else (
+        result = 'PUBLISHER_GRANTS_FAILED' if args.grant_publisher else 'EXPIRY_GRANTS_FAILED' if args.grant_expiry else 'BOOKING_GRANTS_FAILED' if args.grant_booking else (
             'DEMO_SEED_FAILED' if args.seed_demo else (
                 'BROWSE_GRANTS_FAILED' if args.grant_browse else 'SCHEMA_BOOTSTRAP_FAILED'))
         print(json.dumps({"result": result,
