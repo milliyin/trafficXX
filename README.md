@@ -162,8 +162,8 @@ Next:
    (12 inbox rows, six projections, 12 outbox rows with full-state fingerprints).
    One resend then produced a new consumer duplicate outcome; all three table
    fingerprints/counts stayed unchanged and native queue counts returned to zero.
-   Next test a controlled consumer outage and backlog recovery; this remains
-   unverified in Azure.
+   Next run the prepared [consumer outage/backlog experiment](docs/consumer-backlog.md);
+   actual stop/start recovery remains unverified in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -195,7 +195,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 209 offline tests; SDK/database responses and the expiry clock are mocked
+passes 217 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
