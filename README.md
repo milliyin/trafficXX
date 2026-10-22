@@ -31,7 +31,8 @@ we learn in [memeory.md](memeory.md).
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
 passed with two Ready replicas on separate application nodes; its HTTP check
-verified health, database readiness, the correct API module and a missing reservation. Workers are not deployed.
+verified health, database readiness, the correct API module and a missing reservation.
+The expiry worker deployment is prepared; workers are not yet verified deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. Azure Service Bus, ingress, GitOps, production customer authentication,
@@ -117,8 +118,9 @@ Next:
    each event. Next register the expiry worker's SQL identity, test its permissions
    and deploy it. Its [own SQL login](docs/expiry-worker-azure.md) now passed over
    TLS 1.3 without administrator privileges. Its table-grant Job also passed;
-   the permission probe is prepared. Real permission-probe results and worker
-   deployment remain pending.
+   its real probe passed nine allowed operations and fourteen denials without
+   committed diagnostic changes. The one-replica deployment is prepared; real
+   rollout and background-expiry evidence remain pending.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

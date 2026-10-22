@@ -3,7 +3,8 @@
 The user reconnected on 2026-10-23 and verified all four AKS nodes Ready.
 Browse and Booking each still had two Ready Running replicas and zero restarts.
 The previous real five-minute expiry experiment passed using a booking
-transaction. The background expiry worker has not been deployed.
+transaction. The expiry login, grants and actual permission probe subsequently
+passed. Its worker deployment is prepared below; Azure rollout remains pending.
 
 ## Register the worker's database identity
 
@@ -73,8 +74,8 @@ The derived login probe passed seven mocked scenarios: success, wrong client,
 wrong service account, missing CA, administrator role, SQL failure and token
 failure. YAML command element types and embedded Python syntax passed, with no
 fake token output. All 100 existing offline tests pass. These are local checks;
-the real worker SQL login and table grants subsequently passed. Worker deployment
-is still pending; actual worker-role query checks are the current next step.
+the real worker SQL login, grants and worker-role query checks subsequently
+passed. Worker deployment is the current next step.
 
 ## Grant the current sweep SQL permissions
 
@@ -138,7 +139,9 @@ kubectl logs -n trafficxx job/postgres-expiry-permissions-check -c check
 
 Expected: EXPIRY_PERMISSIONS_OK with nine allowed operations, fourteen denials
 with SQLSTATE 42501, diagnostic_rows_committed=false, SSL true and admin false.
-Real output remains pending. The probe authenticates as expiry, never migrator.
+The user supplied real EXPIRY_PERMISSIONS_OK: nine allowed operations, fourteen
+42501 denials, diagnostic_rows_committed=false, trafficxx, TLSv1.3 and admin=false.
+The probe authenticates as expiry, never migrator.
 
 The probe locks demo-seated and an existing expired demo reservation. It refuses
 to proceed if no expired history is available or that row still owns inventory.
@@ -164,4 +167,41 @@ are rolled back and fail the probe. The outer transaction is rolled back before
 success output, or on failure. Eight additional offline methods cover required
 queries/denials, unexpected success, wrong SQLSTATE, missing/bound history,
 failed expiry update, final rollback, failed outbox and wrong identity. All 115
-offline methods pass; real Azure permission-query output remains pending.
+offline methods pass; the real Azure permission-query result subsequently passed.
+
+## Deploy one background expiry worker
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/deploy-expiry.sh
+kubectl logs -n trafficxx deployment/expiry-worker --tail=50
+```
+
+Expected helper output is EXPIRY_DEPLOYED after rollout; real output remains
+pending. This reuses the digest-pinned image already running both APIs, which
+contains trafficxx.expiry and workload-identity database connections. No image
+build, Service Bus setup or HTTP Service is needed. The helper checks the
+subscription/context before applying only the expiry Deployment.
+
+One apps-node replica uses service account expiry and PGUSER trafficxx-lab-expiry.
+It runs python -u -m trafficxx.expiry, sweeping every five seconds, with a non-root
+user, read-only root, dropped capabilities, bounded resources and temporary
+writable storage. Recreate updates prevent overlap of old/new worker replicas;
+this is a single-replica lab worker, not worker HA.
+
+Readiness executes a sanitized database connection/SELECT 1 check every thirty
+seconds. It verifies authentication/connectivity, not loop progress or sweep
+permissions. There is no sweep heartbeat or application liveness probe; a stuck
+loop is not automatically detected. The existing loop retries psycopg errors
+after five seconds and logs errors; it logs a count when it expires reservations.
+Empty logs with no due holds can be normal. Rollout and quiet logs do not prove
+successful background expiry.
+
+Four mocked deployment cases passed: success, wrong subscription/context and
+apply failure. Bash syntax/LF, manifest identity/image/module/security/probe
+structure and readiness success/failure paths passed. All 115 offline methods
+pass. No new image scan or local database-engine run was performed. After rollout,
+create an idle hold and inspect its raw stored state without an API request that
+could trigger lazy expiry; verify worker-driven EXPIRED, assignment release and
+an expiry outbox row before claiming successful background cleanup.
