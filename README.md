@@ -180,8 +180,8 @@ Next:
    non-admin TLS login and exact column-scoped monitoring grants. The
    real monitoring-query/permission checks passed (four query paths, 30 denials).
    Updated monitoring source now separates historical audits, detects missing
-   expected workers and exports worker/alert gauges. Next build its image with
-   the prepared ACR helper, then verify an internal operations deployment.
+   expected workers and exports worker/alert gauges. ACR build ca2 passed for the updated image. Next run the prepared internal
+   operations deployment and healthy HTTP/worker-metric checks.
    External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
@@ -214,7 +214,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 256 offline tests; SDK/database responses and the expiry clock are mocked
+passes 264 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
