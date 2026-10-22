@@ -16,7 +16,7 @@ we learn in [memeory.md](memeory.md).
 | Azure foundation | Terraform state storage, networking, ACR, and a Log Analytics workspace created through user-run Cloud Shell commands |
 | AKS | Standard cluster in East US; two system and two application nodes verified Ready, with system pod readiness checked |
 | Private database | PostgreSQL 17 in Central US, private DNS and VNet peering to AKS; administrator SQL login verified with certificate-checked TLS 1.3 |
-| Workload identity | Eight Azure identities, trust records, and Kubernetes service accounts installed; browse, migrator and booking pod SQL logins verified over TLS 1.3 with no administrator privileges |
+| Workload identity | Eight Azure identities, trust records, and Kubernetes service accounts installed; browse, migrator, booking and expiry pod SQL logins verified over TLS 1.3 with no administrator privileges |
 | Cloud database schema | Base and messaging migrations applied by the migrator identity; ten tables verified with migrator ownership |
 | Browse database permissions | Real browse pod passed three required reads and nine permission-denied checks, including writes, schema creation and private reservation data |
 | Browse API on AKS | ACR image built; two replicas Ready on separate apps nodes with zero restarts at rollout; health/readiness/events HTTP checks passed |
@@ -115,8 +115,9 @@ Next:
    100 for each demo event. Real five-minute expiry and seat reuse also passed
    via a booking transaction; final Browse HTTP again showed 100 available for
    each event. Next register the expiry worker's SQL identity, test its permissions
-   and deploy it. The [registration and login-check files](docs/expiry-worker-azure.md)
-   are prepared; that worker setup has not started in Azure.
+   and deploy it. Its [own SQL login](docs/expiry-worker-azure.md) now passed over
+   TLS 1.3 without administrator privileges. The grant Job is prepared; actual
+   table grants, permission probes and worker deployment remain pending.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -148,7 +149,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 100 offline tests; SDK/database responses and the expiry clock are mocked
+passes 107 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
