@@ -349,9 +349,9 @@ stable identity and payload must agree with the inbox record. Projection updates
 compare outbox IDs to avoid regressing state when older events arrive later.
 This records reservation state changes, not automatic booking confirmation.
 The real initial 12-event processing checkpoint now has persisted inbox/payload,
-latest-projection and empty native queue evidence. Deliberate broker duplicate
-redelivery, crash boundaries, poison-message recovery, sustained throughput and
-token renewal across an actual expiry boundary remain unverified in Azure.
-The next experiment should redeliver one existing stable message ID and verify
-that no additional inbox row or projection change occurs, with queue settlement
-and diagnostic cleanup checked separately.
+latest-projection and empty native queue evidence. The subsequent
+[controlled duplicate-delivery experiment](consumer-duplicate.md) also passed:
+one acknowledged resend produced a new duplicate log; full inbox/outbox/projection
+fingerprints and counts stayed unchanged; native queue counts returned to zero.
+Consumer outages/crash boundaries, poison-message recovery, sustained throughput
+and token renewal across an actual expiry boundary remain unverified in Azure.

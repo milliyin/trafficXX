@@ -3,7 +3,9 @@
 We will resend the already processed outbox row 3, keeping its durable message ID
 and payload. This is a controlled duplicate, not a new booking. The current queue
 has broker duplicate detection disabled, so the consumer inbox must suppress the
-repeated effect. Broker duplicate processing is not yet verified in Azure.
+repeated effect. This controlled duplicate-delivery experiment passed in Azure:
+one acknowledged resend, a new consumer duplicate log, unchanged stored state
+and native queue counts all zero.
 
 ## Step 1: capture the before state
 
@@ -69,7 +71,10 @@ Require a NEW event_delivery outcome=duplicate log for
 151af373-f74d-4bc4-8c14-e3b6cf13aa51 after the send_started_at timestamp printed
 by the sender. An old log or send acknowledgement alone does not prove this
 resend was processed. Allow a few seconds and reread logs if needed. Actual
-Azure resend and duplicate outcome are pending.
+Azure resend and duplicate outcome passed: send_started_at was
+2026-10-22T22:03:25.376282Z, one send call was acknowledged with outbox_edited=false,
+and the consumer logged outcome=duplicate for the same message at
+2026-10-22 22:03:25,727. This correlates the new duplicate outcome to the resend.
 
 ## Step 3: compare the after state and native queue counts
 
@@ -96,7 +101,9 @@ name. Expected DUPLICATE_STATE_UNCHANGED with all table counts/fingerprints
 matching, including inbox processed_at and projection updated_at. The comparator
 validates target/identity/read-only markers and hash/count shape. Native queue
 counts must separately show zero active/dead-letter/total messages. These checks
-are prepared; actual after-state/queue results are pending. Keep the original
+passed: the user supplied DUPLICATE_STATE_UNCHANGED with
+counts_and_all_columns_unchanged=true for consumer_inbox, outbox and
+reservation_updates, followed by native active=0, dead_letters=0, total=0. Keep the original
 baseline file; never overwrite it with the after output.
 
 Six baseline, five sender and four comparator offline methods cover read-only
@@ -105,3 +112,18 @@ credential constraints, timestamp-sensitive hashing, changed counts/hashes and
 invalid diagnostic inputs. All 209 offline methods pass. No role changes or
 runtime image rebuild are needed. This deliberate resend tests the successful
 deduplication path; it does not simulate a crash or prove exactly-once delivery.
+
+
+## What this proved and what follows
+
+For this deliberately repeated valid message, the consumer inbox suppressed the
+second effect. Counts and fingerprints for all inbox, projection and outbox
+columns (including timestamps) were unchanged, and the resend was settled.
+This is application deduplication with broker duplicate detection disabled.
+It does not establish exactly-once transport or simulate a process crash.
+
+Next, test a controlled consumer outage: pause the consumer, create a bounded
+amount of valid work, observe the queue accumulate it, then restore the consumer
+and verify inbox/projection agreement plus queue drain. Prepare recovery commands
+before pausing and retain the original replica count. This Azure outage experiment
+has not yet been run; poison-message/dead-letter recovery follows separately.

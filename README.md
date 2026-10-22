@@ -34,6 +34,7 @@ we learn in [memeory.md](memeory.md).
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
 | Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
+| Duplicate message delivery | One acknowledged resend of the original message produced a new duplicate outcome; all inbox/outbox/projection counts and full-row fingerprints stayed unchanged, and native queue counts returned to zero |
 | Consumer processing and drain | Read-only SQL verified all 12 inbox records and six latest projections with zero mismatches/orphans/failure records, plus an error-free heartbeat aged 2.81 seconds; Azure queue counts were active=0, dead_letters=0, total=0 |
 | Queue before consumer | Azure reported 12 active messages, zero dead letters and 12 total messages, matching the published outbox count at this checkpoint |
 
@@ -50,7 +51,8 @@ dead letters. These are point-in-time processing and drain results. Remaining
 workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
-been bootstrapped. Live broker duplicate/redelivery and recovery experiments,
+been bootstrapped. A controlled duplicate resend also passed with unchanged
+stored state and an empty queue. Consumer outage/recovery and poison-message experiments,
 ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
@@ -158,8 +160,10 @@ Next:
    12 matching inbox records, six latest projections and a fresh heartbeat. Native
    queue counts were all zero. The [duplicate-delivery baseline](docs/consumer-duplicate.md) also passed
    (12 inbox rows, six projections, 12 outbox rows with full-state fingerprints).
-   Next run the prepared original-message resend and unchanged-state comparison;
-   deliberate broker redelivery and recovery remain unverified in Azure.
+   One resend then produced a new consumer duplicate outcome; all three table
+   fingerprints/counts stayed unchanged and native queue counts returned to zero.
+   Next test a controlled consumer outage and backlog recovery; this remains
+   unverified in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
