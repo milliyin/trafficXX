@@ -125,8 +125,8 @@ Next:
    then verified worker readiness, stored expiry, assignment release and one
    EXPIRED outbox row. Final Browse availability again showed 100 for both
    demo events. The [publisher SQL login](docs/publisher-azure.md) now passed;
-   its table-grant Job is prepared. Next verify those grants and actual publisher
-   SQL permissions, then configure Azure messaging infrastructure.
+   its outbox/heartbeat grant Job also passed. Next run the prepared publisher
+   permission probe, then configure Azure messaging infrastructure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -158,7 +158,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 130 offline tests; SDK/database responses and the expiry clock are mocked
+passes 138 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

@@ -90,8 +90,10 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/postgres-publisher-grants -c grant
 ```
 
-Expected result is PUBLISHER_GRANTS_OK. Actual Azure grant output remains
-pending. The existing migrator/table owner grants and validates permissions in
+The user supplied real PUBLISHER_GRANTS_OK: read_tables=[outbox],
+heartbeat_read_columns=[last_error,name], reservation_access=false,
+inventory_access=false, outbox_insert=false and destructive_table_access=false.
+The existing migrator/table owner grants and validates permissions in
 one transaction, printing success only after commit. This grant-only action
 skips migration file reads and does not replay migrations or seed data.
 
@@ -124,3 +126,46 @@ outbox columns, elevated/DDL flags and destructive/reference rights. All 130
 offline methods pass. These tests use simulated driver responses, not PostgreSQL.
 Actual publisher-role DML/heartbeat upsert and permission-denial queries are the
 next step, before any Azure broker publication is enabled.
+
+## Test actual publisher SQL permissions
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap postgres-publisher-permission-files -n trafficxx \
+  --from-file=check-publisher-permissions.py=scripts/check-publisher-permissions.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/postgres-publisher-permissions.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/postgres-publisher-permissions-check --timeout=300s
+kubectl logs -n trafficxx job/postgres-publisher-permissions-check -c check
+```
+
+Expected: PUBLISHER_PERMISSIONS_OK, nine allowed operations, 23 denials with
+SQLSTATE 42501, diagnostic_rows_committed=false, broker_messages_sent=0,
+SSL true and admin false. Actual Azure output remains pending.
+
+The probe logs in as publisher with an explicit workload credential and
+verify-full TLS. It selects one pending due outbox row with FOR UPDATE SKIP LOCKED,
+updates attempt/retry metadata, checks the staged retry state, marks publication
+and checks publication state without altering payload/message identity. It then
+inserts a uniquely named diagnostic heartbeat with the real upsert SQL, repeats
+that same upsert with an error value to exercise the conflict-update path, and
+reads only the granted heartbeat columns.
+
+Each denied operation uses a savepoint and must fail with 42501. Other errors
+or unexpected successes fail the probe. The outer transaction is explicitly
+rolled back before success output or on failure. No outbox row is actually
+published or requeued, no diagnostic heartbeat is committed, and no broker
+transport is imported/called. Existing messages are not replaced/reset. Missing
+pending fixture data causes failure rather than synthesizing an outbox event.
+Keep any publisher process stopped while running this pre-deployment check.
+
+Protected operations cover reservation/event/inventory reads or writes, outbox
+INSERT/delete and payload/identity/occurrence edits, heartbeat key renaming,
+heartbeat timestamp read/insert, unrelated worker tables, migration ledger and
+DDL. Eight new offline methods cover required SQL/denials, unexpected successes,
+wrong SQLSTATE, missing fixture, zero-row updates, final rollback, failed upsert
+rollback and wrong injected client. All 138 offline methods pass with simulated
+SDK/driver responses; actual PostgreSQL upsert/denial behavior remains pending
+the user-run Job above. Cloud broker access and deployment remain later stages.
