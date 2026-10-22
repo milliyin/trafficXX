@@ -34,6 +34,7 @@ we learn in [memeory.md](memeory.md).
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
 | Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
+| Live monitoring warning and recovery | Consumer pause produced aged-processing and stale-heartbeat signals in JSON/metrics; restart cleared both, emptied the native queue and verified18inbox events/nine latest projections. One additional publish failure was recorded and delivery recovered; cause undiagnosed |
 | Internal operations monitoring | One read-only operations replica deployed; live health/readiness/backlog and worker/alert metric checks passed with no active alerts. Historical audits remain separate; external scrape/notifications are not configured |
 | Invalid message isolation and recovery | Unsupported schema was dead-lettered with INVALID_EVENT_SCHEMA; business-table fingerprints stayed unchanged; targeted cleanup emptied the queue. Follow-up SQL verified 16 events/eight latest projections, a retained rejection audit and healthy heartbeat; native queue counts all zero |
 | Azure consumer backlog recovery | With zero consumer pods, two hold/cancel events waited in the queue; restoring one replica drained it to zero. Read-only SQL verified all 14 inbox records and seven latest projections, with no mismatches/failure records and a healthy heartbeat |
@@ -182,8 +183,11 @@ Next:
    real monitoring-query/permission checks passed (four query paths, 30 denials).
    Updated monitoring source now separates historical audits, detects missing
    expected workers and exports worker/alert gauges. ACR build ca2 passed for the updated image. The internal
-   operations deployment and healthy HTTP/worker-metric checks passed. Next run
-   the prepared live backlog-aging/stale-heartbeat appearance and recovery drill.
+   operations deployment and healthy HTTP/worker-metric checks passed. The live
+   drill then verified aged-backlog/stale-consumer warning gauges appeared and
+   cleared after recovery, with18matching inbox records/nine projections and
+   an empty native queue. Next connect collection, alert rules and notification
+   routing; investigate the recorded send failure before claiming clean publication.
    External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.

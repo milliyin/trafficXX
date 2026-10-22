@@ -194,8 +194,8 @@ health/readiness/backlog/metrics passed with mocked SQL; exported text was parse
 by prometheus_client. Four mocked build-helper scenarios passed (success, wrong
 subscription, build failure, bad digest), plus Bash syntax/LF. Local Docker was
 not restarted; PostgreSQL/AMQP integration suites were not rerun locally. Hosted
-CI status was not checked. Real Azure healthy HTTP subsequently passed; active
-alert appearance/recovery is the next experiment.
+CI status was not checked. Real Azure healthy HTTP and the subsequent active alert appearance/recovery
+drill both passed, as recorded below.
 
 ## Deploy internal operations and check healthy HTTP/metrics
 
@@ -266,7 +266,25 @@ healthy HTTP snapshot and all worker/alert metrics to return to zero-alert state
 Final expected output OPERATIONS_ALERT_RECOVERY_OK includes before/during/after
 monitoring and CONSUMER_BACKLOG_RECOVERY_OK evidence. From the current16event
 checkpoint, expect18inbox/outbox rows and nine latest projections afterward.
-Actual live alert appearance/recovery is pending.
+The user supplied OPERATIONS_ALERTS_OBSERVED and OPERATIONS_ALERT_RECOVERY_OK
+for cancelled reservation72d72373-d3ab-446d-9142-c9cf99969329:
+
+| Stage | Verified evidence |
+|---|---|
+| Before | No backlog/alerts,16processed events, healthy HTTP/worker metrics |
+| Paused | Zero consumer replicas/pods; native active2/DLQ0/total2 |
+| Active signals | Processing outstanding2, oldest30.706597seconds; consumer heartbeat40.683745seconds old; publisher heartbeat1.018812seconds old |
+| Alert export | PROCESSING_BACKLOG_AGING and CONSUMER_HEARTBEAT_STALE both verified in JSON and metric gauges |
+| After | Consumer restored to one replica; native active0/DLQ0/total0; no active alerts and zero backlog |
+| Stored state |18outbox/inbox rows, nine latest projections, zero missing/payload/projection/orphan mismatches and zero processing-failure records |
+| Fresh workers | Consumer1.116569seconds, publisher0.444427seconds, both error-free |
+| SQL observer | Read-only migrator, TLSv1.3; heartbeat1.201273seconds old |
+
+The retained dead-letter audit count remained1 throughout and did not create an
+active warning. publish_failures_total increased1to2 during the drill; all events
+were eventually published and processed, but the cause of the extra send failure
+has not been diagnosed. This is successful recovery evidence, not a claim of
+error-free publication or an availability/latency SLO.
 
 This drill changes no images or database grants. It retains the cancelled
 reservation and its event history. As with the backlog test, hard Cloud Shell
@@ -281,8 +299,7 @@ kubectl rollout status deployment/consumer -n trafficxx --timeout=180s
 Eight new offline methods cover joint JSON/metric evidence, historical audit not
 counting as active alert evidence, bounded waits, full fake-cloud recovery,
 monitoring timeout restoration, failed clearing and bad baseline before mutation.
-All272offline methods pass, plus Bash syntax/LF checks. These do not replace the
-pending user-run live alert drill.
+All272offline methods pass, plus Bash syntax/LF checks. The successful user-run live evidence above is separate from those local tests.
 
 ## Remaining monitoring integration
 
