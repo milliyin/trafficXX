@@ -44,7 +44,7 @@ credential, with no fallback to human/node credentials and no token/raw-error
 output. It installs pinned dependencies before the bounded, non-root login check.
 
 Seven mocked scenarios passed: success, wrong client, wrong service account,
-missing CA, admin, SQL failure and token failure. All235offline methods passed.
+missing CA, admin, SQL failure and token failure. All243offline methods passed.
 These local checks do not substitute for real Azure login evidence.
 
 ## Grant column-scoped monitoring reads
@@ -80,7 +80,9 @@ kubectl logs -n trafficxx job/postgres-operations-grants -c grant
 
 Expected OPERATIONS_GRANTS_OK with the exact read_columns policy and writes=false,
 payload_access=false, reservation_access=false, inventory_access=false. Actual
-Azure grant output is pending. The grant-only action requires migrator ownership,
+Azure OPERATIONS_GRANTS_OK was supplied by the user, with the exact five-table
+column policy above and all write/payload/reservation/inventory/destructive flags
+false. The grant-only action requires migrator ownership,
 checks effective role flags and all public table columns for extra/missing access,
 including inherited privileges, and prints success only after commit. It skips
 migration payload files and adds no broker role or runtime deployment. Previously
@@ -88,9 +90,49 @@ existing unexpected rights cause rollback rather than automatic revocation.
 
 Six added offline methods cover exact SELECT-only grants, ownership, protected
 reads, all writes/reference/destructive rights, every required read/column and
-role/DDL flags. All235offline methods pass. Real operations-role COUNT(*), joined
+role/DDL flags. All243offline methods pass. Real operations-role COUNT(*), joined
 backlog/age reads, heartbeat queries and negative SQL tests follow after this
 Job succeeds. They are separate from catalog-based effective-grant checks.
+
+## Verify real monitoring queries and protected operations
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap postgres-operations-permission-files -n trafficxx \
+  --from-file=check-operations-permissions.py=scripts/check-operations-permissions.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/postgres-operations-permissions.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/postgres-operations-permissions-check --timeout=300s
+kubectl logs -n trafficxx job/postgres-operations-permissions-check -c check
+```
+
+Expected OPERATIONS_PERMISSIONS_OK with four allowed paths: readiness,
+backlog join/ages, count-only sources and worker heartbeat reads; 30 protected
+operations must fail with SQLSTATE42501. Actual Azure output is pending. The
+three monitoring SQL expressions match the existing operations.snapshot queries,
+including COUNT(*) under column-only grants. The diagnostic does not invoke the
+HTTP app or claim its alert logic is fixed. It does not require a zero backlog:
+its purpose is query permission verification, not a healthy-state assertion.
+
+The result includes numeric aggregate metrics and worker names/ages/error-presence
+booleans. Worker raw errors, message bodies and tokens are not printed. Historical
+observed_dead_letters_total should be1 after the completed invalid-message test;
+that is not a native DLQ count. native_queue_counts_available remainsfalse.
+
+Negative probes cover protected booking/inventory/payload/envelope/projection/
+ledger reads, inserts/updates/deletes across monitored tables and DDL. Each uses
+a savepoint and must return42501; unrelated SQL errors and unexpectedly allowed
+operations fail the diagnostic. The transaction is READ WRITE solely so read-only
+transaction errors cannot masquerade as privilege denials; all positive queries
+are SELECT, and the whole transaction is rolled back before success. No diagnostic
+rows are committed, no broker is contacted and no additional grants are applied.
+
+Eight new offline methods cover allowed queries, all unexpected permission
+successes, wrong SQLSTATE, invalid metric/heartbeat values, raw-error redaction,
+outer rollback/verified TLS, positive-query failure and wrong injected identity.
+All243offline methods pass. Real allowed/denied evidence remains separate.
 
 ## Next steps and current application limits
 
