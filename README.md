@@ -175,9 +175,10 @@ Next:
    INVALID_EVENT_SCHEMA dead-lettering, unchanged business-table fingerprints
    and targeted cleanup back to an empty queue. The follow-up read-only observer
    verified 16 events/eight latest projections and the retained rejection audit;
-   native queue counts were all zero. Next run the prepared
-   [operations SQL identity setup](docs/operations-azure.md), then verify narrow
-   monitoring permissions and adapt backlog/heartbeat signals before deployment.
+   native queue counts were all zero. The
+   [operations SQL identity setup](docs/operations-azure.md) passed its real
+   non-admin TLS login. Next run the prepared column-scoped monitoring grants,
+   verify allowed/denied SQL, then adapt backlog/heartbeat signals before deployment.
    External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
@@ -210,7 +211,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 229 offline tests; SDK/database responses and the expiry clock are mocked
+passes 235 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

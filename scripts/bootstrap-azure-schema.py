@@ -442,7 +442,77 @@ def grant_consumer(connection):
             'outbox_access': False, 'destructive_table_access': False}
 
 
-def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False, publisher_only=False, consumer_only=False):
+OPERATIONS_READ_COLUMNS = {('outbox', c) for c in (
+    'created_at', 'published_at', 'message_id', 'publish_failures')}
+OPERATIONS_READ_COLUMNS |= {('consumer_inbox', 'message_id')}
+OPERATIONS_READ_COLUMNS |= {('worker_heartbeats', c) for c in ('name', 'last_seen_at', 'last_error')}
+OPERATIONS_READ_COLUMNS |= {('worker_failures', 'id'), ('observed_dead_letters', 'queue_name')}
+
+
+def grant_operations(connection):
+    """Grant only the operations snapshot reads; reject extra access and all writes."""
+    grantee = 'trafficxx-lab-operations'
+    connection.execute('SELECT pg_advisory_xact_lock(7432002)')
+    owned = {row['relname']: row for row in relations(connection)}
+    if any(name not in owned or owned[name]['owner'] != ROLE or owned[name]['relkind'] != 'r'
+           for name in ('outbox', 'consumer_inbox', 'worker_heartbeats',
+                        'worker_failures', 'observed_dead_letters')):
+        raise ValueError('Migrator must own operations source tables')
+    grants = (
+        'GRANT SELECT (created_at, published_at, message_id, publish_failures) ON public.outbox',
+        'GRANT SELECT (message_id) ON public.consumer_inbox',
+        'GRANT SELECT (name, last_seen_at, last_error) ON public.worker_heartbeats',
+        # COUNT(*) needs SELECT on at least one column; no row details required.
+        'GRANT SELECT (id) ON public.worker_failures',
+        'GRANT SELECT (queue_name) ON public.observed_dead_letters',
+    )
+    for sql in grants:
+        connection.execute(sql + ' TO "trafficxx-lab-operations"')
+    access = connection.execute("""
+        SELECT has_database_privilege(rolname, 'trafficxx', 'CONNECT') AS connect,
+               has_schema_privilege(rolname, 'public', 'USAGE') AS usage,
+               has_schema_privilege(rolname, 'public', 'CREATE') AS create_objects,
+               has_database_privilege(rolname, 'trafficxx', 'CREATE') AS create_schema,
+               pg_has_role(rolname, 'azure_pg_admin', 'MEMBER') AS admin,
+               rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+        FROM pg_roles WHERE rolname = %s
+    """, (grantee,)).fetchone()
+    if (not access or not access['connect'] or not access['usage']
+            or any(access[key] for key in ('create_objects', 'create_schema', 'admin', 'rolsuper',
+                                           'rolcreatedb', 'rolcreaterole', 'rolreplication', 'rolbypassrls'))):
+        raise ValueError('Unexpected effective operations role privileges')
+    columns = connection.execute("""
+        SELECT c.relname, a.attname,
+               has_column_privilege(%s, c.oid, a.attnum, 'SELECT') AS can_read,
+               has_column_privilege(%s, c.oid, a.attnum, 'INSERT') AS can_insert,
+               has_column_privilege(%s, c.oid, a.attnum, 'UPDATE') AS can_update,
+               has_column_privilege(%s, c.oid, a.attnum, 'REFERENCES') AS can_reference,
+               has_table_privilege(%s, c.oid, 'DELETE,TRUNCATE,TRIGGER') AS destructive
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.oid
+        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+          AND a.attnum > 0 AND NOT a.attisdropped
+    """, (grantee,) * 5).fetchall()
+    seen = set()
+    for column in columns:
+        pair = (column['relname'], column['attname'])
+        seen.add(pair)
+        if (column['can_read'] != (pair in OPERATIONS_READ_COLUMNS)
+                or column['can_insert']
+                or column['can_update']
+                or column['can_reference'] or column['destructive']):
+            raise ValueError('Unexpected effective operations column/table permissions')
+    if not OPERATIONS_READ_COLUMNS <= seen:
+        raise ValueError('Required operations columns are missing')
+    return {'result': 'OPERATIONS_GRANTS_OK', 'identity': ROLE, 'grantee': grantee,
+            'read_columns': {table: sorted(column for name, column in OPERATIONS_READ_COLUMNS if name == table)
+                             for table in sorted({name for name, _ in OPERATIONS_READ_COLUMNS})},
+            'writes': False, 'payload_access': False,
+            'reservation_access': False, 'inventory_access': False,
+            'outbox_payload_access': False, 'destructive_table_access': False}
+
+
+def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False, publisher_only=False, consumer_only=False, operations_only=False):
     from azure.identity import WorkloadIdentityCredential
     import psycopg
     from psycopg.rows import dict_row
@@ -461,7 +531,7 @@ def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False
         raise ValueError("Missing public CA bundle")
     folder = Path(__file__).resolve().parent
     # read_text normalizes CRLF, matching the existing additive migration runner.
-    payloads = {} if grant_only or seed_only or booking_only or expiry_only or publisher_only or consumer_only else {
+    payloads = {} if grant_only or seed_only or booking_only or expiry_only or publisher_only or consumer_only or operations_only else {
         name: (folder / name).read_text(encoding="utf-8") for name in FILES
     }
     with WorkloadIdentityCredential(tenant_id=TENANT, client_id=CLIENT,
@@ -486,7 +556,9 @@ def run(grant_only=False, seed_only=False, booking_only=False, expiry_only=False
                     or not session["ssl"] or any(session[key] for key in (
                         "rolsuper", "rolcreatedb", "rolcreaterole", "rolreplication", "rolbypassrls", "admin"))):
                 raise ValueError("Unexpected SQL identity, TLS or administrator privileges")
-            if consumer_only:
+            if operations_only:
+                result = grant_operations(connection)
+            elif consumer_only:
                 result = grant_consumer(connection)
             elif publisher_only:
                 result = grant_publisher(connection)
@@ -519,16 +591,19 @@ if __name__ == "__main__":
                          help="Grant publisher outbox and heartbeat SQL permissions")
     actions.add_argument("--grant-consumer", action="store_true",
                          help="Grant consumer inbox, projection and worker bookkeeping permissions")
+    actions.add_argument("--grant-operations", action="store_true",
+                         help="Grant column-scoped monitoring reads without writes")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     try:
         run(grant_only=args.grant_browse, seed_only=args.seed_demo, booking_only=args.grant_booking,
-            expiry_only=args.grant_expiry, publisher_only=args.grant_publisher, consumer_only=args.grant_consumer)
+            expiry_only=args.grant_expiry, publisher_only=args.grant_publisher, consumer_only=args.grant_consumer,
+            operations_only=args.grant_operations)
     except Exception as error:
         state = getattr(error, "sqlstate", None)
         if not isinstance(state, str) or len(state) != 5 or not state.isalnum():
             state = None
-        result = 'CONSUMER_GRANTS_FAILED' if args.grant_consumer else 'PUBLISHER_GRANTS_FAILED' if args.grant_publisher else 'EXPIRY_GRANTS_FAILED' if args.grant_expiry else 'BOOKING_GRANTS_FAILED' if args.grant_booking else (
+        result = 'OPERATIONS_GRANTS_FAILED' if args.grant_operations else 'CONSUMER_GRANTS_FAILED' if args.grant_consumer else 'PUBLISHER_GRANTS_FAILED' if args.grant_publisher else 'EXPIRY_GRANTS_FAILED' if args.grant_expiry else 'BOOKING_GRANTS_FAILED' if args.grant_booking else (
             'DEMO_SEED_FAILED' if args.seed_demo else (
                 'BROWSE_GRANTS_FAILED' if args.grant_browse else 'SCHEMA_BOOTSTRAP_FAILED'))
         print(json.dumps({"result": result,

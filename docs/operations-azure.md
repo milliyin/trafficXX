@@ -31,7 +31,9 @@ kubectl logs -n trafficxx job/postgres-operations-identity-check -c check
 
 Expected OPERATIONS_ROLE_READY with CONNECT/USAGE true and CREATE/admin false,
 then SQL_LOGIN_OK as trafficxx-lab-operations over certificate-verified TLS,
-admin=false and the expected client ID. Actual Azure output is pending.
+admin=false and the expected client ID. The user supplied SQL_LOGIN_OK as trafficxx-lab-operations, database trafficxx,
+TLSv1.3, admin=false and expected client ID. A separate OPERATIONS_ROLE_READY
+transcript was not supplied.
 
 Registration runs as the human administrator through the existing temporary
 client helper. It validates exact Entra object/tenant/service mapping and flags
@@ -42,12 +44,57 @@ credential, with no fallback to human/node credentials and no token/raw-error
 output. It installs pinned dependencies before the bounded, non-root login check.
 
 Seven mocked scenarios passed: success, wrong client, wrong service account,
-missing CA, admin, SQL failure and token failure. All229offline methods passed.
+missing CA, admin, SQL failure and token failure. All235offline methods passed.
 These local checks do not substitute for real Azure login evidence.
+
+## Grant column-scoped monitoring reads
+
+The migrator/table owner grants only SELECT on these columns:
+
+| Table | Readable columns |
+|---|---|
+| outbox | created_at, published_at, message_id, publish_failures |
+| consumer_inbox | message_id |
+| worker_heartbeats | name, last_seen_at, last_error |
+| worker_failures | id |
+| observed_dead_letters | queue_name |
+
+The single-column grants on the two count-only sources allow COUNT(*) while
+excluding error/message details. These columns themselves remain readable; this
+is column-level access, not an aggregate-only view or row-isolation boundary.
+No payload/envelope, reservation, event, inventory, projection or ledger access
+is granted. INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER/REFERENCES and DDL remain denied.
+See PostgreSQL's [SELECT privilege rules](https://www.postgresql.org/docs/17/sql-select.html).
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap postgres-operations-grant-files -n trafficxx \
+  --from-file=bootstrap-azure-schema.py=scripts/bootstrap-azure-schema.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/jobs/postgres-operations-grants.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/postgres-operations-grants --timeout=300s
+kubectl logs -n trafficxx job/postgres-operations-grants -c grant
+```
+
+Expected OPERATIONS_GRANTS_OK with the exact read_columns policy and writes=false,
+payload_access=false, reservation_access=false, inventory_access=false. Actual
+Azure grant output is pending. The grant-only action requires migrator ownership,
+checks effective role flags and all public table columns for extra/missing access,
+including inherited privileges, and prints success only after commit. It skips
+migration payload files and adds no broker role or runtime deployment. Previously
+existing unexpected rights cause rollback rather than automatic revocation.
+
+Six added offline methods cover exact SELECT-only grants, ownership, protected
+reads, all writes/reference/destructive rights, every required read/column and
+role/DDL flags. All235offline methods pass. Real operations-role COUNT(*), joined
+backlog/age reads, heartbeat queries and negative SQL tests follow after this
+Job succeeds. They are separate from catalog-based effective-grant checks.
 
 ## Next steps and current application limits
 
-After login, derive exact column reads from trafficxx.operations.snapshot:
+The prepared policy follows trafficxx.operations.snapshot:
 outbox created_at/published_at/message_id/publish_failures; consumer inbox
 message_id; heartbeat name/last_seen_at/last_error; count-only access to failure
 and dead-letter audit tables through narrow readable columns. No reservation,
