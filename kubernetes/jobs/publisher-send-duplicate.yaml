@@ -1,0 +1,84 @@
+# Resends original published event 3; no outbox updates or publication-marker changes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: publisher-send-duplicate
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: 'true'
+    spec:
+      serviceAccountName: publisher
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: temporary
+        emptyDir:
+          sizeLimit: 64Mi
+      - name: check-files
+        configMap:
+          name: publisher-send-duplicate-files
+          defaultMode: 292
+      containers:
+      - name: publish
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:22a28c8c6cc45354a327b8b7d5423cb4b169daa49a3efe320c392173dc923dbc
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -u
+        - /checks/send-duplicate-azure.py
+        env:
+        - name: PYTHONPATH
+          value: /app
+        - name: SERVICEBUS_FULLY_QUALIFIED_NAMESPACE
+          value: trafficxx-sb-e8708a85.servicebus.windows.net
+        - name: SERVICEBUS_QUEUE
+          value: reservation-events
+        - name: AZURE_TOKEN_CREDENTIALS
+          value: WorkloadIdentityCredential
+        - name: DATABASE_AUTH_MODE
+          value: workload_identity
+        - name: PGHOST
+          value: trafficxx-pg-e8708a85.postgres.database.azure.com
+        - name: PGPORT
+          value: '5432'
+        - name: PGDATABASE
+          value: trafficxx
+        - name: PGUSER
+          value: trafficxx-lab-publisher
+        - name: PGSSLROOTCERT
+          value: /etc/ssl/certs/ca-certificates.crt
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+        - name: check-files
+          mountPath: /checks
+          readOnly: true
+      restartPolicy: Never

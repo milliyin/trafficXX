@@ -34,20 +34,74 @@ kubectl logs -n trafficxx job/duplicate-baseline-check -c check | tee ~/trafficx
 Expected DUPLICATE_BASELINE_OK, with outbox_id=3, its original message ID, table
 counts and fingerprints. Save the JSON for the after comparison. The default
 lab checkpoint has 12 inbox rows, six projections and 12 outbox rows. Actual
-baseline output is pending. No message is resent at this first step.
+baseline passed: message 151af373-f74d-4bc4-8c14-e3b6cf13aa51; counts
+12/6/12; inbox SHA256 12390ff30702acd48b0a33cd8972acf0545522e0e4f6eb0e40cd26f6c99e0551,
+projection SHA256 b3645941e0d9a4337b7b98aacba2588767366e6c9622f5a37519d4439a1e92fe,
+outbox SHA256 3d8a0ec47fdb5e9050a090ce9b827b25a2c3a96cf5ffe0e55577b38fa5b25368.
+The user-run read-only migrator observer used TLSv1.3. No message was resent
+by that first step.
 
-## Following steps
+## Step 2: resend the original event once
 
-After inspecting the baseline, send this same event once using the existing
-publisher identity and queue Sender permission, without changing outbox metadata.
-Observe a new duplicate delivery log from the consumer, then take a new read-only
-snapshot and require all three table fingerprints/counts to match the baseline.
-Obtain native queue counts to confirm the duplicate was settled with no dead
-letters. Those sender/after-check steps will be prepared after the baseline is
-captured. A failed/ambiguous send must not silently generate a different ID or
-be treated as proof of consumer deduplication.
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap publisher-send-duplicate-files -n trafficxx \
+  --from-file=send-duplicate-azure.py=scripts/send-duplicate-azure.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/jobs/publisher-send-duplicate.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/publisher-send-duplicate --timeout=180s
+kubectl logs -n trafficxx job/publisher-send-duplicate -c publish
+kubectl logs -n trafficxx deployment/consumer --since=5m --tail=50
+```
 
-Six offline methods cover read-only statements, raw-content redaction, stable
-fingerprints, timestamp-only changes, identity/TLS/admin rejection, missing or
-unprocessed target and empty-source rejection. The existing runtime image is
-reused. Real duplicate delivery and unchanged-state evidence remain pending.
+Expected DUPLICATE_SEND_OK, send_calls=1, send_acknowledged=true and
+outbox_edited=false. The sender reads published row3 as publisher with verified
+TLS and reconstructs its original envelope through the runtime helper. It uses
+the runtime workload-only broker credential/send path, keeping the exact ID,
+payload and occurrence time. It does not call publish_one, mark_published or
+heartbeat, and makes no SQL writes. The Job has backoffLimit0; SDK transport
+retries are disabled. An ambiguous send failure is not proof of duplicate
+handling; inspect the stable message ID/logs before retrying.
+
+Require a NEW event_delivery outcome=duplicate log for
+151af373-f74d-4bc4-8c14-e3b6cf13aa51 after the send_started_at timestamp printed
+by the sender. An old log or send acknowledgement alone does not prove this
+resend was processed. Allow a few seconds and reread logs if needed. Actual
+Azure resend and duplicate outcome are pending.
+
+## Step 3: compare the after state and native queue counts
+
+Once the new duplicate log is observed:
+
+```bash
+kubectl apply -f kubernetes/checks/duplicate-after.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/duplicate-after-check --timeout=180s
+kubectl logs -n trafficxx job/duplicate-after-check -c check \
+  | tee ~/trafficxx-duplicate-after.json
+python3 scripts/compare-duplicate-state.py \
+  ~/trafficxx-duplicate-baseline.json ~/trafficxx-duplicate-after.json
+az servicebus queue show \
+  --resource-group trafficxx-lab-rg \
+  --namespace-name trafficxx-sb-e8708a85 \
+  --name reservation-events \
+  --query '{active:countDetails.activeMessageCount,dead_letters:countDetails.deadLetterMessageCount,total:messageCount}' \
+  --output json
+```
+
+The after Job reuses the same baseline script/ConfigMap under a distinct Job
+name. Expected DUPLICATE_STATE_UNCHANGED with all table counts/fingerprints
+matching, including inbox processed_at and projection updated_at. The comparator
+validates target/identity/read-only markers and hash/count shape. Native queue
+counts must separately show zero active/dead-letter/total messages. These checks
+are prepared; actual after-state/queue results are pending. Keep the original
+baseline file; never overwrite it with the after output.
+
+Six baseline, five sender and four comparator offline methods cover read-only
+SQL, stable message selection, one send attempt, ambiguous send/close errors,
+credential constraints, timestamp-sensitive hashing, changed counts/hashes and
+invalid diagnostic inputs. All 209 offline methods pass. No role changes or
+runtime image rebuild are needed. This deliberate resend tests the successful
+deduplication path; it does not simulate a crash or prove exactly-once delivery.
