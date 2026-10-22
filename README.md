@@ -156,8 +156,9 @@ Next:
    access and send denial over TLS 1.3 without consuming messages. The
    consumer emitted 12 processed logs, then passed read-only verification of
    12 matching inbox records, six latest projections and a fresh heartbeat. Native
-   queue counts were all zero. Next test deliberate broker duplicate delivery
-   and recovery boundaries; these have not yet been exercised in Azure.
+   queue counts were all zero. Next capture the [duplicate-delivery baseline](docs/consumer-duplicate.md),
+   then test deliberate broker redelivery and recovery boundaries. These have
+   not yet been exercised in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -189,7 +190,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 194 offline tests; SDK/database responses and the expiry clock are mocked
+passes 200 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
