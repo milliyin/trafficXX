@@ -1,0 +1,93 @@
+# Continuously publishes REAL committed outbox history; no consumer is deployed yet.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: publisher
+  namespace: trafficxx
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trafficxx-publisher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trafficxx-publisher
+        azure.workload.identity/use: 'true'
+    spec:
+      serviceAccountName: publisher
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: temporary
+        emptyDir:
+          sizeLimit: 64Mi
+      containers:
+      - name: publisher
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:22a28c8c6cc45354a327b8b7d5423cb4b169daa49a3efe320c392173dc923dbc
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -u
+        - -m
+        - trafficxx.publisher
+        env:
+        - name: DATABASE_AUTH_MODE
+          value: workload_identity
+        - name: PGHOST
+          value: trafficxx-pg-e8708a85.postgres.database.azure.com
+        - name: PGPORT
+          value: '5432'
+        - name: PGDATABASE
+          value: trafficxx
+        - name: PGUSER
+          value: trafficxx-lab-publisher
+        - name: PGSSLROOTCERT
+          value: /etc/ssl/certs/ca-certificates.crt
+        - name: AZURE_TOKEN_CREDENTIALS
+          value: WorkloadIdentityCredential
+        - name: SERVICEBUS_FULLY_QUALIFIED_NAMESPACE
+          value: trafficxx-sb-e8708a85.servicebus.windows.net
+        - name: SERVICEBUS_QUEUE
+          value: reservation-events
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys\ntry:\n    from trafficxx.db import connect\n    with connect()\
+              \ as connection:\n        connection.execute('SELECT 1').fetchone()\n\
+              except Exception:\n    sys.exit(1)\n"
+          initialDelaySeconds: 5
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+  strategy:
+    type: Recreate

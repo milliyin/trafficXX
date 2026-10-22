@@ -30,12 +30,14 @@ we learn in [memeory.md](memeory.md).
 | Real hold expiry and seat reuse | After a real 305-second wait, a booking transaction expired the old A1 hold and created a replacement; both replicas verified EXPIRED, old-key replay stayed expired and replacement was cancelled |
 | Background expiry worker | Own non-admin login and grants verified; nine allowed SQL operations and fourteen denials passed. Idle A2 hold became EXPIRED after a 310-second wait; read-only SQL found zero assignments and one EXPIRED outbox row with no expiry-triggering API calls after creation |
 | Private Service Bus access | Publisher resolved and connected to private endpoint 10.40.17.4 over TLS 1.3, opened a sender link and was denied receive access; that diagnostic sent zero messages |
+| First live outbox publication | Real application publisher sent outbox row 3 with stable message ID, received acknowledgement, confirmed its committed published marker and recorded a heartbeat; consumer processing is not yet verified |
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
 passed with two Ready replicas on separate application nodes; its HTTP check
 verified health, database readiness, the correct API module and a missing reservation.
 The expiry worker is deployed and passed a controlled idle-hold expiry experiment
-with raw read-only SQL evidence. Other workers are not deployed.
+with raw read-only SQL evidence. A one-shot publisher Job passed; its continuous
+Deployment is prepared but not yet verified running. Other workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. Live Azure Service Bus publication/consumer checks, ingress, GitOps, production customer authentication,
@@ -131,8 +133,9 @@ Next:
    messages). The private Service Bus plan had six additions and no existing
    changes; the user supplied the resulting namespace/queue/private-endpoint
    outputs. Its AKS check passed private DNS/TLS and sender-link access, with
-   receive access denied and no messages sent. Next run the prepared one-event
-   publisher Job before deploying the continuous publisher.
+   receive access denied and no messages sent. The one-event publisher Job then
+   passed a real send, persisted publication readback and heartbeat. Next deploy
+   the prepared continuous publisher and verify its outbox drain and queue state.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

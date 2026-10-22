@@ -4,8 +4,9 @@ The background expiry worker passed the controlled idle-hold experiment.
 The subsequent user-run BROWSE_DEMO_HTTP_OK again reported health alive,
 readiness ready and 100 available for each demo event. Reservation/outbox
 history remains intentionally. The user subsequently supplied Terraform outputs for the Azure Service Bus
-namespace, queue and private endpoint. Live broker connectivity/authorization
-and publisher deployment remain unverified.
+namespace, queue and private endpoint. Live private broker access and one real
+application outbox send subsequently passed. Continuous publisher deployment,
+backlog drain and consumer processing remain unverified.
 
 ## Register the publisher SQL identity
 
@@ -344,7 +345,10 @@ kubectl logs -n trafficxx job/publisher-send-one -c publish
 
 Expected PUBLISHER_SEND_OK: send_calls=1, send_acknowledged=true,
 publication_committed=true, heartbeat_recorded=true and stable outbox/message IDs.
-Actual Azure publication is pending. The existing image runs the actual
+The user supplied real PUBLISHER_SEND_OK: send_calls=1, send_acknowledged=true,
+publication_committed=true, outbox_id=3, message_id=151af373-f74d-4bc4-8c14-e3b6cf13aa51,
+event_status=HELD, heartbeat_recorded=true and broker_credential=WorkloadIdentityCredential.
+The existing image runs the actual
 trafficxx.broker.client/send_event and messaging.publish_one/heartbeat paths,
 not a replacement send implementation. Read-only queries then verify the outbox
 marker, durable message identity, attempts/cleared error and heartbeat values.
@@ -374,4 +378,47 @@ made. Eight new offline methods cover the real-function orchestration, empty
 outbox, send-then-commit failure, client-close failure, later heartbeat/readback
 failure, accidental second send and unsafe credential preflight. All 154 offline
 methods pass with mocked broker/database responses. The actual live send and
-persisted readback still require the user-run Job above.
+persisted readback subsequently passed in the user-run Job above.
+
+## Deploy the continuous publisher
+
+This starts publishing all remaining committed outbox history to the live queue,
+including older HELD/CANCELLED/EXPIRED events. It marks published rows and updates
+the publisher heartbeat. It does not create bookings or rewrite reservation
+state. The consumer is not deployed, so messages wait for later processing.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/deploy-publisher.sh
+kubectl logs -n trafficxx deployment/publisher --tail=50
+```
+
+Expected PUBLISHER_DEPLOYED and one Ready Running publisher pod. Successful sends
+log outbox_publish outcome=published; idle loops do not log a publication. Errors
+can log safe reconnect/retry classifications. Actual rollout/drain evidence is
+pending. Do not rerun the earlier one-shot Job to start the continuous process.
+
+The one-replica Recreate Deployment uses the same reviewed immutable image,
+publisher service account/SQL role, private namespace/queue and
+AZURE_TOKEN_CREDENTIALS=WorkloadIdentityCredential. The existing SDK version
+supports that allowlist, as proven in the one-shot configuration. No new image,
+SQL/broker grants, connection strings, HTTP service or public endpoint is added.
+It retains non-root/read-only-root/dropped-capability/resource settings.
+
+The existing runtime calls publish_one repeatedly and records a heartbeat each
+iteration. Stable message IDs survive retries; sending and marking publication
+cannot be one cross-service atomic transaction, so duplicate sends remain
+possible. The later consumer must deduplicate. SQL errors and broker failures
+use the existing bounded-backoff/reconnect behavior; this deployment does not
+add a new retry implementation.
+
+Readiness only verifies a database connection/SELECT 1, not broker health or loop
+progress. No application liveness probe detects a stuck loop; the publisher
+has an SQL heartbeat but readiness does not read its timestamp. Verify persisted
+outbox counts and heartbeat freshness separately after rollout. One replica is
+a lab topology, not publisher HA. Four stubbed deployment scenarios passed
+(success, wrong subscription, wrong context and apply failure), Bash syntax/LF
+and manifest module/identity/image/security/configuration checks passed, and all
+154 offline methods pass. Actual deployment, outbox drain and live queue counts
+remain pending; continuous delivery/consumer effects are not claimed.
