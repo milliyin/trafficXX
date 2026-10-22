@@ -1,9 +1,9 @@
 # Invalid-message and dead-letter experiment
 
 The previous consumer-outage test passed with 14 inbox/outbox rows and seven
-latest projections. This new experiment will send ONE identifiable invalid
-message and check schema rejection, no business effects, targeted DLQ cleanup
-and subsequent valid-message progress. Actual Azure results are pending.
+latest projections. The invalid-message rejection, unchanged business state and
+targeted DLQ cleanup stages have now passed. Valid-message progress and retained
+SQL audit verification are the remaining checks.
 
 Diagnostic ID: bd7fe2e5-7631-4366-9594-69b82ba8d07a. Its JSON declares unsupported
 schema_version=999 and is intentionally missing reservation-event fields.
@@ -36,7 +36,8 @@ kubectl logs -n trafficxx job/poison-baseline-check -c check \
 
 Expected DUPLICATE_BASELINE_OK (the reused read-only observer's name), now with
 14 inbox/outbox rows and seven projection rows. Preserve this separate file.
-Inspect the baseline before sending; no invalid message is sent by this stage.
+The user supplied the fresh baseline with 14 inbox/outbox rows, seven projections
+and TLSv1.3; native counts were zero. This stage made no sends.
 
 ## Prepared send and peek steps
 
@@ -60,7 +61,9 @@ for the diagnostic ID, then POISON_DLQ_PEEK_OK with INVALID_EVENT_SCHEMA and
 settled=false. Peek uses consumer identity and prefetch0 without receive/settlement.
 It requires exactly this one matching DLQ message, browsing up to two to detect
 unexpected neighbors. Body/ID/reason must match. Native counts should become
-active=0, dead_letters=1, total=1. No rows/bodies/tokens are printed by the tools.
+active=0, dead_letters=1, total=1. The user supplied POISON_SEND_OK with one acknowledged send, a new consumer
+dead_letter outcome at2026-10-22 22:13:42.359 and POISON_DLQ_PEEK_OK for the exact
+diagnostic ID/reason, sequence_number=16, settled=false. No bodies/tokens are printed.
 
 All actions use explicit WorkloadIdentityCredential, the expected service account,
 CA-verified TLS, no connection strings, zero SDK retries and backoffLimit0. Sending
@@ -79,8 +82,9 @@ python3 scripts/compare-duplicate-state.py \
   ~/trafficxx-poison-baseline.json ~/trafficxx-poison-after.json
 ```
 
-The existing comparator reports DUPLICATE_STATE_UNCHANGED for matching fingerprints;
-its label is reused, but here it proves no inbox/outbox/projection field changed
+The user supplied DUPLICATE_STATE_UNCHANGED with all business-table counts and
+full-row hashes unchanged (14 inbox/outbox, seven projections), plus native
+active=0, dead_letters=1, total=1 before cleanup. Here the reused label proves no inbox/outbox/projection field changed
 because of this invalid message. Historical dead-letter tracking is excluded from
 those business-table hashes and intentionally changes. After inspecting the result,
 complete ONLY the diagnostic dead letter:
@@ -91,7 +95,9 @@ kubectl wait -n trafficxx --for=condition=complete job/poison-cleanup --timeout=
 kubectl logs -n trafficxx job/poison-cleanup -c check
 ```
 
-Expected POISON_CLEANUP_OK with completion_acknowledged=true. Cleanup first peeks,
+Verified POISON_CLEANUP_OK: exact diagnostic ID/reason/sequence16,
+completion_attempted=true, completion_acknowledged=true, no sends. The user
+subsequently supplied native counts active=0, dead_letters=0, total=0. Cleanup first peeks,
 requires exactly one matching diagnostic message, then receives at most one in
 default PEEK_LOCK mode with prefetch0. Before completing, it rechecks ID/body/reason
 and sequence against the peeked message; an unexpected received message is
@@ -100,13 +106,39 @@ Recheck native counts for all zero. An ambiguous completion needs inspection,
 not blind replay. This removes only a disposable diagnostic after its evidence
 has been recorded. See the [SDK receive/settlement semantics](https://learn.microsoft.com/en-us/python/api/azure-servicebus/azure.servicebus.servicebusreceiver?view=azure-python).
 
-Finally run the existing booking flow once and a fresh read-only consumer-drain
-observer to verify valid work still processes. That final evidence and the SQL
-observed-dead-letter audit row will be checked separately after the staged results.
-Actual invalid send, dead-letter reason, unchanged fingerprints, cleanup and valid
-follow-up progress are all pending.
+## Verify a normal booking still processes and its audit remains
+
+Run the existing booking flow ONCE, then the new read-only recovery observer:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/check-booking-flow.sh
+kubectl create configmap poison-recovery-check-files -n trafficxx \
+  --from-file=check-poison-recovery.py=scripts/check-poison-recovery.py \
+  --from-file=check-consumer-drain.py=scripts/check-consumer-drain.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/poison-recovery.yaml
+kubectl wait -n trafficxx --for=condition=complete job/poison-recovery-check --timeout=180s
+kubectl logs -n trafficxx job/poison-recovery-check -c check
+```
+
+Expected BOOKING_FLOW_OK with final_status=CANCELLED, then POISON_RECOVERY_OK.
+The observer reuses the full inbox/payload/projection/heartbeat drain checker,
+which polls up to120seconds. From this controlled14event checkpoint, it requires
+16 total/inbox rows and eight latest projections after exactly one follow-up
+flow. If other tests added work or you reran the flow, inspect the resulting
+history instead of rerunning again. It then reads the retained diagnostic audit
+row and requires queue reservation-events, sequence16, reasonINVALID_EVENT_SCHEMA,
+with no diagnostic inbox row. All SQL observations are read-only under migrator
+identity/verify-full TLS; no audit rows are removed. Native queue counts must be
+checked separately again for all zero after the valid flow.
+
+Actual POISON_RECOVERY_OK, retained SQL audit and final native queue evidence
+are pending. Four new offline methods cover read-only success, missing/wrong/
+duplicate audit, absent new valid work and forbidden diagnostic inbox presence.
 
 Eight added offline methods cover one send, non-destructive peek, exact cleanup,
 wrong/extra messages, unexpected receive abandonment, bounded empty peek, ambiguous
-completion and identity/action preflight. All 225 offline methods pass. Existing
+completion and identity/action preflight. All 229 offline methods pass. Existing
 application image and runtime code remain unchanged.

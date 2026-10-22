@@ -167,9 +167,10 @@ Next:
    fingerprints/counts stayed unchanged and native queue counts returned to zero.
    The [consumer outage/backlog experiment](docs/consumer-backlog.md) then passed:
    two events waited with zero consumer pods and drained after restoration. SQL
-   verified 14 inbox rows and seven latest projections. Next capture the fresh baseline for the prepared
-   [invalid-message/dead-letter experiment](docs/consumer-poison.md), then send,
-   inspect and clean up its unique diagnostic. Actual Azure results remain pending.
+   verified 14 inbox rows and seven latest projections. The [invalid-message experiment](docs/consumer-poison.md) then verified
+   INVALID_EVENT_SCHEMA dead-lettering, unchanged business-table fingerprints
+   and targeted cleanup back to an empty queue. Next run one normal booking
+   and the prepared read-only recovery/audit observer; that evidence is pending.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -201,7 +202,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 225 offline tests; SDK/database responses and the expiry clock are mocked
+passes 229 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
