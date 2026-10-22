@@ -29,6 +29,7 @@ we learn in [memeory.md](memeory.md).
 | Assigned-seat contention across replicas | Different customers requested A1 concurrently: one 201 hold and one 409 SEAT_UNAVAILABLE; both replicas agreed on the winner and final CANCELLED status |
 | Real hold expiry and seat reuse | After a real 305-second wait, a booking transaction expired the old A1 hold and created a replacement; both replicas verified EXPIRED, old-key replay stayed expired and replacement was cancelled |
 | Background expiry worker | Own non-admin login and grants verified; nine allowed SQL operations and fourteen denials passed. Idle A2 hold became EXPIRED after a 310-second wait; read-only SQL found zero assignments and one EXPIRED outbox row with no expiry-triggering API calls after creation |
+| Private Service Bus access | Publisher resolved and connected to private endpoint 10.40.17.4 over TLS 1.3, opened a sender link and was denied receive access; that diagnostic sent zero messages |
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
 passed with two Ready replicas on separate application nodes; its HTTP check
@@ -37,7 +38,7 @@ The expiry worker is deployed and passed a controlled idle-hold expiry experimen
 with raw read-only SQL evidence. Other workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
-been bootstrapped. Live Azure Service Bus access/publication checks, ingress, GitOps, production customer authentication,
+been bootstrapped. Live Azure Service Bus publication/consumer checks, ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
 has not been enabled.
@@ -129,8 +130,9 @@ Next:
    (nine allowed operations, 23 denials, no committed diagnostic changes or sent
    messages). The private Service Bus plan had six additions and no existing
    changes; the user supplied the resulting namespace/queue/private-endpoint
-   outputs. Next run the AKS publisher private-connectivity/authorization check
-   before publishing messages.
+   outputs. Its AKS check passed private DNS/TLS and sender-link access, with
+   receive access denied and no messages sent. Next run the prepared one-event
+   publisher Job before deploying the continuous publisher.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -162,7 +164,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 146 offline tests; SDK/database responses and the expiry clock are mocked
+passes 154 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

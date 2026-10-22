@@ -285,7 +285,11 @@ kubectl logs -n trafficxx job/servicebus-publisher-access-check -c check
 
 Expected SERVICEBUS_PUBLISHER_ACCESS_OK with private_ips/tls_peer in
 10.40.17.0/24, verified TLS version, sender_link_open=true,
-receive_denied=true and broker_messages_sent=0. Actual Azure result is pending.
+receive_denied=true and broker_messages_sent=0. The user supplied real
+SERVICEBUS_PUBLISHER_ACCESS_OK with private_ips=[10.40.17.4], tls_peer=10.40.17.4,
+TLSv1.3, sender_link_open=true, receive_denied=true, broker_messages_sent=0 and
+the expected publisher client ID. This verifies live private link authorization,
+not actual message publication.
 The check validates exact projected publisher identity/configuration, rejects
 any connection string, and uses WorkloadIdentityCredential explicitly. It verifies
 DNS and certificate-checked TLS on AMQP port 5671, opens a queue sender link and
@@ -315,3 +319,59 @@ build. Eight new offline methods cover no-send/receive behavior, unsafe identity
 connection-string settings, public DNS/TLS peer, sender denial, receiver denial,
 unexpected receiver authorization and timeout classification, with raw-error
 redaction. All 146 offline methods pass; network/SDK responses are mocked there.
+
+## Publish one real outbox event
+
+This stage changes real application state: one pending outbox event is sent to
+reservation-events and its published marker is committed. It also commits the
+publisher heartbeat. Nothing is rolled back as a diagnostic. The consumer is
+not deployed; the message remains queued. An event may describe an earlier HELD
+state of a reservation that is now cancelled/expired; sending history does not
+change reservation state. Keep the continuous publisher stopped during this
+one-shot experiment.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap publisher-send-one-files -n trafficxx \
+  --from-file=publish-one-azure.py=scripts/publish-one-azure.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/jobs/publisher-send-one.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/publisher-send-one --timeout=180s
+kubectl logs -n trafficxx job/publisher-send-one -c publish
+```
+
+Expected PUBLISHER_SEND_OK: send_calls=1, send_acknowledged=true,
+publication_committed=true, heartbeat_recorded=true and stable outbox/message IDs.
+Actual Azure publication is pending. The existing image runs the actual
+trafficxx.broker.client/send_event and messaging.publish_one/heartbeat paths,
+not a replacement send implementation. Read-only queries then verify the outbox
+marker, durable message identity, attempts/cleared error and heartbeat values.
+No SQL permissions or runtime image are changed.
+
+The Job sets AZURE_TOKEN_CREDENTIALS=WorkloadIdentityCredential. The installed
+azure-identity 1.26.0 supports individual-credential allowlisting, constraining
+the broker's existing DefaultAzureCredential to WorkloadIdentityCredential;
+see [Microsoft credential-chain documentation](https://learn.microsoft.com/azure/developer/python/sdk/authentication/credential-chains?tabs=dac).
+Preflight rejects another SDK version, broad credential settings, connection
+strings/URLs, unexpected database/broker identity or projected service account.
+Database connections still use the explicit workload-identity code path.
+
+The Job has backoffLimit=0 and calls publish_one once per invocation, rather than
+running a retry loop. This is not exactly-once delivery. An acknowledged send
+can precede an uncertain SQL commit, or a send timeout can follow broker acceptance.
+On failure, output includes safe stage/type, send-call/acknowledgement metadata
+and any selected outbox/message IDs; it never prints raw SDK errors or credentials.
+publication_committed=null means the call did not confirm its transaction outcome;
+true remains true if later readback/heartbeat/client-close fails. Do not recreate
+the Job blindly after failure: inspect those IDs and persisted state first, and
+keep the stable message ID for any legitimate resend. The bounded Job/TTL does
+not guarantee a Pod cannot ever be replaced after infrastructure disruption.
+
+No message is received/settled and no claim of downstream delivery/processing is
+made. Eight new offline methods cover the real-function orchestration, empty
+outbox, send-then-commit failure, client-close failure, later heartbeat/readback
+failure, accidental second send and unsafe credential preflight. All 154 offline
+methods pass with mocked broker/database responses. The actual live send and
+persisted readback still require the user-run Job above.
