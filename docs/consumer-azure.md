@@ -53,7 +53,7 @@ at this stage.
 Seven mocked scenarios passed: success, wrong client, wrong service account,
 missing CA, administrator role, SQL failure and token failure, with no fake
 token output. Manifest command elements, embedded Python and identity binding
-were validated. All 186 offline methods pass; real cloud identity and
+were validated. All 194 offline methods pass; real cloud identity and
 permission evidence are separate from those local checks.
 
 ## Grant the consumer its current SQL contract
@@ -235,7 +235,7 @@ short-lived diagnostic Job before retrying; do not broaden the role.
 Eight added offline methods cover correct identity/network/TLS, main/DLQ denial,
 sender authorization denial at link/batch creation, unexpected send access,
 timeouts and raw error redaction. Tests assert zero prefetch and no calls to
-receive/send/complete/abandon/dead-letter operations. All 186 offline methods
+receive/send/complete/abandon/dead-letter operations. All 194 offline methods
 pass; real Azure broker evidence remains separate. Consumer deployment and
 end-to-end queue drain/projection checks follow only after this check passes.
 
@@ -266,7 +266,9 @@ kubectl logs -n trafficxx deployment/consumer --tail=50
 ```
 
 Expected CONSUMER_DEPLOYED and event_delivery outcome=processed or duplicate
-logs. Real rollout/processing output is pending. A pod that is Running/Ready or
+logs. The user supplied 12 processed-message log lines, including the first
+publisher message 151af373-f74d-4bc4-8c14-e3b6cf13aa51. A separate rollout
+summary was not supplied; complete persisted processing remains to be checked. A pod that is Running/Ready or
 emits some processed logs does not prove complete drain or projection agreement.
 The readiness probe checks only a database SELECT 1; it does not verify broker
 connectivity, heartbeat freshness or forward progress. There is no loop-progress
@@ -276,9 +278,63 @@ queued events remain broker work, subject to the configured TTL/delivery policy.
 Four mocked deploy-helper scenarios passed: success, wrong subscription, wrong
 cluster context and apply failure. Bash syntax/LF, manifest image/module/identity,
 credential configuration, security/resource settings and readiness Python syntax
-were checked. All 186 offline methods pass. After successful deployment, verify
+were checked. All 194 offline methods pass. After successful deployment, verify
 persisted inbox coverage, projection agreement and a fresh error-free heartbeat
 with a read-only observer, then obtain native active/dead-letter queue counts.
+
+
+## Verify stored inbox coverage and latest projections
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap consumer-drain-check-files -n trafficxx \
+  --from-file=check-consumer-drain.py=scripts/check-consumer-drain.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/consumer-drain.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/consumer-drain-check --timeout=180s
+kubectl logs -n trafficxx job/consumer-drain-check -c check
+```
+
+Expected CONSUMER_DRAIN_OK. Real output is pending. The migrator observer uses
+its existing permissions and explicit workload database credential path with
+verify-full TLS. Every observation starts a REPEATABLE READ, READ ONLY transaction.
+It polls up to 120 seconds, taking a new snapshot per attempt; no SQL writes or
+broker operations occur. No extra privileges or image rebuild are needed.
+
+The observer requires a nonempty fully published outbox, inbox coverage for every
+outbox message ID, matching envelope fields and occurrence timestamp, no orphan
+inbox/projection rows, and projection event/status/outbox ID agreement with each
+reservation's newest outbox row. It also requires a present consumer heartbeat
+aged 0-30 seconds with no current error. Missing or mismatched state cannot pass.
+It reports aggregate historical failure and observed-dead-letter counts without
+printing message bodies, customer data or raw heartbeat errors. Those historical
+counts do not alone fail an otherwise complete snapshot: they can describe prior
+recovered incidents and must be interpreted alongside the native DLQ count.
+
+After success, obtain native Azure queue counts:
+
+```bash
+az servicebus queue show \
+  --resource-group trafficxx-lab-rg \
+  --namespace-name trafficxx-sb-e8708a85 \
+  --name reservation-events \
+  --query '{active:countDetails.activeMessageCount,dead_letters:countDetails.deadLetterMessageCount,total:messageCount}' \
+  --output json
+```
+
+For this idle lab, expect active=0 and dead_letters=0. This management-plane
+observation is separate from SQL evidence. SQL inbox coverage alone does not
+prove broker settlement: a message may have committed effects but still await
+acknowledgement/redelivery. Counts and stored-state checks are point-in-time
+evidence, not a sustained throughput, exactly-once or token-renewal guarantee.
+
+Eight added offline methods cover read-only snapshot queries, missing/pending/
+mismatched/orphan state, historical failures, stale/missing/error heartbeats,
+wrong identity/TLS/admin, bounded wait/timeout and safe snapshot output. All 194
+offline methods pass with simulated database responses; actual Azure SQL and
+queue observations remain pending.
 
 
 The real consumer parses the event, atomically records the deduplication inbox

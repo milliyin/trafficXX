@@ -43,7 +43,9 @@ The expiry worker is deployed and passed a controlled idle-hold expiry experimen
 with raw read-only SQL evidence. A one-shot publisher Job passed; its continuous
 Deployment emitted successful publication logs and passed the read-only drain
 check. Azure reported 12 active queue messages and zero dead letters. The consumer
-and remaining workers are not deployed.
+emitted 12 processed-event log lines after its deployment command; persisted
+inbox/projection coverage and native queue drain remain unverified. Remaining
+workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. Live Azure Service Bus publication/consumer checks, ingress, GitOps, production customer authentication,
@@ -148,8 +150,9 @@ Next:
    operation checks passed (14 allowed, 30 denials). Its receiver role plan matched
    the consumer and exact queue scope; foundation outputs were supplied after
    the apply instruction. Its private broker check passed main/dead-letter peek
-   access and send denial over TLS 1.3 without consuming messages. Next run the
-   prepared consumer deployment, then verify persisted processing and queue drain.
+   access and send denial over TLS 1.3 without consuming messages. The
+   consumer emitted 12 processed logs. Next run its prepared read-only inbox/
+   projection/heartbeat observer and obtain native queue counts.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -181,7 +184,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 186 offline tests; SDK/database responses and the expiry clock are mocked
+passes 194 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
