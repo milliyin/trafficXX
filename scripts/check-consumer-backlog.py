@@ -58,7 +58,7 @@ def restore(call, uid):
     call(['kubectl', 'rollout', 'status', 'deployment/consumer', '-n', NAMESPACE, '--timeout=180s'])
 
 
-def run(call=command, sleep=time.sleep):
+def run(call=command, sleep=time.sleep, while_paused=None):
     global CURRENT_CHECK
     CURRENT_CHECK = 'preflight'
     if call(['az', 'account', 'show', '--query', 'id', '-o', 'tsv']) != SUBSCRIPTION:
@@ -100,6 +100,9 @@ def run(call=command, sleep=time.sleep):
         pods = json.loads(call(['kubectl', 'get', 'pods', '-n', NAMESPACE, '-l', SELECTOR, '-o', 'json']))
         if current['metadata']['uid'] != uid or current['spec']['replicas'] != 0 or pods['items']:
             raise ValueError('Consumer was not paused for the backlog observation')
+        if while_paused is not None:
+            CURRENT_CHECK = 'observe_monitoring_while_paused'
+            while_paused()
         print(json.dumps({'result': 'CONSUMER_BACKLOG_OBSERVED', 'queue': backlog,
                           'consumer_replicas': 0, 'consumer_pods': 0,
                           'reservation_id': flow['reservation_id'], 'final_status': 'CANCELLED'}), flush=True)

@@ -8,7 +8,8 @@ The one observed_dead_letters SQL row is retained audit history from the invalid
 message, not a currently queued dead letter.
 
 We now prepare the operations workload, using its existing Azure identity and
-Kubernetes service account. It is not deployed yet. No external monitoring scrape,
+Kubernetes service account. The internal operations Deployment and healthy HTTP
+checks have now passed in Azure. No external monitoring scrape,
 alert delivery or Azure telemetry collection is enabled by this identity setup.
 
 ## Register and verify the operations database identity
@@ -44,7 +45,7 @@ credential, with no fallback to human/node credentials and no token/raw-error
 output. It installs pinned dependencies before the bounded, non-root login check.
 
 Seven mocked scenarios passed: success, wrong client, wrong service account,
-missing CA, admin, SQL failure and token failure. All264offline methods passed.
+missing CA, admin, SQL failure and token failure. All272offline methods passed.
 These local checks do not substitute for real Azure login evidence.
 
 ## Grant column-scoped monitoring reads
@@ -90,7 +91,7 @@ existing unexpected rights cause rollback rather than automatic revocation.
 
 Six added offline methods cover exact SELECT-only grants, ownership, protected
 reads, all writes/reference/destructive rights, every required read/column and
-role/DDL flags. All264offline methods pass. Real operations-role COUNT(*), joined
+role/DDL flags. All272offline methods pass. Real operations-role COUNT(*), joined
 backlog/age reads, heartbeat queries and negative SQL tests follow after this
 Job succeeds. They are separate from catalog-based effective-grant checks.
 
@@ -137,13 +138,13 @@ rows are committed, no broker is contacted and no additional grants are applied.
 Eight new offline methods cover allowed queries, all unexpected permission
 successes, wrong SQLSTATE, invalid metric/heartbeat values, raw-error redaction,
 outer rollback/verified TLS, positive-query failure and wrong injected identity.
-All264offline methods pass. The real Azure allowed/denied result above is separate from these local tests.
+All272offline methods pass. The real Azure allowed/denied result above is separate from these local tests.
 
 ## Updated monitoring logic and new image build
 
 The source now separates active alert conditions from historical dead-letter
-audit observations. These changes have passed local checks but are not yet
-deployed in Azure. The ACR build below has now succeeded. SQL permissions and query expressions stay the same.
+audit observations. These changes passed local checks and the subsequent Azure operations rollout
+and healthy HTTP/metric checks. The ACR build below succeeded. SQL permissions and query expressions stay the same.
 
 - Configure EXPECTED_HEARTBEAT_WORKERS=publisher,consumer on the Azure operations
   Deployment. Missing expected workers produce NAME_HEARTBEAT_MISSING even if
@@ -193,7 +194,8 @@ health/readiness/backlog/metrics passed with mocked SQL; exported text was parse
 by prometheus_client. Four mocked build-helper scenarios passed (success, wrong
 subscription, build failure, bad digest), plus Bash syntax/LF. Local Docker was
 not restarted; PostgreSQL/AMQP integration suites were not rerun locally. Hosted
-CI status and real Azure HTTP/alert behavior are not yet verified for this change.
+CI status was not checked. Real Azure healthy HTTP subsequently passed; active
+alert appearance/recovery is the next experiment.
 
 ## Deploy internal operations and check healthy HTTP/metrics
 
@@ -214,8 +216,13 @@ bash scripts/deploy-operations.sh
 bash scripts/check-operations-http.sh
 ```
 
-Expected OPERATIONS_DEPLOYED, then OPERATIONS_HTTP_OK. Actual Azure rollout/HTTP
-results are pending. The checker uses a temporary localhost-only port forward,
+Verified OPERATIONS_DEPLOYED and OPERATIONS_HTTP_OK from the user. One pod
+operations-548fd6c9bf-9rd5c was Running/Ready with zero restarts on an apps node.
+Health/readiness passed, outbox/processing pending and ages were zero, processed
+count16, publish_failures_total1, processing_failures_total0, observed_dead_letters_total1.
+Consumer/publisher ages were4.2994/0.793295seconds, present and error-free. Active
+alerts were empty; historical_observations contained DEAD_LETTERS_PREVIOUSLY_OBSERVED.
+Worker/alert metric samples passed and native_queue_counts_available remainedfalse. The checker uses a temporary localhost-only port forward,
 then removes it. It requires health/readiness, zero pending/outstanding work,
 no active alerts, fresh error-free publisher/consumer heartbeat records, complete
 zero-state alert rules and matching exported presence/age/error/alert samples.
@@ -231,12 +238,57 @@ wrong context, apply failure. Bash syntax/LF plus manifest digest/identity/modul
 worker configuration, internal Service routing and security/probes were checked.
 No local Azure account access, rollout, Docker restart or broker calls occurred.
 
-## Work remaining after deployment
+## Verify alert appearance and recovery in the running lab
 
-After healthy HTTP passes, age a controlled consumer backlog and prove active
-alert gauges appear and clear after recovery. Connect a metrics scraper/collector,
-alert rules and notification routing separately: API flags and exported metrics
-alone do not notify anyone. The existing Log Analytics workspace alone does not
-collect application signals. Native Service Bus count monitoring also needs a
-separate read/management path; operations has no broker send/receive role. No
-external alert service or cloud telemetry collection has been enabled yet.
+Run with other booking experiments idle and leave Cloud Shell open until it
+finishes. The existing publisher, expiry and operations workloads stay running.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/check-operations-alerts.sh
+```
+
+Expected OPERATIONS_ALERTS_OBSERVED: two processing-outstanding events aged at
+least30seconds, a stale consumer heartbeat, fresh publisher heartbeat and both
+PROCESSING_BACKLOG_AGING/CONSUMER_HEARTBEAT_STALE active in JSON and metrics.
+The runner requires a healthy HTTP/metrics baseline before pausing. It reuses
+the verified backlog drill's subscription/context/readiness/native-empty checks,
+then pauses the consumer, creates and cancels one demo hold and observes two
+queued events with zero consumer pods. A callback makes up to18observations at five-second intervals for the
+aged/stale signals while the consumer remains paused. It makes only read-only
+HTTP calls with a15second timeout per request during that wait and does not alter heartbeat timestamps or SQL rows.
+
+The existing finally block restores one consumer replica on success, timeout,
+HTTP failure or KeyboardInterrupt. Native queue drain and a fresh read-only SQL
+inbox/projection observer must pass. The runner then makes up to12checks at five-second intervals for the
+healthy HTTP snapshot and all worker/alert metrics to return to zero-alert state.
+Final expected output OPERATIONS_ALERT_RECOVERY_OK includes before/during/after
+monitoring and CONSUMER_BACKLOG_RECOVERY_OK evidence. From the current16event
+checkpoint, expect18inbox/outbox rows and nine latest projections afterward.
+Actual live alert appearance/recovery is pending.
+
+This drill changes no images or database grants. It retains the cancelled
+reservation and its event history. As with the backlog test, hard Cloud Shell
+termination can prevent finally cleanup; inspect/restore if the session is lost:
+
+```bash
+kubectl get deployment/consumer -n trafficxx
+kubectl scale deployment/consumer -n trafficxx --replicas=1
+kubectl rollout status deployment/consumer -n trafficxx --timeout=180s
+```
+
+Eight new offline methods cover joint JSON/metric evidence, historical audit not
+counting as active alert evidence, bounded waits, full fake-cloud recovery,
+monitoring timeout restoration, failed clearing and bad baseline before mutation.
+All272offline methods pass, plus Bash syntax/LF checks. These do not replace the
+pending user-run live alert drill.
+
+## Remaining monitoring integration
+
+Connect a metrics scraper/collector, alert rules and notification routing
+separately: API flags and exported metrics alone do not notify anyone. The
+existing Log Analytics workspace alone does not collect application signals.
+Native Service Bus count monitoring needs a separate read/management path;
+operations has no broker send/receive role. No external notification delivery
+or cloud telemetry collection is tested or enabled by this drill.
