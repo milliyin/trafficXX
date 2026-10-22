@@ -68,3 +68,13 @@ variable "postgres_admin_principal_name" {
     error_message = "Supply the administrator's Entra user principal name."
   }
 }
+
+variable "servicebus_namespace_name" {
+  type        = string
+  description = "Globally unique Service Bus namespace name; availability and Premium capacity must be checked in Azure."
+  default     = "trafficxx-sb-e8708a85"
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,48}[a-z0-9]$", var.servicebus_namespace_name))
+    error_message = "Use 6-50 lowercase letters, digits or hyphens; start with a letter and end with a letter or digit."
+  }
+}

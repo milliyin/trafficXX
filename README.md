@@ -125,8 +125,10 @@ Next:
    then verified worker readiness, stored expiry, assignment release and one
    EXPIRED outbox row. Final Browse availability again showed 100 for both
    demo events. The [publisher SQL login](docs/publisher-azure.md) now passed;
-   its outbox/heartbeat grant Job also passed. Next run the prepared publisher
-   permission probe, then configure Azure messaging infrastructure.
+   its outbox/heartbeat grant Job and actual SQL permission probe also passed
+   (nine allowed operations, 23 denials, no committed diagnostic changes or sent
+   messages). Private Service Bus Terraform is prepared; next register its resource
+   provider and review the existing-foundation plan before applying.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

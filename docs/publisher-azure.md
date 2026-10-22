@@ -143,7 +143,9 @@ kubectl logs -n trafficxx job/postgres-publisher-permissions-check -c check
 
 Expected: PUBLISHER_PERMISSIONS_OK, nine allowed operations, 23 denials with
 SQLSTATE 42501, diagnostic_rows_committed=false, broker_messages_sent=0,
-SSL true and admin false. Actual Azure output remains pending.
+SSL true and admin false. The user supplied that real PUBLISHER_PERMISSIONS_OK
+result: all nine operations and all 23 denials passed as trafficxx-lab-publisher,
+TLSv1.3, admin=false, no diagnostic rows committed and zero broker messages sent.
 
 The probe logs in as publisher with an explicit workload credential and
 verify-full TLS. It selects one pending due outbox row with FOR UPDATE SKIP LOCKED,
@@ -167,5 +169,89 @@ heartbeat timestamp read/insert, unrelated worker tables, migration ledger and
 DDL. Eight new offline methods cover required SQL/denials, unexpected successes,
 wrong SQLSTATE, missing fixture, zero-row updates, final rollback, failed upsert
 rollback and wrong injected client. All 138 offline methods pass with simulated
-SDK/driver responses; actual PostgreSQL upsert/denial behavior remains pending
-the user-run Job above. Cloud broker access and deployment remain later stages.
+SDK/driver responses; actual PostgreSQL upsert/denial behavior subsequently passed
+in the user-run Job above. Cloud broker access and deployment remain later stages.
+
+## Prepare private Azure Service Bus infrastructure
+
+The foundation now includes servicebus.tf. It adds a Premium namespace
+trafficxx-sb-e8708a85 in the existing AKS region (East US), one messaging unit
+and one messaging partition. Premium has continuous capacity charges; it is
+chosen for private networking, not as evidence that the lab requires that
+throughput. Public network access and local/SAS authentication are disabled.
+A private endpoint uses the existing private-endpoints subnet, and the private
+DNS zone privatelink.servicebus.windows.net is linked to the AKS VNet.
+
+The queue reservation-events uses a one-minute lock, five maximum deliveries,
+14-day default message TTL, dead-letter on expiry, no sessions and no broker
+duplicate detection. Message TTL is separate from the five-minute ticket hold.
+Consumers still need inbox deduplication for stable message IDs. Namespace and
+queue have prevent_destroy safeguards. Only the publisher identity gets the
+Data Sender role at this queue's scope. No receiver/owner roles are assigned yet.
+
+References: [Premium private endpoints](https://learn.microsoft.com/en-us/azure/service-bus-messaging/private-link-service),
+[Entra-only access and queue-scoped sender roles](https://learn.microsoft.com/en-us/azure/service-bus-messaging/authenticate-application).
+The regular namespace FQDN is used by clients; DNS resolves it through the
+private endpoint from AKS. Browser Cloud Shell is not assumed to have private
+data-plane connectivity; subsequent broker checks must run inside AKS.
+
+First register the resource provider from Cloud Shell:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+az provider register --namespace Microsoft.ServiceBus --wait
+az provider show --namespace Microsoft.ServiceBus --query registrationState -o tsv
+```
+
+After Registered, restore foundation variables in this shell as needed:
+
+```bash
+export ARM_SUBSCRIPTION_ID=35aaf788-f4cf-40c3-9ea5-bc8fe8708a85
+export TF_VAR_subscription_id="$ARM_SUBSCRIPTION_ID"
+export TF_VAR_location=eastus
+export TF_VAR_registry_name=trafficxxacre8708a85
+export TF_VAR_aks_admin_object_id="$(az ad signed-in-user show --query id -o tsv)"
+export TF_VAR_postgres_admin_principal_name="$(az ad signed-in-user show --query userPrincipalName -o tsv)"
+cd ~/trafficxx/infrastructure/foundation
+```
+
+Confirm the existing backend blob before initialization. Do not initialize
+against an empty/new key or recreate the foundation:
+
+```bash
+az storage blob exists --account-name trafficxxtfstatee8708a85 \
+  --container-name tfstate --name lab/foundation.tfstate \
+  --auth-mode login --query exists -o tsv
+```
+
+It must report true. Initialize the same backend if this shell has no saved
+backend configuration; no storage keys or account passwords are needed:
+
+```bash
+terraform init -reconfigure \
+  -backend-config="resource_group_name=trafficxx-tfstate-rg" \
+  -backend-config="storage_account_name=trafficxxtfstatee8708a85" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=lab/foundation.tfstate" \
+  -backend-config="use_azuread_auth=true"
+terraform state list
+terraform validate
+terraform plan -out=servicebus.tfplan
+```
+
+The state list must contain the existing AKS, PostgreSQL and workload identities.
+The intended change is six additions and no changes/deletions: Service Bus
+namespace/queue, private DNS zone/link, private endpoint and sender role.
+Review the full plan before apply; investigate any existing-resource update,
+replacement or deletion rather than using targeting to hide it. No Azure apply has
+been run at this checkpoint. Namespace availability,
+subscription Premium capacity and East US service availability remain Azure-side
+checks. RBAC propagation, private DNS/AMQP connectivity, actual sender/receiver
+denial and publication still require later experiments.
+
+Local validation used Terraform 1.16.6 and installed AzureRM 5.10.0 in an ignored
+isolated copy, with the backend removed only in that validation copy. No Azure
+login/state/plan was accessed locally. Provider schema/fmt/validate and all 138
+offline methods pass. An initial DNS-link schema mismatch was corrected to the
+AzureRM 5 private_dns_zone_id argument; the committed provider lock is unchanged.
