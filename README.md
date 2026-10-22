@@ -30,10 +30,11 @@ we learn in [memeory.md](memeory.md).
 | Real hold expiry and seat reuse | After a real 305-second wait, a booking transaction expired the old A1 hold and created a replacement; both replicas verified EXPIRED, old-key replay stayed expired and replacement was cancelled |
 | Background expiry worker | Own non-admin login and grants verified; nine allowed SQL operations and fourteen denials passed. Idle A2 hold became EXPIRED after a 310-second wait; read-only SQL found zero assignments and one EXPIRED outbox row with no expiry-triggering API calls after creation |
 | Private Service Bus access | Publisher resolved and connected to private endpoint 10.40.17.4 over TLS 1.3, opened a sender link and was denied receive access; that diagnostic sent zero messages |
-| First live outbox publication | Real application publisher sent outbox row 3 with stable message ID, received acknowledgement, confirmed its committed published marker and recorded a heartbeat; consumer processing is not yet verified |
+| First live outbox publication | Real application publisher sent outbox row 3 with stable message ID, received acknowledgement, confirmed its committed published marker and recorded a heartbeat |
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
 | Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
+| Consumer processing and drain | Read-only SQL verified all 12 inbox records and six latest projections with zero mismatches/orphans/failure records, plus an error-free heartbeat aged 2.81 seconds; Azure queue counts were active=0, dead_letters=0, total=0 |
 | Queue before consumer | Azure reported 12 active messages, zero dead letters and 12 total messages, matching the published outbox count at this checkpoint |
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
@@ -42,13 +43,15 @@ verified health, database readiness, the correct API module and a missing reserv
 The expiry worker is deployed and passed a controlled idle-hold expiry experiment
 with raw read-only SQL evidence. A one-shot publisher Job passed; its continuous
 Deployment emitted successful publication logs and passed the read-only drain
-check. Azure reported 12 active queue messages and zero dead letters. The consumer
-emitted 12 processed-event log lines after its deployment command; persisted
-inbox/projection coverage and native queue drain remain unverified. Remaining
+check. The consumer processed all 12 queued events: read-only SQL verified
+12 matching inbox records, six matching latest status projections and a fresh,
+error-free heartbeat. Native queue counts were zero active messages and zero
+dead letters. These are point-in-time processing and drain results. Remaining
 workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
-been bootstrapped. Live Azure Service Bus publication/consumer checks, ingress, GitOps, production customer authentication,
+been bootstrapped. Live broker duplicate/redelivery and recovery experiments,
+ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
 has not been enabled.
@@ -151,8 +154,10 @@ Next:
    the consumer and exact queue scope; foundation outputs were supplied after
    the apply instruction. Its private broker check passed main/dead-letter peek
    access and send denial over TLS 1.3 without consuming messages. The
-   consumer emitted 12 processed logs. Next run its prepared read-only inbox/
-   projection/heartbeat observer and obtain native queue counts.
+   consumer emitted 12 processed logs, then passed read-only verification of
+   12 matching inbox records, six latest projections and a fresh heartbeat. Native
+   queue counts were all zero. Next test deliberate broker duplicate delivery
+   and recovery boundaries; these have not yet been exercised in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

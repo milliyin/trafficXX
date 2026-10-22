@@ -297,7 +297,12 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/consumer-drain-check -c check
 ```
 
-Expected CONSUMER_DRAIN_OK. Real output is pending. The migrator observer uses
+Verified CONSUMER_DRAIN_OK from the user: total_count=12, pending_count=0,
+inbox_count=12, missing_inbox_count=0, payload_mismatch_count=0,
+expected_projection_count=6, projection_mismatch_count=0, orphan counts both zero,
+failure_record_count=0 and observed_dead_letter_count=0. Consumer heartbeat was
+present, error-free and aged 2.807914 seconds. The read-only migrator observer
+used verified TLSv1.3. The migrator observer uses
 its existing permissions and explicit workload database credential path with
 verify-full TLS. Every observation starts a REPEATABLE READ, READ ONLY transaction.
 It polls up to 120 seconds, taking a new snapshot per attempt; no SQL writes or
@@ -324,8 +329,8 @@ az servicebus queue show \
   --output json
 ```
 
-For this idle lab, expect active=0 and dead_letters=0. This management-plane
-observation is separate from SQL evidence. SQL inbox coverage alone does not
+The user supplied native counts active=0, dead_letters=0, total=0. This
+management-plane observation is separate from SQL evidence. SQL inbox coverage alone does not
 prove broker settlement: a message may have committed effects but still await
 acknowledgement/redelivery. Counts and stored-state checks are point-in-time
 evidence, not a sustained throughput, exactly-once or token-renewal guarantee.
@@ -333,8 +338,8 @@ evidence, not a sustained throughput, exactly-once or token-renewal guarantee.
 Eight added offline methods cover read-only snapshot queries, missing/pending/
 mismatched/orphan state, historical failures, stale/missing/error heartbeats,
 wrong identity/TLS/admin, bounded wait/timeout and safe snapshot output. All 194
-offline methods pass with simulated database responses; actual Azure SQL and
-queue observations remain pending.
+offline methods pass with simulated database responses; the user-run SQL and
+queue observations above subsequently passed in Azure.
 
 
 The real consumer parses the event, atomically records the deduplication inbox
@@ -343,5 +348,10 @@ duplicate can be delivered again after acknowledgement/crash boundaries; its
 stable identity and payload must agree with the inbox record. Projection updates
 compare outbox IDs to avoid regressing state when older events arrive later.
 This records reservation state changes, not automatic booking confirmation.
-Actual consumer processing, duplicate suppression, projection consistency and
-queue settlement remain unverified in Azure.
+The real initial 12-event processing checkpoint now has persisted inbox/payload,
+latest-projection and empty native queue evidence. Deliberate broker duplicate
+redelivery, crash boundaries, poison-message recovery, sustained throughput and
+token renewal across an actual expiry boundary remain unverified in Azure.
+The next experiment should redeliver one existing stable message ID and verify
+that no additional inbox row or projection change occurs, with queue settlement
+and diagnostic cleanup checked separately.
