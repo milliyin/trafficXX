@@ -1,0 +1,78 @@
+# Read-only database observation; no sends, receives or outbox updates.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: poison-after-check
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: 'true'
+    spec:
+      serviceAccountName: migrator
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: temporary
+        emptyDir:
+          sizeLimit: 64Mi
+      - name: check-files
+        configMap:
+          name: duplicate-baseline-check-files
+          defaultMode: 292
+      containers:
+      - name: check
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:22a28c8c6cc45354a327b8b7d5423cb4b169daa49a3efe320c392173dc923dbc
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -u
+        - /checks/observe-duplicate-baseline.py
+        env:
+        - name: PYTHONPATH
+          value: /app
+        - name: DATABASE_AUTH_MODE
+          value: workload_identity
+        - name: PGHOST
+          value: trafficxx-pg-e8708a85.postgres.database.azure.com
+        - name: PGPORT
+          value: '5432'
+        - name: PGDATABASE
+          value: trafficxx
+        - name: PGUSER
+          value: trafficxx-lab-migrator
+        - name: PGSSLROOTCERT
+          value: /etc/ssl/certs/ca-certificates.crt
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+        - name: check-files
+          mountPath: /checks
+          readOnly: true
+      restartPolicy: Never

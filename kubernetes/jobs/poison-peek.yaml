@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: poison-peek
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: 'true'
+    spec:
+      serviceAccountName: consumer
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: temporary
+        emptyDir:
+          sizeLimit: 64Mi
+      - name: check-files
+        configMap:
+          name: poison-diagnostic-files
+          defaultMode: 292
+      containers:
+      - name: check
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:22a28c8c6cc45354a327b8b7d5423cb4b169daa49a3efe320c392173dc923dbc
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -u
+        - /checks/poison-message-azure.py
+        env:
+        - name: POISON_ACTION
+          value: peek
+        - name: SERVICEBUS_FULLY_QUALIFIED_NAMESPACE
+          value: trafficxx-sb-e8708a85.servicebus.windows.net
+        - name: SERVICEBUS_QUEUE
+          value: reservation-events
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+        - name: check-files
+          mountPath: /checks
+          readOnly: true
+      restartPolicy: Never
