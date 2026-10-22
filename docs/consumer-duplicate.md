@@ -122,8 +122,9 @@ columns (including timestamps) were unchanged, and the resend was settled.
 This is application deduplication with broker duplicate detection disabled.
 It does not establish exactly-once transport or simulate a process crash.
 
-Next, test a controlled consumer outage: pause the consumer, create a bounded
-amount of valid work, observe the queue accumulate it, then restore the consumer
-and verify inbox/projection agreement plus queue drain. Prepare recovery commands
-before pausing and retain the original replica count. This Azure outage experiment
-has not yet been run; poison-message/dead-letter recovery follows separately.
+The subsequent [controlled consumer outage](consumer-backlog.md) passed. Two
+valid hold/cancel events waited with zero consumer pods, then drained after
+restoration to one replica. Read-only SQL verified 14 matching inbox records and
+seven latest projections. The runner had restoration commands prepared before
+pausing. Poison-message/dead-letter recovery follows separately and remains
+unverified.

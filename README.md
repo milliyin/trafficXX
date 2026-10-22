@@ -34,6 +34,7 @@ we learn in [memeory.md](memeory.md).
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
 | Consumer private queue access | Consumer verified private endpoint 10.40.17.4 over TLS 1.3; main/dead-letter peek allowed, send denied, zero messages consumed by the diagnostic |
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
+| Azure consumer backlog recovery | With zero consumer pods, two hold/cancel events waited in the queue; restoring one replica drained it to zero. Read-only SQL verified all 14 inbox records and seven latest projections, with no mismatches/failure records and a healthy heartbeat |
 | Duplicate message delivery | One acknowledged resend of the original message produced a new duplicate outcome; all inbox/outbox/projection counts and full-row fingerprints stayed unchanged, and native queue counts returned to zero |
 | Consumer processing and drain | Read-only SQL verified all 12 inbox records and six latest projections with zero mismatches/orphans/failure records, plus an error-free heartbeat aged 2.81 seconds; Azure queue counts were active=0, dead_letters=0, total=0 |
 | Queue before consumer | Azure reported 12 active messages, zero dead letters and 12 total messages, matching the published outbox count at this checkpoint |
@@ -52,7 +53,9 @@ workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. A controlled duplicate resend also passed with unchanged
-stored state and an empty queue. Consumer outage/recovery and poison-message experiments,
+stored state and an empty queue. A controlled consumer pause also passed:
+two events waited, then drained after restart, with 14 inbox records and seven
+latest projections verified. Poison-message experiments,
 ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
@@ -162,8 +165,10 @@ Next:
    (12 inbox rows, six projections, 12 outbox rows with full-state fingerprints).
    One resend then produced a new consumer duplicate outcome; all three table
    fingerprints/counts stayed unchanged and native queue counts returned to zero.
-   Next run the prepared [consumer outage/backlog experiment](docs/consumer-backlog.md);
-   actual stop/start recovery remains unverified in Azure.
+   The [consumer outage/backlog experiment](docs/consumer-backlog.md) then passed:
+   two events waited with zero consumer pods and drained after restoration. SQL
+   verified 14 inbox rows and seven latest projections. Next prepare a controlled
+   poison-message/dead-letter experiment; that remains unverified in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

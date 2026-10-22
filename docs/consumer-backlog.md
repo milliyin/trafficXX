@@ -5,7 +5,7 @@ remain running. One real demo hold is created and cancelled through the existing
 HTTP flow test. Its HELD and CANCELLED events should accumulate in the queue
 while no consumer pod exists. Then the consumer is restored, and native queue
 counts plus the read-only inbox/projection observer must agree that work drained.
-This experiment is prepared; real Azure output is pending.
+This controlled stop/start experiment passed in the user-run Azure lab.
 
 Run from browser Cloud Shell, keeping other booking experiments idle:
 
@@ -34,7 +34,22 @@ Expected final output CONSUMER_BACKLOG_RECOVERY_OK includes before/paused/after
 queue counts, restored_replicas=1 and stored_state.result=CONSUMER_DRAIN_OK. From
 the prior checkpoint, expect 14 outbox/inbox rows and seven projections after
 this one hold/cancel flow, although the observer validates actual stored state
-rather than hard-coding historical totals. Real final results are pending.
+rather than hard-coding historical totals. The user supplied both success results
+for reservation e83010ed-ad08-43f6-8fa4-9288e0469365, final status CANCELLED:
+
+| Observation | Verified result |
+|---|---|
+| Before pause | Queue active=0, dead_letters=0, total=0 |
+| While paused | Consumer replicas=0, pods=0; queue active=2, dead_letters=0, total=2 |
+| After restoration | Consumer replicas=1; queue active=0, dead_letters=0, total=0 |
+| Stored messages | Outbox total=14, pending=0; inbox=14, missing=0, payload mismatches=0 |
+| Latest projections | Seven expected; zero mismatches and zero orphan inbox/projection rows |
+| Failure observations | Zero failure records and observed dead-letter records |
+| Consumer heartbeat | Present, no error, age=1.640931 seconds |
+| SQL observer | Migrator, read-only, TLSv1.3 |
+
+This proves that the two valid events waited during this deliberate consumer
+pause, then were processed with matching stored effects after restoration.
 
 Restoration runs in a finally block, including booking failures, unexpected
 queue counts, timeout and KeyboardInterrupt. Deployment replacement or an
@@ -62,5 +77,7 @@ replace the real Cloud Shell experiment. No roles, images or runtime code change
 
 This tests a controlled stop/start and durable buffering. It does not kill a
 consumer between SQL commit and broker acknowledgement, establish a processing
-latency SLO, or prove exactly-once delivery. Poison-message/dead-letter recovery
-is a separate future experiment.
+latency SLO, or prove exactly-once delivery. Next, prepare a separate poison-message/dead-letter experiment: send one
+identifiable invalid diagnostic message, verify rejection without inbox/projection
+changes, check its dead-letter reason, and plan cleanup before sending. This
+experiment has not yet been implemented or run in Azure.

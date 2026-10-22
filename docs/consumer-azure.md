@@ -353,5 +353,9 @@ latest-projection and empty native queue evidence. The subsequent
 [controlled duplicate-delivery experiment](consumer-duplicate.md) also passed:
 one acknowledged resend produced a new duplicate log; full inbox/outbox/projection
 fingerprints and counts stayed unchanged; native queue counts returned to zero.
-Consumer outages/crash boundaries, poison-message recovery, sustained throughput
-and token renewal across an actual expiry boundary remain unverified in Azure.
+The [controlled consumer outage/backlog experiment](consumer-backlog.md) also
+passed: two messages accumulated with zero consumer pods, then drained after
+restoration to one replica. Read-only SQL verified all 14 inbox records and seven
+latest projections with a fresh error-free heartbeat and no mismatch/failure rows.
+Crash boundaries, poison-message recovery, sustained throughput and token renewal
+across an actual expiry boundary remain unverified in Azure.
