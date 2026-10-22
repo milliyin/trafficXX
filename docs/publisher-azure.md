@@ -3,8 +3,9 @@
 The background expiry worker passed the controlled idle-hold experiment.
 The subsequent user-run BROWSE_DEMO_HTTP_OK again reported health alive,
 readiness ready and 100 available for each demo event. Reservation/outbox
-history remains intentionally. Azure Service Bus and publisher deployment
-have not been created or verified in this stage.
+history remains intentionally. The user subsequently supplied Terraform outputs for the Azure Service Bus
+namespace, queue and private endpoint. Live broker connectivity/authorization
+and publisher deployment remain unverified.
 
 ## Register the publisher SQL identity
 
@@ -244,10 +245,13 @@ The state list must contain the existing AKS, PostgreSQL and workload identities
 The intended change is six additions and no changes/deletions: Service Bus
 namespace/queue, private DNS zone/link, private endpoint and sender role.
 Review the full plan before apply; investigate any existing-resource update,
-replacement or deletion rather than using targeting to hide it. No Azure apply has
-been run at this checkpoint. Namespace availability,
-subscription Premium capacity and East US service availability remain Azure-side
-checks. RBAC propagation, private DNS/AMQP connectivity, actual sender/receiver
+replacement or deletion rather than using targeting to hide it. The user supplied the saved servicebus.tfplan: exactly these six additions,
+zero changes and zero deletions. The namespace is Premium/one unit/one partition,
+public and local authentication disabled; the expected private network resources
+and publisher principal are present. Plan review passed; the user subsequently
+supplied namespace, queue and private-endpoint outputs after the apply command.
+Do not reapply the old saved plan after state has changed. RBAC propagation,
+private DNS/AMQP connectivity, actual sender/receiver
 denial and publication still require later experiments.
 
 Local validation used Terraform 1.16.6 and installed AzureRM 5.10.0 in an ignored
@@ -255,3 +259,59 @@ isolated copy, with the backend removed only in that validation copy. No Azure
 login/state/plan was accessed locally. Provider schema/fmt/validate and all 138
 offline methods pass. An initial DNS-link schema mismatch was corrected to the
 AzureRM 5 private_dns_zone_id argument; the committed provider lock is unchanged.
+
+## Check publisher private connectivity and link authorization
+
+The user supplied Terraform outputs after the reviewed plan, including namespace
+trafficxx-sb-e8708a85, reservation-events and the private endpoint resource ID.
+A separate Apply complete summary was not supplied. These outputs are resource
+configuration evidence, not AMQP connectivity or live authorization evidence.
+The outputs also reconfirmed the expected publisher client/object IDs.
+
+Run the check inside AKS using publisher service account and the existing runtime
+image. The ConfigMap supplies only the diagnostic source, not credentials:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap servicebus-publisher-check-files -n trafficxx \
+  --from-file=check-servicebus-publisher.py=scripts/check-servicebus-publisher.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/servicebus-publisher-access.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/servicebus-publisher-access-check --timeout=180s
+kubectl logs -n trafficxx job/servicebus-publisher-access-check -c check
+```
+
+Expected SERVICEBUS_PUBLISHER_ACCESS_OK with private_ips/tls_peer in
+10.40.17.0/24, verified TLS version, sender_link_open=true,
+receive_denied=true and broker_messages_sent=0. Actual Azure result is pending.
+The check validates exact projected publisher identity/configuration, rejects
+any connection string, and uses WorkloadIdentityCredential explicitly. It verifies
+DNS and certificate-checked TLS on AMQP port 5671, opens a queue sender link and
+creates an unsent empty batch to negotiate limits. It then requires an explicit
+ServiceBusAuthorizationError on receiver open/peek. Unexpected receive access,
+identity failure, timeout and network errors fail rather than count as denial.
+
+No send_messages or receive_messages call occurs, and no message content is
+printed. Peeking does not lock/remove queued messages; see the
+[SDK receiver documentation](https://learn.microsoft.com/en-us/python/api/azure-servicebus/azure.servicebus.servicebusreceiver?view=azure-python).
+This establishes sender-link authorization only if it passes; an actual message
+send, outbox publication, consumer processing and sustained renewal remain later
+experiments. This does not modify the publisher runtime credential-selection
+code or deploy its long-running process.
+
+Azure role assignments can take several minutes to propagate. If sender_link
+fails just after apply, inspect the safe check/error type, allow propagation,
+then delete only the diagnostic Job and rerun the apply/wait/log commands:
+
+```bash
+kubectl delete job/servicebus-publisher-access-check -n trafficxx
+```
+
+Do not enable SAS/public access or grant Data Owner to bypass a failure. The Job
+has a deadline and completed-job TTL. It needs no package downloads or image
+build. Eight new offline methods cover no-send/receive behavior, unsafe identity/
+connection-string settings, public DNS/TLS peer, sender denial, receiver denial,
+unexpected receiver authorization and timeout classification, with raw-error
+redaction. All 146 offline methods pass; network/SDK responses are mocked there.

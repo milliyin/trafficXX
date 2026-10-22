@@ -37,7 +37,7 @@ The expiry worker is deployed and passed a controlled idle-hold expiry experimen
 with raw read-only SQL evidence. Other workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
-been bootstrapped. Azure Service Bus, ingress, GitOps, production customer authentication,
+been bootstrapped. Live Azure Service Bus access/publication checks, ingress, GitOps, production customer authentication,
 load benchmarks, and restore experiments remain ahead. Customer identity in the
 local API is simulated. The logging workspace exists; cloud telemetry collection
 has not been enabled.
@@ -127,8 +127,10 @@ Next:
    demo events. The [publisher SQL login](docs/publisher-azure.md) now passed;
    its outbox/heartbeat grant Job and actual SQL permission probe also passed
    (nine allowed operations, 23 denials, no committed diagnostic changes or sent
-   messages). Private Service Bus Terraform is prepared; next register its resource
-   provider and review the existing-foundation plan before applying.
+   messages). The private Service Bus plan had six additions and no existing
+   changes; the user supplied the resulting namespace/queue/private-endpoint
+   outputs. Next run the AKS publisher private-connectivity/authorization check
+   before publishing messages.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -160,7 +162,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 138 offline tests; SDK/database responses and the expiry clock are mocked
+passes 146 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
