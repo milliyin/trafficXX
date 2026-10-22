@@ -2,7 +2,8 @@
 
 Operations already exposes verified monitoring metrics. This step adds a private
 Prometheus server to collect and retain samples, so Grafana can later display
-history. Actual deployment/storage/scrape output is pending. No notification
+history. The user supplied PROMETHEUS_SCRAPE_OK with actual stored operations samples;
+ordinary restart/persistence is not yet tested. No notification
 routing or Grafana dashboard is created in this step.
 
 ## Prepared resources and access
@@ -74,7 +75,11 @@ SQL-derived operations signals, not native broker queue depth.
 
 The checker makes up to24attempts at five-second intervals, with15second HTTP
 request timeouts. It prints only aggregate numeric results, no raw scrape errors.
-Actual PROMETHEUS_SCRAPE_OK and the PVC Bound/collector Ready evidence are pending.
+The user supplied PROMETHEUS_SCRAPE_OK: operations target up1, latest sample age
+5.842seconds, two actual up samples within2minutes, processed_total18, zero
+outstanding/unpublished/active alerts and historical_dead_letters1. No separate
+PVC Bound/collector rollout transcript was supplied. The real stored sample
+result verifies functioning collection, not disk recovery across a restart.
 
 Useful read-only diagnostics if deployment/checks fail:
 
@@ -93,6 +98,7 @@ Python and Bash syntax/LF checks passed. Local promtool/container execution was
 not performed; init-container validation and real query evidence remain pending.
 No local Docker restart or Azure account access occurred.
 
-After scrape evidence passes, add a private Grafana dashboard pointing to
+Scrape evidence passed; the [private Grafana dashboard](grafana-azure.md) is
+now prepared, pointing to
 http://prometheus.trafficxx-monitoring.svc.cluster.local:9090. Alert rules,
 notification routing and native Azure queue metrics remain separate integrations.

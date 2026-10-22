@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: grafana-dashboard-check
+  namespace: trafficxx-monitoring
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: grafana
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: check
+          configMap:
+            name: grafana-dashboard-check-files
+        - name: credentials
+          secret:
+            secretName: grafana-admin
+            defaultMode: 288
+            items:
+              - key: GF_SECURITY_ADMIN_USER
+                path: admin-user
+              - key: GF_SECURITY_ADMIN_PASSWORD
+                path: admin-password
+      containers:
+        - name: check
+          image: python:3.12-slim-trixie
+          command: [python, -u, /checks/check-grafana-dashboard.py]
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: check
+              mountPath: /checks
+              readOnly: true
+            - name: credentials
+              mountPath: /credentials
+              readOnly: true

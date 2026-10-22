@@ -1,0 +1,687 @@
+{
+  "uid": "trafficxx-operations",
+  "title": "trafficXX | Operations",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "trafficxx",
+    "lab"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Operations scrape up",
+      "description": "1 means Prometheus can scrape operations. This is not native Service Bus queue health.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Unpublished events",
+      "description": "",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_outbox_pending{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Processing outstanding",
+      "description": "Published outbox events without an inbox receipt; not native queue depth.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_processing_outstanding{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active warning signals",
+      "description": "Application alert gauges. External notification routing is not configured.",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(trafficxx_alert_active{job=\"trafficxx-operations\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Outstanding work over time",
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_outbox_pending{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "trafficxx_processing_outstanding{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Oldest outstanding event age",
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_outbox_oldest_seconds{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "trafficxx_processing_oldest_seconds{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Worker heartbeat age",
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_worker_heartbeat_age_seconds{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{worker}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Warning signals over time",
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_alert_active{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{alert}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Processed events (stored history)",
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_processed_total{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Worker presence and error flags",
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_worker_heartbeat_present{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{worker}} / {{__name__}}",
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "trafficxx_worker_has_error{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{worker}} / {{__name__}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Historical dead-letter audit records",
+      "description": "Retained audit history, including the cleaned-up diagnostic. This is NOT current native DLQ depth.",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_observed_dead_letters_total{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Historical publication failures",
+      "description": "Cumulative send failures. Recovered retries remain counted. See current backlog, scrape up, heartbeats and warning signals for current state.",
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_publish_failures_total{job=\"trafficxx-operations\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "legendFormat": "{{__name__}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": []
+}
