@@ -6,8 +6,10 @@ readiness ready and 100 available for each demo event. Reservation/outbox
 history remains intentionally. The user subsequently supplied Terraform outputs for the Azure Service Bus
 namespace, queue and private endpoint. Live private broker access and one real
 application outbox send subsequently passed. The continuous publisher Deployment
-then produced successful publication logs. Persisted backlog drain, queue counts
-and consumer processing are still being verified separately.
+then produced successful publication logs. Read-only SQL confirmed 12 published
+rows and zero pending, and Azure reported 12 active messages with zero dead
+letters. Consumer processing remains unverified; continue with the
+[consumer setup guide](consumer-azure.md).
 
 ## Register the publisher SQL identity
 
@@ -445,7 +447,10 @@ kubectl logs -n trafficxx job/publisher-drain-check -c check
 
 Expected PUBLISHER_DRAIN_OK: pending_count=0, positive published_count equal to
 total_count, heartbeat_present=true, heartbeat_has_error=false and heartbeat age
-between zero and thirty seconds. Actual Azure result remains pending. The Job
+between zero and thirty seconds. The user supplied real PUBLISHER_DRAIN_OK:
+total_count=12, published_count=12, pending_count=0, failed_attempts=0,
+heartbeat_present=true, heartbeat_age_seconds=0.668837 and heartbeat_has_error=false.
+The observer was trafficxx-lab-migrator over TLSv1.3 with read_only=true. The Job
 uses the existing migrator service account/image with PYTHONPATH=/app. It validates
 its injected client/database configuration, asserts non-admin SQL identity/TLS,
 and executes SET TRANSACTION READ ONLY before each observation. It queries only
@@ -480,5 +485,8 @@ real inbox/projection/settlement verification.
 Eight new offline methods cover read-only SQL, blocked pending/empty/stale/error
 states, historical retries, missing heartbeat/redacted error details, wrong
 observer identity, eventual drain, bounded timeout snapshots and wrong injected
-client. All 162 offline methods pass with a simulated clock. No live drain/queue
-count result has been supplied yet.
+client. All 162 offline methods pass with a simulated clock. The corresponding
+real drain observation passed. The user then supplied queue counts: active=12,
+dead_letters=0, total=12. These point-in-time observations agree; they do not
+establish consumer processing or exactly-once delivery. Next configure the
+consumer identity/SQL/broker permissions before receiving messages.
