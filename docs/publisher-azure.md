@@ -5,8 +5,9 @@ The subsequent user-run BROWSE_DEMO_HTTP_OK again reported health alive,
 readiness ready and 100 available for each demo event. Reservation/outbox
 history remains intentionally. The user subsequently supplied Terraform outputs for the Azure Service Bus
 namespace, queue and private endpoint. Live private broker access and one real
-application outbox send subsequently passed. Continuous publisher deployment,
-backlog drain and consumer processing remain unverified.
+application outbox send subsequently passed. The continuous publisher Deployment
+then produced successful publication logs. Persisted backlog drain, queue counts
+and consumer processing are still being verified separately.
 
 ## Register the publisher SQL identity
 
@@ -397,7 +398,10 @@ kubectl logs -n trafficxx deployment/publisher --tail=50
 Expected PUBLISHER_DEPLOYED and one Ready Running publisher pod. Successful sends
 log outbox_publish outcome=published; idle loops do not log a publication. Errors
 can log safe reconnect/retry classifications. Actual rollout/drain evidence is
-pending. Do not rerun the earlier one-shot Job to start the continuous process.
+pending. The user subsequently supplied eleven successful publication log lines
+from deployment/publisher. Those logs show progress but do not establish a fully
+drained backlog or continuous health. Do not rerun the earlier one-shot Job to
+start the continuous process.
 
 The one-replica Recreate Deployment uses the same reviewed immutable image,
 publisher service account/SQL role, private namespace/queue and
@@ -422,3 +426,59 @@ a lab topology, not publisher HA. Four stubbed deployment scenarios passed
 and manifest module/identity/image/security/configuration checks passed, and all
 154 offline methods pass. Actual deployment, outbox drain and live queue counts
 remain pending; continuous delivery/consumer effects are not claimed.
+
+## Verify persisted drain and inspect queue counts
+
+Run the database observer while the continuous publisher remains running:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap publisher-drain-check-files -n trafficxx \
+  --from-file=check-publisher-drain.py=scripts/check-publisher-drain.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/publisher-drain.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/publisher-drain-check --timeout=180s
+kubectl logs -n trafficxx job/publisher-drain-check -c check
+```
+
+Expected PUBLISHER_DRAIN_OK: pending_count=0, positive published_count equal to
+total_count, heartbeat_present=true, heartbeat_has_error=false and heartbeat age
+between zero and thirty seconds. Actual Azure result remains pending. The Job
+uses the existing migrator service account/image with PYTHONPATH=/app. It validates
+its injected client/database configuration, asserts non-admin SQL identity/TLS,
+and executes SET TRANSACTION READ ONLY before each observation. It queries only
+outbox counts and publisher heartbeat metadata, never broker/message bodies or
+reservation/customer data. No send/receive/update/reset occurs. It polls at most
+two minutes for a successful snapshot; stale/missing/error heartbeats, empty
+outbox or pending rows cannot pass. Historical failed-attempt totals are reported
+but do not invalidate eventual successful drain. Raw heartbeat error strings and
+SDK errors are not printed.
+
+Read broker counts through your Cloud Shell user's management-plane access:
+
+```bash
+az servicebus queue show \
+  --resource-group trafficxx-lab-rg \
+  --namespace-name trafficxx-sb-e8708a85 \
+  --name reservation-events \
+  --query '{active:countDetails.activeMessageCount,dead_letters:countDetails.deadLetterMessageCount,total:messageCount}' \
+  --output json
+```
+
+This is the Azure CLI queue-show operation, not a data-plane receive and not an
+extra receiver grant; see [CLI documentation](https://learn.microsoft.com/en-us/cli/azure/servicebus/queue?view=azure-cli-latest#az-servicebus-queue-show).
+Messages should be waiting because no consumer is deployed. Record the actual
+counts rather than inventing a total or requiring exact equality with outbox
+rows: observation times differ and legitimate at-least-once duplicates can
+exist. Outbox drain is a point-in-time publisher observation, not consumer
+processing, durable end-to-end losslessness, continuous availability or token
+renewal proof. The next stage is consumer identity/SQL/broker authorization and
+real inbox/projection/settlement verification.
+
+Eight new offline methods cover read-only SQL, blocked pending/empty/stale/error
+states, historical retries, missing heartbeat/redacted error details, wrong
+observer identity, eventual drain, bounded timeout snapshots and wrong injected
+client. All 162 offline methods pass with a simulated clock. No live drain/queue
+count result has been supplied yet.

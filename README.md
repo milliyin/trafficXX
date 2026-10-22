@@ -37,7 +37,8 @@ passed with two Ready replicas on separate application nodes; its HTTP check
 verified health, database readiness, the correct API module and a missing reservation.
 The expiry worker is deployed and passed a controlled idle-hold expiry experiment
 with raw read-only SQL evidence. A one-shot publisher Job passed; its continuous
-Deployment is prepared but not yet verified running. Other workers are not deployed.
+Deployment now emits successful publication logs. Full outbox-drain and queue-count
+evidence is the current check. Other workers are not deployed.
 Remaining workload SQL permissions, broader recovery experiments and sustained
 token-renewal verification are next steps. The base and messaging schema have
 been bootstrapped. Live Azure Service Bus publication/consumer checks, ingress, GitOps, production customer authentication,
@@ -134,8 +135,9 @@ Next:
    changes; the user supplied the resulting namespace/queue/private-endpoint
    outputs. Its AKS check passed private DNS/TLS and sender-link access, with
    receive access denied and no messages sent. The one-event publisher Job then
-   passed a real send, persisted publication readback and heartbeat. Next deploy
-   the prepared continuous publisher and verify its outbox drain and queue state.
+   passed a real send, persisted publication readback and heartbeat. The continuous
+   publisher now emits successful publication logs. Next run its read-only drain
+   check and inspect Azure queue counts before setting up the consumer.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -167,7 +169,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 154 offline tests; SDK/database responses and the expiry clock are mocked
+passes 162 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
