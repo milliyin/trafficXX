@@ -177,9 +177,11 @@ Next:
    verified 16 events/eight latest projections and the retained rejection audit;
    native queue counts were all zero. The
    [operations SQL identity setup](docs/operations-azure.md) passed its real
-   non-admin TLS login and exact column-scoped monitoring grants. Next run the
-   prepared real monitoring-query/permission checks, then adapt backlog/heartbeat
-   signals before deployment.
+   non-admin TLS login and exact column-scoped monitoring grants. The
+   real monitoring-query/permission checks passed (four query paths, 30 denials).
+   Updated monitoring source now separates historical audits, detects missing
+   expected workers and exports worker/alert gauges. Next build its image with
+   the prepared ACR helper, then verify an internal operations deployment.
    External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
@@ -212,7 +214,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 243 offline tests; SDK/database responses and the expiry clock are mocked
+passes 256 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

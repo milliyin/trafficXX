@@ -44,7 +44,7 @@ credential, with no fallback to human/node credentials and no token/raw-error
 output. It installs pinned dependencies before the bounded, non-root login check.
 
 Seven mocked scenarios passed: success, wrong client, wrong service account,
-missing CA, admin, SQL failure and token failure. All243offline methods passed.
+missing CA, admin, SQL failure and token failure. All256offline methods passed.
 These local checks do not substitute for real Azure login evidence.
 
 ## Grant column-scoped monitoring reads
@@ -90,7 +90,7 @@ existing unexpected rights cause rollback rather than automatic revocation.
 
 Six added offline methods cover exact SELECT-only grants, ownership, protected
 reads, all writes/reference/destructive rights, every required read/column and
-role/DDL flags. All243offline methods pass. Real operations-role COUNT(*), joined
+role/DDL flags. All256offline methods pass. Real operations-role COUNT(*), joined
 backlog/age reads, heartbeat queries and negative SQL tests follow after this
 Job succeeds. They are separate from catalog-based effective-grant checks.
 
@@ -108,9 +108,14 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/postgres-operations-permissions-check -c check
 ```
 
-Expected OPERATIONS_PERMISSIONS_OK with four allowed paths: readiness,
+Verified OPERATIONS_PERMISSIONS_OK from the user with four allowed paths: readiness,
 backlog join/ages, count-only sources and worker heartbeat reads; 30 protected
-operations must fail with SQLSTATE42501. Actual Azure output is pending. The
+operations failed with SQLSTATE42501. No diagnostic rows were committed or
+broker messages sent/received; operations identity used TLSv1.3, admin=false.
+Its snapshot had zero unpublished/processing backlog and age, processed_total=16,
+processing_failures_total=0, publish_failures_total=1 and observed_dead_letters_total=1.
+Publisher/consumer ages were0.654274/0.347912seconds with no current errors.
+The two nonzero counters are historical observations, not current failure flags. The
 three monitoring SQL expressions match the existing operations.snapshot queries,
 including COUNT(*) under column-only grants. The diagnostic does not invoke the
 HTTP app or claim its alert logic is fixed. It does not require a zero backlog:
@@ -132,36 +137,70 @@ rows are committed, no broker is contacted and no additional grants are applied.
 Eight new offline methods cover allowed queries, all unexpected permission
 successes, wrong SQLSTATE, invalid metric/heartbeat values, raw-error redaction,
 outer rollback/verified TLS, positive-query failure and wrong injected identity.
-All243offline methods pass. Real allowed/denied evidence remains separate.
+All256offline methods pass. The real Azure allowed/denied result above is separate from these local tests.
 
-## Next steps and current application limits
+## Updated monitoring logic and new image build
 
-The prepared policy follows trafficxx.operations.snapshot:
-outbox created_at/published_at/message_id/publish_failures; consumer inbox
-message_id; heartbeat name/last_seen_at/last_error; count-only access to failure
-and dead-letter audit tables through narrow readable columns. No reservation,
-inventory, payload/envelope reads, database writes, schema creation or broker
-send/receive privileges are needed for these SQL-derived signals. Effective
-permission verification and real allowed/denied SQL probes precede deployment.
+The source now separates active alert conditions from historical dead-letter
+audit observations. These changes have passed local checks but are not yet
+built/deployed in Azure. SQL permissions and query expressions stay the same.
 
-The current operations API was built for local development and needs deliberate
-Azure adaptations before being presented as operational alerting:
+- Configure EXPECTED_HEARTBEAT_WORKERS=publisher,consumer on the Azure operations
+  Deployment. Missing expected workers produce NAME_HEARTBEAT_MISSING even if
+  no heartbeat row has ever existed. Only actual heartbeat emitters are expected;
+  expiry does not currently write one. Empty/default configuration retains local
+  mode without requiring worker processes.
+- Recorded workers reaching BACKLOG_ALERT_SECONDS (default30) produce
+  NAME_HEARTBEAT_STALE; a recorded error produces NAME_ERROR. Fresh/error-free
+  heartbeats clear those signals. Raw error values are replaced by has_error.
+- Outbox/processing backlog alerts require nonzero work and age at least the
+  configured positive finite threshold. No backlog clears these alerts.
+- observed_dead_letters_total remains a historical counter, with
+  DEAD_LETTERS_PREVIOUSLY_OBSERVED under historical_observations. It no longer
+  generates an always-on live DEAD_LETTERS_OBSERVED alert after cleanup.
+- /metrics now exports worker_heartbeat_present, worker_heartbeat_age_seconds,
+  worker_has_error and alert_active gauges with worker/alert labels, in addition
+  to existing aggregate metrics. Missing workers export presence0 and no fake
+  age value. Every rule exports a zero/one sample so recovery is visible.
+- /backlog and /metrics still derive from PostgreSQL, not native Service Bus
+  queue depth. native_queue_counts_available=false remains explicit.
 
-- /backlog and /metrics expose database-derived values, not native queue depth.
-- observed_dead_letters_total is historical audit history. Existing
-  DEAD_LETTERS_OBSERVED remains set after the diagnostic was removed; it must
-  not be described as a current dead-letter queue alarm.
-- Stale-heartbeat checks only cover recorded workers. A publisher/consumer
-  that never wrote a heartbeat is currently absent, not flagged missing.
-- Publisher and consumer emit heartbeats; expiry currently does not. Expected
-  heartbeat checks must reflect the actual runtime behavior.
-- /metrics exports aggregate counts/ages but currently omits worker heartbeat
-  samples and alert flags; these require implementation for a metrics scraper.
-- API alert flags alone do not deliver notifications. A collector, alert rules,
-  routing and failure tests remain future integration work. The existing
-  Log Analytics workspace alone does not collect these application signals.
+Operations readiness now uses SELECT1. The prior shared helper queried events,
+which the operations role correctly cannot read. The helper accepts a query
+option; Browse/Booking retain their existing default. Snapshot SQL runs in a
+REPEATABLE READ, READ ONLY transaction, with no new grants required.
 
-Keep the operations endpoint internal while developing this lab. Validate a
-healthy baseline, then deliberately age a consumer backlog to prove the signals
-appear and clear after recovery. Native Service Bus count monitoring must be
-integrated separately without granting operations permission to consume messages.
+Build the updated runtime image using ACR from Cloud Shell:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/build-operations-image.sh
+```
+
+Expected IMAGE_BUILD_OK and a digest-pinned reference saved to ignored
+operations-image.txt. The helper checks subscription/registry and rejects a
+missing/invalid digest. It performs no deployment. Actual Azure build/digest
+is pending; share the reference before configuring the operations rollout.
+The reference file is excluded from Git and the Docker build context.
+
+Ten new monitoring-rule methods plus three readiness methods passed (256 total),
+including absent/stale/error workers, recovery, historical counters, threshold
+validation, metric labels and no raw errors. Real FastAPI HTTP smoke checks for
+health/readiness/backlog/metrics passed with mocked SQL; exported text was parsed
+by prometheus_client. Four mocked build-helper scenarios passed (success, wrong
+subscription, build failure, bad digest), plus Bash syntax/LF. Local Docker was
+not restarted; PostgreSQL/AMQP integration suites were not rerun locally. Hosted
+CI status and real Azure HTTP/alert behavior are not yet verified for this change.
+
+## Work remaining after the image build
+
+Deploy the operations endpoint internally with its own read-only identity and
+explicit expected-worker configuration. Check healthy HTTP/metrics, then age a
+controlled consumer backlog and prove active alert gauges appear and clear after
+recovery. Connect a metrics scraper/collector, alert rules and notification
+routing separately: API flags and exported metrics alone do not notify anyone.
+The existing Log Analytics workspace alone does not collect application signals.
+Native Service Bus count monitoring also needs a separate read/management path;
+operations has no broker send/receive role. No external alert service or cloud
+telemetry collection has been enabled by the source changes above.

@@ -5,13 +5,15 @@ from fastapi.responses import PlainTextResponse
 
 from trafficxx.db import connect
 from trafficxx.health import register
+from trafficxx.monitoring import evaluate, expected_workers, render_metrics
 
-app = FastAPI(title='trafficXX Local Operations', version='0.2.0')
-register(app)
+app = FastAPI(title='trafficXX Operations', version='0.3.0')
+register(app, readiness_query='SELECT 1')
 
 
 def snapshot():
     with connect() as conn:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
         values = conn.execute(
             'SELECT count(*) FILTER (WHERE o.published_at IS NULL) AS outbox_pending, '
             'coalesce(greatest(0, extract(epoch FROM clock_timestamp() - '
@@ -30,21 +32,8 @@ def snapshot():
         workers = conn.execute('SELECT name, last_seen_at, last_error, '
                                'greatest(0, extract(epoch FROM clock_timestamp() - last_seen_at)) AS age_seconds '
                                'FROM worker_heartbeats ORDER BY name').fetchall()
-    threshold = float(os.environ.get('BACKLOG_ALERT_SECONDS', '30'))
-    alerts = []
-    if values['outbox_pending'] and values['outbox_oldest_seconds'] >= threshold:
-        alerts.append('OUTBOX_BACKLOG_AGING')
-    if values['processing_outstanding'] and values['processing_oldest_seconds'] >= threshold:
-        alerts.append('PROCESSING_BACKLOG_AGING')
-    if values['observed_dead_letters_total']:
-        alerts.append('DEAD_LETTERS_OBSERVED')
-    for worker in workers:
-        if worker['age_seconds'] >= threshold:
-            alerts.append(worker['name'].upper() + '_HEARTBEAT_STALE')
-        if worker['last_error']:
-            alerts.append(worker['name'].upper() + '_ERROR')
-    return {'metrics': values, 'workers': workers, 'alerts': alerts,
-            'native_queue_counts_available': False}
+    return evaluate(values, workers, os.environ.get('BACKLOG_ALERT_SECONDS', '30'),
+                    expected_workers(os.environ.get('EXPECTED_HEARTBEAT_WORKERS', '')))
 
 
 @app.get('/backlog')
@@ -54,9 +43,4 @@ def backlog():
 
 @app.get('/metrics', response_class=PlainTextResponse)
 def metrics():
-    values = snapshot()['metrics']
-    lines = []
-    for name, value in values.items():
-        kind = 'counter' if name.endswith('_total') else 'gauge'
-        lines.extend([f'# TYPE trafficxx_{name} {kind}', f'trafficxx_{name} {value}'])
-    return PlainTextResponse('\n'.join(lines) + '\n', media_type='text/plain; version=0.0.4')
+    return PlainTextResponse(render_metrics(snapshot()), media_type='text/plain; version=0.0.4')

@@ -57,7 +57,7 @@ The downstream effect is intentionally small: `reservation_updates` stores the l
 
 The outstanding count covers this application's published records. It includes in-flight work, dead-lettered work, and events lost by restarting the local emulator. It is **not the native queue depth**. Dead-letter observations are a lower bound because passive inspection samples the first 100 entries; broker administration metrics for real Azure are a later integration.
 
-`/backlog` flags unpublished or unprocessed work older than thirty seconds, observed dead letters, and stale/erroring recorded workers. Set `BACKLOG_ALERT_SECONDS` on the operations container to change that threshold. These are API flags and Prometheus metrics; an external alert delivery service is not configured yet. A worker that has never successfully written a heartbeat cannot produce a stale-heartbeat record; backlog-age flags still expose stalled work.
+`/backlog` flags unpublished or unprocessed work older than thirty seconds and stale/erroring recorded workers. Historical dead-letter audit records appear separately under `historical_observations`; they are not a live queue alarm. Set `BACKLOG_ALERT_SECONDS` on the operations container to change that threshold. These are API flags and Prometheus metrics; an external alert delivery service is not configured yet. Set `EXPECTED_HEARTBEAT_WORKERS=publisher,consumer` to also detect workers with no heartbeat record. Missing expected workers emit a missing-heartbeat alert; the default empty setting preserves local mode. Worker presence/age/error and active-alert gauges are included in `/metrics`.
 
 ## Inspect and replay
 
