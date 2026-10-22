@@ -4,7 +4,7 @@ trafficXX is a learning project for building a reliable ticket reservation backe
 and operating it on Azure. We build in small steps, test failures, and record what
 we learn in [memeory.md](memeory.md).
 
-## Verified progress - updated 2026-10-22
+## Verified progress - updated 2026-10-23
 
 | Part | Implemented and verified |
 |---|---|
@@ -115,7 +115,8 @@ Next:
    100 for each demo event. Real five-minute expiry and seat reuse also passed
    via a booking transaction; final Browse HTTP again showed 100 available for
    each event. Next register the expiry worker's SQL identity, test its permissions
-   and deploy it. That worker setup has not started in Azure.
+   and deploy it. The [registration and login-check files](docs/expiry-worker-azure.md)
+   are prepared; that worker setup has not started in Azure.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -126,6 +127,10 @@ Azure commands are run personally in browser Cloud Shell from
 `~/trafficxx/infrastructure/foundation` in the restored clone. Azure resources remain running; local Docker services
 were stopped at the last checkpoint. Diagnostic Jobs have automatic cleanup;
 long-term stability, restore behavior, and application performance are unverified.
+
+On 2026-10-23, a fresh Cloud Shell connection confirmed all four nodes Ready
+and all four API pods still Running/Ready with zero restarts. This pod snapshot
+does not establish continuous HTTP availability or token refresh across expiry.
 
 Guides: [AKS](docs/aks.md), [private PostgreSQL](docs/postgresql.md),
 [workload identity](docs/workload-identity.md), [schema bootstrap](docs/schema-bootstrap.md), [local architecture](docs/architecture.md),
