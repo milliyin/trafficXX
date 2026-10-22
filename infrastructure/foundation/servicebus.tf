@@ -76,6 +76,13 @@ resource "azurerm_role_assignment" "publisher_servicebus_sender" {
   principal_type       = "ServicePrincipal"
 }
 
+resource "azurerm_role_assignment" "consumer_servicebus_receiver" {
+  scope                = azurerm_servicebus_queue.reservation_events.id
+  role_definition_name = "Azure Service Bus Data Receiver"
+  principal_id         = azurerm_user_assigned_identity.workload["consumer"].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 output "servicebus_namespace_name" {
   value = azurerm_servicebus_namespace.lab.name
 }

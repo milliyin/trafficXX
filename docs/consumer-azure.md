@@ -126,9 +126,10 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/postgres-consumer-permissions-check -c check
 ```
 
-Expected CONSUMER_PERMISSIONS_OK with diagnostic_rows_committed=false,
-broker_messages_sent=0 and broker_messages_received=0. Actual Azure results are
-pending. Explicit WorkloadIdentityCredential and verify-full TLS use the consumer's
+Verified CONSUMER_PERMISSIONS_OK from the user: all 14 allowed operations and
+all 30 denials passed with SQLSTATE42501, diagnostic_rows_committed=false,
+broker_messages_sent=0 and broker_messages_received=0. Identity was
+trafficxx-lab-consumer, database trafficxx, TLSv1.3, admin=false. Explicit WorkloadIdentityCredential and verify-full TLS use the consumer's
 own service account. The bounded diagnostic Job installs its pinned dependencies
 in an init container, as earlier permission checks did.
 
@@ -147,10 +148,47 @@ success, wrong SQLSTATE, missing foreign-key fixture, partial failure, identity,
 payload/ordering mismatch and rollback before success. Local tests do not replace
 real PostgreSQL evidence.
 
-## Next stages
+## Plan the consumer queue role
 
-After CONSUMER_PERMISSIONS_OK, add queue-scoped Data Receiver authorization and
-verify private broker access with send denied before deploying the consumer.
+The foundation now prepares one additional resource:
+azurerm_role_assignment.consumer_servicebus_receiver. It grants Azure Service
+Bus Data Receiver to the existing consumer managed identity, principal ID
+0cbc3689-5f58-4522-b1a5-4cb71eb79ef3, scoped to the reservation-events queue ID.
+No Data Sender or Data Owner role is added. Existing publisher authorization
+remains queue-scoped Data Sender. See Microsoft's
+[Service Bus role and scope documentation](https://learn.microsoft.com/en-us/azure/service-bus-messaging/authenticate-application).
+
+From the existing initialized Cloud Shell checkout:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+export ARM_SUBSCRIPTION_ID=35aaf788-f4cf-40c3-9ea5-bc8fe8708a85
+export TF_VAR_subscription_id="$ARM_SUBSCRIPTION_ID"
+export TF_VAR_location=eastus
+export TF_VAR_registry_name=trafficxxacre8708a85
+export TF_VAR_aks_admin_object_id="$(az ad signed-in-user show --query id -o tsv)"
+export TF_VAR_postgres_admin_principal_name="$(az ad signed-in-user show --query userPrincipalName -o tsv)"
+cd ~/trafficxx/infrastructure/foundation
+terraform validate
+terraform plan -out=consumer-receiver.tfplan
+```
+
+If this shell has lost its Terraform initialization, follow the existing
+[publisher guide's backend recovery instructions](publisher-azure.md#prepare-private-azure-service-bus-infrastructure)
+using the same lab/foundation.tfstate key; never initialize an empty replacement
+state. Expected plan: one addition, zero changes and zero destroys, only the
+consumer queue receiver assignment. Review the full plan before applying; any
+other mutation needs investigation. Actual plan/apply are pending. Do not reuse
+an old servicebus.tfplan or target away unrelated changes.
+
+Offline Terraform 1.16.6/AzureRM 5.10.0 formatting and validation passed in an
+isolated copy without the backend; no local Azure login, state or plan access.
+This assignment enables authorization only; it does not start a consumer or
+settle queue messages. After the reviewed plan is applied, verify private broker
+connectivity and receiving/peek authorization with send denied before deployment.
+RBAC propagation may take up to five minutes according to the documentation.
+
 
 The real consumer parses the event, atomically records the deduplication inbox
 and projection update, then acknowledges the broker after the SQL commit. A
