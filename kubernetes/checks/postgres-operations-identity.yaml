@@ -1,0 +1,161 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-operations-identity-check
+  namespace: trafficxx
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-operations-identity-check
+        azure.workload.identity/use: "true"
+      annotations:
+        azure.workload.identity/skip-containers: install-dependencies
+    spec:
+      restartPolicy: Never
+      serviceAccountName: operations
+      automountServiceAccountToken: false
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: dependencies
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: temporary
+          emptyDir:
+            sizeLimit: 256Mi
+      # Diagnostic only: fetch wheels before the credential-bearing check starts.
+      # Production applications will package dependencies in their built image.
+      initContainers:
+        - name: install-dependencies
+          image: python:3.12-slim-trixie
+          command:
+            - python
+            - -m
+            - pip
+            - install
+            - --disable-pip-version-check
+            - --no-cache-dir
+            - "--only-binary=:all:"
+            - --target=/dependencies
+            - azure-identity==1.26.0
+            - psycopg[binary]==3.3.6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: dependencies
+              mountPath: /dependencies
+            - name: temporary
+              mountPath: /tmp
+      containers:
+        - name: check
+          image: python:3.12-slim-trixie
+          env:
+            - name: PYTHONPATH
+              value: /dependencies
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: dependencies
+              mountPath: /dependencies
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+          command:
+            - python
+            - -u
+            - -c
+            - |
+              import base64
+              import json
+              import logging
+              import os
+              from pathlib import Path
+              import sys
+
+              # Report only safe metadata, never SDK exception text or tokens.
+              logging.disable(logging.CRITICAL)
+
+              def check():
+                  from azure.identity import WorkloadIdentityCredential
+                  import psycopg
+
+                  client = "8e14cc93-46e3-466d-bec1-5dda5b3cc4ef"
+                  tenant = "d2828580-3217-43ad-9f3f-8d430998b86e"
+                  role = "trafficxx-lab-operations"
+                  if os.environ["AZURE_CLIENT_ID"] != client or os.environ["AZURE_TENANT_ID"] != tenant:
+                      raise ValueError("Unexpected injected identity")
+                  token_file = os.environ["AZURE_FEDERATED_TOKEN_FILE"]
+                  assertion = Path(token_file).read_text().strip()
+                  payload = assertion.split(".")[1]
+                  claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                  if claims.get("sub") != "system:serviceaccount:trafficxx:operations":
+                      raise ValueError("Unexpected service account")
+                  # Entra verifies the signature and federation; this local decode
+                  # only catches a wrongly configured diagnostic before exchange.
+                  ca = "/etc/ssl/certs/ca-certificates.crt"
+                  if not Path(ca).is_file():
+                      raise ValueError("Missing public CA trust bundle")
+                  with WorkloadIdentityCredential(tenant_id=tenant, client_id=client,
+                                                  token_file_path=token_file) as credential:
+                      token = credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
+                      with psycopg.connect(
+                          host="trafficxx-pg-e8708a85.postgres.database.azure.com",
+                          port=5432, dbname="trafficxx", user=role, password=token.token,
+                          sslmode="verify-full", sslrootcert=ca, connect_timeout=10,
+                          options="-c default_transaction_read_only=on -c statement_timeout=15000",
+                      ) as connection:
+                          row = connection.execute("""
+                              SELECT current_database(), current_user, s.ssl, s.version,
+                                     r.rolsuper, r.rolcreatedb, r.rolcreaterole,
+                                     pg_has_role(current_user, 'azure_pg_admin', 'MEMBER')
+                              FROM pg_stat_ssl s JOIN pg_roles r ON r.rolname = current_user
+                              WHERE s.pid = pg_backend_pid()
+                          """).fetchone()
+                  if not row or row[0] != "trafficxx" or row[1] != role or not row[2] or any(row[4:]):
+                      raise ValueError("Unexpected SQL identity, TLS or administrator privileges")
+                  print(json.dumps({"result": "SQL_LOGIN_OK", "database": row[0],
+                                    "identity": row[1], "ssl": row[2], "tls_version": row[3],
+                                    "admin": False, "client_id": client}))
+
+              try:
+                  check()
+              except Exception as error:
+                  state = getattr(error, "sqlstate", None)
+                  if not isinstance(state, str) or len(state) != 5 or not state.isalnum():
+                      state = None
+                  print(json.dumps({"result": "SQL_LOGIN_FAILED", "error_type": type(error).__name__,
+                                    "sqlstate": state}))
+                  sys.exit(1)

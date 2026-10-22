@@ -175,8 +175,10 @@ Next:
    INVALID_EVENT_SCHEMA dead-lettering, unchanged business-table fingerprints
    and targeted cleanup back to an empty queue. The follow-up read-only observer
    verified 16 events/eight latest projections and the retained rejection audit;
-   native queue counts were all zero. Next improve operational backlog/heartbeat/
-   dead-letter visibility and test failures during processing.
+   native queue counts were all zero. Next run the prepared
+   [operations SQL identity setup](docs/operations-azure.md), then verify narrow
+   monitoring permissions and adapt backlog/heartbeat signals before deployment.
+   External metrics collection and alert delivery remain unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
