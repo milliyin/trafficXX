@@ -144,9 +144,10 @@ Next:
    a fresh error-free heartbeat. Azure reported 12 active messages and zero dead
    letters. The [consumer workload SQL login](docs/consumer-azure.md) passed with
    TLS 1.3 and no administrator privileges. Its table-grant Job and real SQL
-   operation checks passed (14 allowed, 30 denials). Next review the prepared
-   queue-scoped consumer receiver role plan, apply it, and verify private broker
-   authorization before deployment.
+   operation checks passed (14 allowed, 30 denials). Its receiver role plan matched
+   the consumer and exact queue scope; foundation outputs were supplied after
+   the apply instruction. Next run the prepared private broker check for main/DLQ
+   peek access and send denial before consumer deployment.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
@@ -178,7 +179,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 178 offline tests; SDK/database responses and the expiry clock are mocked
+passes 186 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

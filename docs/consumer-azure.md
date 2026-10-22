@@ -53,7 +53,7 @@ at this stage.
 Seven mocked scenarios passed: success, wrong client, wrong service account,
 missing CA, administrator role, SQL failure and token failure, with no fake
 token output. Manifest command elements, embedded Python and identity binding
-were validated. All 178 offline methods pass; real cloud identity and
+were validated. All 186 offline methods pass; real cloud identity and
 permission evidence are separate from those local checks.
 
 ## Grant the consumer its current SQL contract
@@ -179,8 +179,13 @@ If this shell has lost its Terraform initialization, follow the existing
 using the same lab/foundation.tfstate key; never initialize an empty replacement
 state. Expected plan: one addition, zero changes and zero destroys, only the
 consumer queue receiver assignment. Review the full plan before applying; any
-other mutation needs investigation. Actual plan/apply are pending. Do not reuse
-an old servicebus.tfplan or target away unrelated changes.
+other mutation needs investigation. The user supplied the planned receiver role:
+expected consumer principal, ServicePrincipal type, exact Data Receiver role and
+exact reservation-events queue scope. They then supplied foundation Outputs after
+the apply instruction, reconfirming namespace, queue, endpoint and identity IDs;
+a separate Apply complete summary was not included. Actual broker authorization
+is tested next. Do not reuse an old saved plan after state changes or target away
+unrelated mutations.
 
 Offline Terraform 1.16.6/AzureRM 5.10.0 formatting and validation passed in an
 isolated copy without the backend; no local Azure login, state or plan access.
@@ -188,6 +193,50 @@ This assignment enables authorization only; it does not start a consumer or
 settle queue messages. After the reviewed plan is applied, verify private broker
 connectivity and receiving/peek authorization with send denied before deployment.
 RBAC propagation may take up to five minutes according to the documentation.
+
+
+## Check consumer private broker access
+
+This diagnostic runs under the consumer service account with explicit
+WorkloadIdentityCredential and the existing application image. It requires DNS
+and a CA/SNI-verified TLS peer in 10.40.17.0/24, then opens the main queue receiver
+and peeks at most one message. It repeats peek on the dead-letter subqueue,
+which the runtime consumer also observes. Both use prefetch_count=0, without
+receive_messages, iteration, locking, settlement or SQL writes. Message contents
+and credentials are not printed. Empty queues are valid for this access test.
+
+It then tries opening the sender link and creating an unsent batch. Only a
+ServiceBusAuthorizationError counts as the expected denial. An unexpectedly
+successful sender link, network/timeout error or failed receive permission fails
+the diagnostic. No send_messages call exists, even if sender access unexpectedly
+succeeds. This is link/peek authorization evidence, not consumer processing proof.
+See the SDK [peek documentation](https://learn.microsoft.com/en-us/python/api/azure-servicebus/azure.servicebus.servicebusreceiver?view=azure-python)
+and [dead-letter receiver option](https://learn.microsoft.com/en-us/python/api/azure-servicebus/azure.servicebus.servicebusclient?view=azure-python).
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap servicebus-consumer-check-files -n trafficxx \
+  --from-file=check-servicebus-consumer.py=scripts/check-servicebus-consumer.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/servicebus-consumer-access.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/servicebus-consumer-access-check --timeout=180s
+kubectl logs -n trafficxx job/servicebus-consumer-access-check -c check
+```
+
+Expected SERVICEBUS_CONSUMER_ACCESS_OK with private IP/TLS evidence,
+queue_peek_allowed=true, dead_letter_peek_allowed=true, send_denied=true and zero
+broker_messages_sent/received. Real Azure output is pending. If role propagation
+causes an authorization failure, wait up to five minutes and recreate only this
+short-lived diagnostic Job before retrying; do not broaden the role.
+
+Eight added offline methods cover correct identity/network/TLS, main/DLQ denial,
+sender authorization denial at link/batch creation, unexpected send access,
+timeouts and raw error redaction. Tests assert zero prefetch and no calls to
+receive/send/complete/abandon/dead-letter operations. All 186 offline methods
+pass; real Azure broker evidence remains separate. Consumer deployment and
+end-to-end queue drain/projection checks follow only after this check passes.
 
 
 The real consumer parses the event, atomically records the deduplication inbox
