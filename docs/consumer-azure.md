@@ -53,7 +53,7 @@ at this stage.
 Seven mocked scenarios passed: success, wrong client, wrong service account,
 missing CA, administrator role, SQL failure and token failure, with no fake
 token output. Manifest command elements, embedded Python and identity binding
-were validated. All 170 offline methods pass; real cloud identity and
+were validated. All 178 offline methods pass; real cloud identity and
 permission evidence are separate from those local checks.
 
 ## Grant the consumer its current SQL contract
@@ -86,7 +86,9 @@ kubectl wait -n trafficxx --for=condition=complete \
 kubectl logs -n trafficxx job/postgres-consumer-grants -c grant
 ```
 
-Expected CONSUMER_GRANTS_OK; real Azure grant execution is pending. This grant-only
+Verified CONSUMER_GRANTS_OK from the user-run migrator Job: the read columns
+and five insert tables match the policy above, with reservation_access,
+inventory_access, outbox_access and destructive_table_access all false. This grant-only
 action skips migration payload files. It verifies migrator ownership, non-admin
 role flags and effective permissions on every public table column, rejecting
 extra or missing access, including inherited permissions. Success prints after
@@ -102,12 +104,53 @@ service account and does not read, consume or send broker messages.
 Eight added offline methods check ownership, protected reads/inserts/updates,
 every required permission/column, role flags and destructive/reference privileges.
 
+## Verify actual consumer SQL operations
+
+The consumer-role diagnostic checks 14 allowed operations: inbox insert,
+duplicate suppression and payload readback; projection lookup/upsert/newer update,
+older-event rejection and readback; heartbeat insert/conflict update/readback;
+failure insert; and dead-letter record insert/duplicate suppression. Thirty
+protected operations must fail with SQLSTATE 42501, using savepoints so one denial
+does not abort the remaining checks. Constraint/network errors do not count as
+permission denials; unexpected permission success is a failure.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+kubectl create configmap postgres-consumer-permission-files -n trafficxx \
+  --from-file=check-consumer-permissions.py=scripts/check-consumer-permissions.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f kubernetes/checks/postgres-consumer-permissions.yaml
+kubectl wait -n trafficxx --for=condition=complete \
+  job/postgres-consumer-permissions-check --timeout=300s
+kubectl logs -n trafficxx job/postgres-consumer-permissions-check -c check
+```
+
+Expected CONSUMER_PERMISSIONS_OK with diagnostic_rows_committed=false,
+broker_messages_sent=0 and broker_messages_received=0. Actual Azure results are
+pending. Explicit WorkloadIdentityCredential and verify-full TLS use the consumer's
+own service account. The bounded diagnostic Job installs its pinned dependencies
+in an init container, as earlier permission checks did.
+
+The projection foreign key uses the previously verified expired A2 reservation
+2a6f5566-9870-45aa-9927-a85fd8e5f3a9, configured as PROBE_RESERVATION_ID in the
+manifest. If it is missing, the check fails instead of creating a reservation
+or granting reservation access. It does not read or change the reservation.
+It stages a projection starting above any existing projection version. An outer
+rollback restores diagnostic changes before success prints. Generated failure
+identity sequence increments can survive rollback and leave harmless gaps.
+
+This tests SQL permissions and upserts, not the live consumer loop. No broker
+calls or message settlement occur. Keep the consumer undeployed for this staged
+check. Eight new offline methods cover positive steps, unexpected permission
+success, wrong SQLSTATE, missing foreign-key fixture, partial failure, identity,
+payload/ordering mismatch and rollback before success. Local tests do not replace
+real PostgreSQL evidence.
+
 ## Next stages
 
-After CONSUMER_GRANTS_OK, test actual allowed/denied SQL operations with the
-consumer identity and roll back diagnostic writes. Then add only queue-scoped
-Data Receiver authorization and verify private broker access with send denied
-before deploying the consumer.
+After CONSUMER_PERMISSIONS_OK, add queue-scoped Data Receiver authorization and
+verify private broker access with send denied before deploying the consumer.
 
 The real consumer parses the event, atomically records the deduplication inbox
 and projection update, then acknowledges the broker after the SQL commit. A

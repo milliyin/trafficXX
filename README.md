@@ -32,6 +32,7 @@ we learn in [memeory.md](memeory.md).
 | Private Service Bus access | Publisher resolved and connected to private endpoint 10.40.17.4 over TLS 1.3, opened a sender link and was denied receive access; that diagnostic sent zero messages |
 | First live outbox publication | Real application publisher sent outbox row 3 with stable message ID, received acknowledgement, confirmed its committed published marker and recorded a heartbeat; consumer processing is not yet verified |
 | Continuous publisher drain | Read-only SQL reported 12 total/published outbox rows, zero pending rows/failed attempts, and an error-free publisher heartbeat about 0.67 seconds old |
+| Consumer database grants | Migrator confirmed exact inbox/projection/heartbeat column permissions and failure/dead-letter inserts, with no reservation, inventory, outbox or destructive access; actual operation checks are prepared |
 | Queue before consumer | Azure reported 12 active messages, zero dead letters and 12 total messages, matching the published outbox count at this checkpoint |
 
 **Browse and Booking are deployed to AKS as internal services.** Booking rollout
@@ -142,8 +143,8 @@ Next:
    publisher passed the read-only drain check: 12 published, zero pending and
    a fresh error-free heartbeat. Azure reported 12 active messages and zero dead
    letters. The [consumer workload SQL login](docs/consumer-azure.md) passed with
-   TLS 1.3 and no administrator privileges. Next run its prepared table-grant Job,
-   verify allowed/denied SQL operations, then configure queue receive authorization
+   TLS 1.3 and no administrator privileges. Its table-grant Job passed; next run
+   the prepared consumer-role SQL operation checks, then configure queue receive authorization
    before deployment.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
@@ -176,7 +177,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 170 offline tests; SDK/database responses and the expiry clock are mocked
+passes 178 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 
