@@ -48,8 +48,9 @@ short events between scrapes. High utilization alone is not made an alert.
 
 These rules evaluate inside the existing Prometheus instance. They do not send
 email, phone or chat messages: Alertmanager/routing/delivery are not configured.
-The existing eight-panel Grafana dashboard continues to show metrics; this step
-does not add a browser notification widget. An independent detector would be
+The original eight-panel Grafana dashboard showed pool metrics. A follow-up
+adds two alert panels, described below; live deployment of those panels is
+pending. An independent detector would be
 needed for Prometheus itself being unavailable.
 
 Primary references: [Prometheus alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/),
@@ -109,6 +110,54 @@ Allow discovery and initial evaluations to settle. BROWSE_ALERT_RULES_OK records
 loaded healthy rules and state; an active rule prevents that healthy result and
 reports a safe check identifier. It is not proof of external notification
 delivery. A failing check does not modify thresholds or disable warnings.
+
+## Show pending and firing alerts in Grafana
+
+The Browse pool dashboard now has ten panels in source. Two additions show
+current pending/firing alert-instance counts and a history of active instances,
+labelled by rule, target and state. Pending means the warning has not yet lasted
+its full hold time. Firing means that hold has elapsed. Multiple targets can
+produce multiple alert instances for one rule.
+
+These panels query Prometheus's native ALERTS series through the existing
+datasource, as documented in the [Prometheus alerting guide](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/).
+The history has no series when no alerts were active in the selected interval;
+this is an expected healthy-baseline display. Counts use zero for absent series.
+Zero counts or an empty history alone do not prove rule health: missing rules
+would also produce no series. The read-only dashboard checker separately
+requires all five reviewed rules, fresh successful inactive evaluations, two
+healthy Browse targets, and both zero count queries through the datasource.
+It rejects missing/unhealthy rules even if the panels return zero.
+
+Deploy only the dashboard ConfigMap and run the strengthened check:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/deploy-browse-dashboard.sh &&
+bash scripts/check-grafana-dashboard.sh --browse-pool
+```
+
+Allow a few minutes for projected-file/provider refresh. The checker expects
+panel_count10, healthy_inactive_rule_count5, and alert_counts pending0/firing0.
+If an earlier grafana-browse-pool-check Job still exists, let its automatic
+ten-minute cleanup complete before creating another check with that name.
+Refresh the existing Browse pool dashboard and scroll to the last row.
+
+This update needs no image build, collector/application restart, credential
+change, new Azure resource or disruption of the token-renewal Job. The
+Operations dashboard remains in the same ConfigMap. External notification
+delivery is still unconfigured. Ten-panel live/browser verification remains
+pending; the earlier eight-panel result remains the verified checkpoint.
+
+Local validation passed all 375 offline tests, Bash syntax checks, and a mocked
+dashboard-only deployment/account guard. A temporary hidden native Prometheus
+instance with no Azure targets confirmed the actual panel queries returned one
+pending unavailable-target alert, zero firing alerts, and the labelled history
+series. Its local rule-copy evaluation interval was shortened to one second to
+complete startup restoration promptly; deployed rules/holds were unchanged.
+The process was stopped after validation. This is query-engine evidence, not
+live AKS/browser firing or notification-delivery proof.
 
 ## Tomorrow's renewal checkpoint
 

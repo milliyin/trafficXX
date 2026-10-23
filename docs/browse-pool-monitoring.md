@@ -91,7 +91,7 @@ and [Psycopg pool statistics](https://www.psycopg.org/psycopg3/docs/advanced/poo
 ## Dashboard
 
 A separate provisioned dashboard has UID trafficxx-browse-pool and title
-trafficXX | Browse database pool. Its eight panels show scrape targets up,
+trafficXX | Browse database pool. Its original eight panels show scrape targets up,
 busy/opening slots, slots versus limit, waiting borrowers, borrow/connection
 attempt rates, error rates, lost/unusable connection rates and current-process
 totals. The existing twelve-panel Operations dashboard stays in the same folder.
@@ -102,6 +102,14 @@ A subsequent [alert-rule stage](browse-pool-alerts.md) passed Prometheus loading
 and live evaluation checks: all five rules healthy/inactive with two fresh
 Browse targets. Synthetic firing/recovery passed separately in promtool tests.
 External notifications remain unconfigured.
+
+The next source revision adds two panels for pending/firing alert counts and
+active-state history (ten panels total). Use the dashboard-only deployment in
+the [alert guide](browse-pool-alerts.md#show-pending-and-firing-alerts-in-grafana).
+The strengthened checker requires all five healthy inactive rules in addition
+to real pool samples and zero alert counts. Zero counts alone cannot establish
+rule health. Deployment/browser verification of the new panels remains pending;
+no new Browse image or Prometheus restart is required.
 
 ## User-run Cloud Shell steps
 
@@ -145,7 +153,7 @@ evidence, with a bounded wait for discovery and samples.
 
 The separate grafana-browse-pool-check Job uses the existing Secret mounted
 inside AKS, never prints credentials and makes read-only Grafana queries. It
-requires the eight-panel provisioned dashboard, protected unauthenticated access,
+requires the ten-panel provisioned dashboard, protected unauthenticated access,
 the original Operations verification and real pool samples through Grafana's
 datasource proxy. It prints GRAFANA_BROWSE_POOL_OK. The Job has a360s deadline
 and a600s completion TTL. If the name already exists, inspect its logs before
@@ -169,9 +177,10 @@ proof. Do not claim live dashboard success until the user supplies those results
 
 ## Local validation
 
-Ten offline cases cover metric types/redaction, invalid values, two-target/sample
+Twelve offline cases cover metric types/redaction, invalid values, two-target/sample
 correlation, missing/stale/nonfinite/duplicate data, bounds and datasource/dashboard
-requirements. All360offline methods pass. Actual pinned-library/FastAPI smoke
+requirements, including missing rules behind zero alert counts and modified
+panel queries. All 375 offline methods pass. Actual pinned-library/FastAPI smoke
 checks passed /metrics output with no pool borrowing. Bash syntax, YAML/JSON
 structure and a mocked config-only deployment passed. The real SQL HTTP test was
 extended with no-borrow metrics assertions; Docker remains stopped and hosted

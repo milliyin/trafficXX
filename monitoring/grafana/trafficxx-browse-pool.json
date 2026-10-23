@@ -1,9 +1,9 @@
 {
   "uid": "trafficxx-browse-pool",
   "title": "trafficXX | Browse database pool",
-  "description": "Process-local pool observations, per discovered pod target. No latency or throughput SLO.",
+  "description": "Process-local pool observations and Prometheus pending/firing alert series. No latency or throughput SLO; external notifications are not configured.",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "tags": [
     "trafficxx",
@@ -466,6 +466,138 @@
         "textMode": "auto",
         "colorMode": "value",
         "graphMode": "none"
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Browse alerts: pending and firing",
+      "description": "Counts alert instances, not distinct rules. Pending means the hold has not elapsed; firing means it has. Zero means no matching active series, not proof rules are installed or healthy. Verify rule health separately. No email/phone delivery is configured.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(ALERTS{component=\"browse-pool\",job=\"trafficxx-browse-pool\",alertstate=\"pending\"}) or vector(0)",
+          "legendFormat": "Pending alert instances",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "expr": "count(ALERTS{component=\"browse-pool\",job=\"trafficxx-browse-pool\",alertstate=\"firing\"}) or vector(0)",
+          "legendFormat": "Firing alert instances",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Browse alert state history",
+      "description": "Each active alert instance has value 1 while pending or firing. No data is normal when none were active in the selected interval; it also cannot establish rule health. These are Prometheus rules, not Grafana-managed notifications.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ALERTS{component=\"browse-pool\",job=\"trafficxx-browse-pool\"}",
+          "legendFormat": "{{alertname}} / {{instance}} / {{alertstate}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "max": 1,
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
       }
     }
   ],

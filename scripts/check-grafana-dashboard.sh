@@ -12,6 +12,7 @@ fi
 kubectl create configmap grafana-dashboard-check-files -n trafficxx-monitoring \
   --from-file=check-grafana-dashboard.py=scripts/check-grafana-dashboard.py \
   --from-file=check-browse-monitoring.py=scripts/check-browse-monitoring.py \
+  --from-file=check-browse-alerts.py=scripts/check-browse-alerts.py \
   --dry-run=client -o yaml | kubectl apply -f -
 if [[ "${1:-}" == --browse-pool ]]; then
   kubectl patch --local -f kubernetes/checks/grafana-dashboard.yaml --type=json \

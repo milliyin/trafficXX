@@ -237,6 +237,9 @@ Next:
    separately while that Job runs. AKS loading/evaluation passed: all five rules
    healthy and inactive, two Browse targets with fresh stored samples. External
    notification delivery remains unconfigured.
+   A dashboard-only follow-up adds pending/firing alert counts and history
+   (ten Browse panels total); live verification of those additions is pending.
+   See the [deployment steps](docs/browse-pool-alerts.md#show-pending-and-firing-alerts-in-grafana).
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.
@@ -266,7 +269,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 290 offline tests; SDK/database responses and the expiry clock are mocked
+passes 375 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

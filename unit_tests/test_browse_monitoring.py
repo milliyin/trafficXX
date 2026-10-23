@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 import urllib.parse
@@ -19,6 +20,7 @@ def load(name, path):
 metrics = load('browse_metrics', 'trafficxx/browse_metrics.py')
 prom = load('browse_monitoring', 'scripts/check-browse-monitoring.py')
 grafana = load('pool_grafana', 'scripts/check-grafana-dashboard.py')
+alerts = load('pool_alerts', 'scripts/check-browse-alerts.py')
 
 
 class BrowseMonitoring(unittest.TestCase):
@@ -33,12 +35,27 @@ class BrowseMonitoring(unittest.TestCase):
                            connections_lost_total=0, bad_returns_total=0)
         self.dashboard = {'meta': {'provisioned': True}, 'dashboard': {
             'uid': grafana.POOL_UID, 'title': 'trafficXX | Browse database pool',
-            'panels': [{'datasource': {'uid': grafana.SOURCE}} for _ in range(8)]}}
+            'panels': json.loads((ROOT / 'monitoring/grafana/trafficxx-browse-pool.json').read_text())['panels']}}
+        self.alert_count = 0
+        timestamp = datetime.now(timezone.utc).isoformat()
+        self.rules = [{'name': name, 'type': 'alerting', 'duration': duration, 'query': query,
+                       'state': 'inactive', 'health': 'ok', 'lastError': '', 'alerts': [],
+                       'labels': {'component': 'browse-pool', 'severity': 'warning'},
+                       'lastEvaluation': timestamp} for name, (duration, query) in alerts.RULES.items()]
 
     def get(self, path):
+        if path == '/api/v1/rules':
+            return {'status': 'success', 'data': {'groups': [
+                {'name': alerts.JOB, 'interval': 15, 'rules': self.rules}]}}
+        if path.startswith('/api/v1/format_query?'):
+            return {'status': 'success', 'data': urllib.parse.parse_qs(
+                urllib.parse.urlparse(path).query)['query'][0]}
         if path == '/api/v1/targets':
             return {'data': {'activeTargets': self.targets}}
         query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)['query'][0]
+        if query in grafana.ALERT_QUERIES.values():
+            return {'status': 'success', 'data': {'resultType': 'vector',
+                    'result': [{'metric': {}, 'value': [123, str(self.alert_count)]}]}}
         key = next(name for name, expression in prom.QUERIES.items() if expression == query)
         return {'status': 'success', 'data': {'resultType': 'vector', 'result': [
             {'metric': {'instance': instance}, 'value': [123, str(self.values[key])]}
@@ -129,7 +146,9 @@ class BrowseMonitoring(unittest.TestCase):
     def test_grafana_requires_both_dashboards_and_live_datasource_samples(self):
         result = grafana.verify_pool(self.grafana_get)
         self.assertEqual(result['result'], 'GRAFANA_BROWSE_POOL_OK')
-        self.assertEqual(result['panel_count'], 8)
+        self.assertEqual(result['panel_count'], 10)
+        self.assertEqual(result['alert_counts'], {'pending': 0, 'firing': 0})
+        self.assertEqual(result['healthy_inactive_rule_count'], 5)
         self.assertTrue(result['operations_dashboard_verified'])
         self.values['up'] = 0
         with self.assertRaises(ValueError):
@@ -150,9 +169,26 @@ class BrowseMonitoring(unittest.TestCase):
     def test_dashboard_queries_use_pool_job_and_provisioned_datasource(self):
         document = json.loads((ROOT / 'monitoring/grafana/trafficxx-browse-pool.json').read_text())
         self.assertEqual(document['uid'], grafana.POOL_UID)
-        self.assertEqual(len(document['panels']), 8)
-        self.assertEqual(len({panel['id'] for panel in document['panels']}), 8)
+        self.assertEqual(len(document['panels']), 10)
+        self.assertEqual(len({panel['id'] for panel in document['panels']}), 10)
         for panel in document['panels']:
             self.assertEqual(panel['datasource']['uid'], grafana.SOURCE)
             for target in panel['targets']:
-                self.assertIn(prom.FILTER, target['expr'])
+                self.assertIn('job="trafficxx-browse-pool"', target['expr'])
+
+    def test_zero_alert_series_without_installed_fresh_rules_cannot_pass(self):
+        self.rules.clear()
+        with self.assertRaises(ValueError):
+            grafana.verify_pool(self.grafana_get)
+
+    def test_alert_query_and_panel_mutations_or_active_counts_fail_baseline(self):
+        for fault in ('query', 'missing-history', 'active', 'nonfinite'):
+            self.setUp()
+            if fault == 'query':
+                self.dashboard['dashboard']['panels'][8]['targets'][0]['expr'] = 'vector(0)'
+            elif fault == 'missing-history':
+                self.dashboard['dashboard']['panels'][9]['targets'] = []
+            else:
+                self.alert_count = 1 if fault == 'active' else float('nan')
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                grafana.verify_pool(self.grafana_get)

@@ -13,6 +13,12 @@ BASE = 'http://grafana.trafficxx-monitoring.svc.cluster.local:3000'
 UID = 'trafficxx-operations'
 SOURCE = 'trafficxx-prometheus'
 POOL_UID = 'trafficxx-browse-pool'
+ALERT_FILTER = 'component="browse-pool",job="trafficxx-browse-pool"'
+ALERT_QUERIES = {
+    state: 'count(ALERTS{' + ALERT_FILTER + ',alertstate="' + state + '"}) or vector(0)'
+    for state in ('pending', 'firing')
+}
+ALERT_HISTORY = 'ALERTS{' + ALERT_FILTER + '}'
 
 
 def verify(get):
@@ -53,7 +59,7 @@ def verify_pool(get):
     document = payload['dashboard']
     panels = document.get('panels', [])
     if (document.get('uid') != POOL_UID or document.get('title') != 'trafficXX | Browse database pool'
-            or payload.get('meta', {}).get('provisioned') is not True or len(panels) != 8
+            or payload.get('meta', {}).get('provisioned') is not True or len(panels) != 10
             or any(panel.get('datasource', {}).get('uid') != SOURCE for panel in panels)):
         raise ValueError('Unexpected Browse pool dashboard')
     spec = importlib.util.spec_from_file_location(
@@ -62,8 +68,29 @@ def verify_pool(get):
     spec.loader.exec_module(module)
     prefix = '/api/datasources/proxy/uid/' + SOURCE
     stored = module.verify(lambda path: get(prefix + path))
+    by_id = {panel.get('id'): panel for panel in panels}
+    if (len(by_id) != 10 or by_id.get(9, {}).get('type') != 'stat'
+            or by_id.get(10, {}).get('type') != 'timeseries'
+            or [row.get('expr') for row in by_id[9].get('targets', [])] != list(ALERT_QUERIES.values())
+            or [row.get('expr') for row in by_id[10].get('targets', [])] != [ALERT_HISTORY]):
+        raise ValueError('Expected pending/firing Browse alert panels')
+    # Zero ALERTS alone cannot prove that any rules are loaded or evaluating.
+    spec = importlib.util.spec_from_file_location(
+        'browse_alerts', Path(__file__).with_name('check-browse-alerts.py'))
+    alerts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(alerts)
+    rule_state = alerts.verify(lambda path: get(prefix + path))
+    counts = {}
+    for state, expression in ALERT_QUERIES.items():
+        payload = get(prefix + '/api/v1/query?' + urllib.parse.urlencode({'query': expression}))
+        rows = payload.get('data', {}).get('result', [])
+        if (payload.get('status') != 'success' or payload['data'].get('resultType') != 'vector'
+                or len(rows) != 1 or float(rows[0]['value'][1]) != 0):
+            raise ValueError('Expected inactive Browse alert baseline through datasource')
+        counts[state] = 0
     return {'result': 'GRAFANA_BROWSE_POOL_OK', 'dashboard_uid': POOL_UID,
-            'panel_count': 8, 'datasource_uid': SOURCE, 'target_count': stored['target_count'],
+            'panel_count': 10, 'datasource_uid': SOURCE, 'target_count': stored['target_count'],
+            'alert_counts': counts, 'healthy_inactive_rule_count': rule_state['rule_count'],
             'stored_samples_per_target_minimum': 2,
             'operations_dashboard_verified': True, 'notification_delivery_configured': False}
 
