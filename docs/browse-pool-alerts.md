@@ -49,8 +49,8 @@ short events between scrapes. High utilization alone is not made an alert.
 These rules evaluate inside the existing Prometheus instance. They do not send
 email, phone or chat messages: Alertmanager/routing/delivery are not configured.
 The original eight-panel Grafana dashboard showed pool metrics. A follow-up
-adds two alert panels, described below; live deployment of those panels is
-pending. An independent detector would be
+adds two alert panels, described below; live deployment and API verification
+passed. An independent detector would be
 needed for Prometheus itself being unavailable.
 
 Primary references: [Prometheus alerting rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/),
@@ -113,7 +113,7 @@ delivery. A failing check does not modify thresholds or disable warnings.
 
 ## Show pending and firing alerts in Grafana
 
-The Browse pool dashboard now has ten panels in source. Two additions show
+The Browse pool dashboard now has ten panels, verified through the live API. Two additions show
 current pending/firing alert-instance counts and a history of active instances,
 labelled by rule, target and state. Pending means the warning has not yet lasted
 its full hold time. Firing means that hold has elapsed. Multiple targets can
@@ -147,8 +147,12 @@ Refresh the existing Browse pool dashboard and scroll to the last row.
 This update needs no image build, collector/application restart, credential
 change, new Azure resource or disruption of the token-renewal Job. The
 Operations dashboard remains in the same ConfigMap. External notification
-delivery is still unconfigured. Ten-panel live/browser verification remains
-pending; the earlier eight-panel result remains the verified checkpoint.
+delivery is still unconfigured. The user supplied GRAFANA_BROWSE_POOL_OK with
+panel_count10, target_count2, pending0/firing0 and five healthy inactive rules.
+At least two stored samples per target, the original Operations dashboard,
+and denial of unauthenticated dashboard access were verified. This confirms
+provisioning and datasource queries; browser rendering of the two new panels
+and live firing/recovery remain separate evidence.
 
 Local validation passed all 375 offline tests, Bash syntax checks, and a mocked
 dashboard-only deployment/account guard. A temporary hidden native Prometheus

@@ -238,7 +238,9 @@ Next:
    healthy and inactive, two Browse targets with fresh stored samples. External
    notification delivery remains unconfigured.
    A dashboard-only follow-up adds pending/firing alert counts and history
-   (ten Browse panels total); live verification of those additions is pending.
+   (ten Browse panels total). Live API verification passed: both targets,
+   five healthy inactive rules and zero pending/firing alert counts. Browser
+   rendering of the two additions remains unconfirmed.
    See the [deployment steps](docs/browse-pool-alerts.md#show-pending-and-firing-alerts-in-grafana).
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod

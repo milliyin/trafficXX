@@ -103,13 +103,16 @@ and live evaluation checks: all five rules healthy/inactive with two fresh
 Browse targets. Synthetic firing/recovery passed separately in promtool tests.
 External notifications remain unconfigured.
 
-The next source revision adds two panels for pending/firing alert counts and
+The subsequent revision adds two panels for pending/firing alert counts and
 active-state history (ten panels total). Use the dashboard-only deployment in
 the [alert guide](browse-pool-alerts.md#show-pending-and-firing-alerts-in-grafana).
 The strengthened checker requires all five healthy inactive rules in addition
 to real pool samples and zero alert counts. Zero counts alone cannot establish
-rule health. Deployment/browser verification of the new panels remains pending;
-no new Browse image or Prometheus restart is required.
+rule health. User-run GRAFANA_BROWSE_POOL_OK confirmed ten panels, both targets,
+five healthy inactive rules, zero pending/firing counts, stored samples,
+Operations verification and unauthenticated access denial. Browser rendering
+of the additions remains unconfirmed. No new Browse image or Prometheus restart
+was required.
 
 ## User-run Cloud Shell steps
 
