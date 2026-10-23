@@ -98,6 +98,11 @@ totals. The existing twelve-panel Operations dashboard stays in the same folder.
 Both reference the existing trafficxx-prometheus datasource. No notification
 delivery or new alert rule is configured by this step.
 
+A subsequent [alert-rule stage](browse-pool-alerts.md) is now prepared for
+Prometheus. Its synthetic firing/recovery tests passed; cluster installation
+and rule-evaluation verification are still pending. External notifications
+remain unconfigured.
+
 ## User-run Cloud Shell steps
 
 First build the new Browse source; record the returned immutable image reference:

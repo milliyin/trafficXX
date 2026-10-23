@@ -1,0 +1,50 @@
+groups:
+  - name: trafficxx-browse-pool
+    interval: 15s
+    rules:
+      - alert: TrafficxxBrowseTargetsUnavailable
+        expr: (sum(up{job="trafficxx-browse-pool"}) or vector(0)) < 2
+        for: 2m
+        labels:
+          severity: warning
+          component: browse-pool
+          job: trafficxx-browse-pool
+        annotations:
+          summary: Fewer than two Browse scrape targets are healthy
+          description: Expected two ready Browse replicas; DNS discovery also removes unready pods.
+      - alert: TrafficxxBrowsePoolMetricsMissing
+        expr: (up{job="trafficxx-browse-pool"} == 1) unless on(job, instance) trafficxx_browse_pool_size{job="trafficxx-browse-pool"}
+        for: 2m
+        labels:
+          severity: warning
+          component: browse-pool
+        annotations:
+          summary: Browse pool metrics are missing from a healthy scrape
+          description: A successful target scrape has not exposed pool size for two minutes.
+      - alert: TrafficxxBrowsePoolWaiting
+        expr: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool"} > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: browse-pool
+        annotations:
+          summary: Browse database pool has queued requests
+          description: A pool has had waiting borrowers for at least one minute.
+      - alert: TrafficxxBrowsePoolBorrowErrors
+        expr: increase(trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: browse-pool
+        annotations:
+          summary: Browse database pool has recent borrow failures
+          description: A five-minute borrow-error increase has remained visible for one minute.
+      - alert: TrafficxxBrowsePoolConnectionErrors
+        expr: increase(trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: browse-pool
+        annotations:
+          summary: Browse database pool has recent connection failures
+          description: A five-minute connection-error increase has remained visible for one minute.

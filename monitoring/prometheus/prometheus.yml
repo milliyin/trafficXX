@@ -6,6 +6,9 @@ global:
     cluster: trafficxx-lab-aks
     environment: lab
 
+rule_files:
+  - /etc/prometheus/browse-alerts.yml
+
 scrape_configs:
   - job_name: trafficxx-operations
     metrics_path: /metrics

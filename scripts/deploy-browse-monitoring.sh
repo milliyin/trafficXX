@@ -14,6 +14,7 @@ kubectl rollout status deployment/grafana -n trafficxx-monitoring --timeout=120s
 kubectl apply -f kubernetes/monitoring/browse-metrics-service.yaml
 kubectl create configmap prometheus-config -n trafficxx-monitoring \
   --from-file=prometheus.yml=monitoring/prometheus/prometheus.yml \
+  --from-file=browse-alerts.yml=monitoring/prometheus/browse-alerts.yml \
   --dry-run=client -o yaml | kubectl apply -f -
 # Existing collector validates the new config with promtool on startup.
 kubectl rollout restart deployment/prometheus -n trafficxx-monitoring

@@ -1,0 +1,399 @@
+rule_files:
+- browse-alerts.yml
+evaluation_interval: 15s
+tests:
+- name: healthy two pods
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolMetricsMissing
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolWaiting
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts: []
+- name: all target series absent still alerts
+  interval: 15s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 1m45s
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+      exp_annotations: &id001
+        summary: Fewer than two Browse scrape targets are healthy
+        description: Expected two ready Browse replicas; DNS discovery also removes
+          unready pods.
+- name: one pod disappeared from DNS
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+      exp_annotations: *id001
+- name: one target is down
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+      exp_annotations: *id001
+- name: target recovers and warning clears
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x11 1+0x28
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+      exp_annotations: *id001
+  - eval_time: 3m
+    alertname: TrafficxxBrowseTargetsUnavailable
+    exp_alerts: []
+- name: successful scrape missing pool metrics
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 1m45s
+    alertname: TrafficxxBrowsePoolMetricsMissing
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: TrafficxxBrowsePoolMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+        instance: 10.244.0.2:8000
+      exp_annotations:
+        summary: Browse pool metrics are missing from a healthy scrape
+        description: A successful target scrape has not exposed pool size for two
+          minutes.
+- name: short wait spike does not fire
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0 1 1 0+0x37
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowsePoolWaiting
+    exp_alerts: []
+- name: sustained waiting fires then clears
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x4 0+0x35
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 45s
+    alertname: TrafficxxBrowsePoolWaiting
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: TrafficxxBrowsePoolWaiting
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+        instance: 10.244.0.1:8000
+      exp_annotations:
+        summary: Browse database pool has queued requests
+        description: A pool has had waiting borrowers for at least one minute.
+  - eval_time: 1m15s
+    alertname: TrafficxxBrowsePoolWaiting
+    exp_alerts: []
+- name: TrafficxxBrowsePoolBorrowErrors new error fires and ages out
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x4 1+0x35
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts: []
+  - eval_time: 2m15s
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+        instance: 10.244.0.1:8000
+      exp_annotations:
+        summary: Browse database pool has recent borrow failures
+        description: A five-minute borrow-error increase has remained visible for
+          one minute.
+  - eval_time: 7m
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts: []
+- name: TrafficxxBrowsePoolConnectionErrors new error fires and ages out
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x4 1+0x35
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts: []
+  - eval_time: 2m15s
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts:
+    - exp_labels:
+        component: browse-pool
+        severity: warning
+        job: trafficxx-browse-pool
+        instance: 10.244.0.1:8000
+      exp_annotations:
+        summary: Browse database pool has recent connection failures
+        description: A five-minute connection-error increase has remained visible
+          for one minute.
+  - eval_time: 7m
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts: []
+- name: historical errors alone do not fire
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 9+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 9+0x40
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts: []
+- name: counter reset is not a new error
+  interval: 15s
+  input_series:
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 9+0x4 0+0x35
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.1:8000"}
+    values: 9+0x4 0+0x35
+  - series: up{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_size{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 1+0x40
+  - series: trafficxx_browse_pool_waiting{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_borrow_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  - series: trafficxx_browse_pool_connection_errors_total{job="trafficxx-browse-pool",instance="10.244.0.2:8000"}
+    values: 0+0x40
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: TrafficxxBrowsePoolBorrowErrors
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: TrafficxxBrowsePoolConnectionErrors
+    exp_alerts: []

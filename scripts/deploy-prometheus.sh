@@ -16,6 +16,7 @@ kubectl apply -f kubernetes/monitoring/namespace.yaml
 existing=$(kubectl get deployment/prometheus -n trafficxx-monitoring --ignore-not-found -o name)
 kubectl create configmap prometheus-config -n trafficxx-monitoring \
   --from-file=prometheus.yml=monitoring/prometheus/prometheus.yml \
+  --from-file=browse-alerts.yml=monitoring/prometheus/browse-alerts.yml \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f kubernetes/monitoring/prometheus.yaml
 # The static ConfigMap is revalidated by promtool at every pod start.
