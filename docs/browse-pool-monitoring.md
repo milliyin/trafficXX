@@ -98,10 +98,10 @@ totals. The existing twelve-panel Operations dashboard stays in the same folder.
 Both reference the existing trafficxx-prometheus datasource. No notification
 delivery or new alert rule is configured by this step.
 
-A subsequent [alert-rule stage](browse-pool-alerts.md) is now prepared for
-Prometheus. Its synthetic firing/recovery tests passed; cluster installation
-and rule-evaluation verification are still pending. External notifications
-remain unconfigured.
+A subsequent [alert-rule stage](browse-pool-alerts.md) passed Prometheus loading
+and live evaluation checks: all five rules healthy/inactive with two fresh
+Browse targets. Synthetic firing/recovery passed separately in promtool tests.
+External notifications remain unconfigured.
 
 ## User-run Cloud Shell steps
 

@@ -1,8 +1,22 @@
 # Browse pool alert rules
 
-Status: implemented and validated locally; AKS rule loading and live evaluation
-proof remain pending. This requires no application image build. The running
+Status: AKS rule loading and live healthy-baseline evaluation passed in user-run
+Cloud Shell. This required no application image build. The running
 database token-renewal Job is independent and is not changed by these helpers.
+
+## Verified live checkpoint
+
+The user supplied a successful Prometheus rollout and BROWSE_ALERT_RULES_OK.
+All five expected rules had health ok and state inactive, with holds120seconds
+for target/metric absence and60seconds for waiting/borrow/connection failures.
+Two Browse targets and fresh stored samples were verified. The checker also
+validated the installed expressions, labels and evaluation freshness.
+
+Inactive means the warning conditions were absent at that checkpoint, not that
+the rules were disabled. Synthetic firing/recovery passed separately in the12
+promtool scenarios; a real workload outage and external email/phone delivery
+were not tested here. notification_delivery_configured remains false. No new
+renewal result was supplied; its saved expiry-boundary check is still pending.
 
 ## Rules and interpretation
 

@@ -234,7 +234,9 @@ Next:
    earliest final check is2026-10-24T16:01:40Z. Expiry-boundary proof remains
    pending; short requests do not establish renewal.
    [Browse pool alert rules](docs/browse-pool-alerts.md) are prepared and tested
-   separately while that Job runs; AKS rule loading/evaluation remain pending.
+   separately while that Job runs. AKS loading/evaluation passed: all five rules
+   healthy and inactive, two Browse targets with fresh stored samples. External
+   notification delivery remains unconfigured.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.
