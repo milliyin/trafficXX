@@ -223,8 +223,10 @@ Next:
    A [bounded serving-pod concurrency check](docs/browse-concurrency.md) passed
    after ca7 build/rollout:60test reads,32pool borrows and only two new connection
    attempts per pod; highest sampled pool size three/configured maximum four.
-   This supports reuse for that workload, not a sustained-load SLO. Other services still connect
-   directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
+   This supports reuse for that workload, not a sustained-load SLO. A subsequent
+   [Booking pool stage](docs/booking-database-pooling.md) is prepared in source;
+   its new build/rollout and SQL/HTTP verification are pending. Workers still
+   connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.
    User screenshots confirm all eight panels render with live data; a further
@@ -271,7 +273,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 375 offline tests; SDK/database responses and the expiry clock are mocked
+passes 384 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

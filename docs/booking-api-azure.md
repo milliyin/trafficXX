@@ -1,5 +1,10 @@
 # Booking identity and database permissions
 
+Current next step: [Booking connection pooling](booking-database-pooling.md).
+The sections below record earlier verified identity/API stages. The current
+deploy-booking.sh requires a fresh build-booking-image.sh result in ignored
+booking-image.txt; the original shared-image release did not have this requirement.
+
 Browse is deployed and its seeded availability and single-pod recovery checks
 have passed. Booking's managed identity, federated credential and Kubernetes
 service account already exist. The user then verified BOOKING_ROLE_READY with
@@ -151,7 +156,7 @@ customer data. The usual dependency-install and Job cleanup limitations apply.
 This is SQL capability validation, not API duplicate handling or oversell/load
 testing; those follow after Booking API deployment.
 
-## Deploy the real Booking API using the existing runtime image
+## Original Booking API deployment using the existing runtime image
 
 The image already deployed for browse contains trafficxx.booking and the generic
 workload-identity database connection implementation. No new application build

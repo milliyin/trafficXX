@@ -40,12 +40,12 @@ class BrowsePool(unittest.TestCase):
         self.pool = self.factory.return_value
         self.parameters = db.connection_parameters = MagicMock(return_value={'password': 'TOKEN'})
         spec = importlib.util.spec_from_file_location(
-            'isolated_browse_pool', Path(__file__).resolve().parents[1] / 'trafficxx/browse_db.py')
+            'isolated_database_pool', Path(__file__).resolve().parents[1] / 'trafficxx/database_pool.py')
         self.module = importlib.util.module_from_spec(spec)
         with patch.dict('sys.modules', {'fastapi': api, 'psycopg': driver,
                                        'psycopg_pool': pools, 'trafficxx.db': db}):
             spec.loader.exec_module(self.module)
-        self.database = self.module.BrowseDatabase()
+        self.database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX')
 
     def test_pool_is_bounded_and_does_not_fetch_startup_token(self):
         with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4'}):
@@ -64,6 +64,16 @@ class BrowsePool(unittest.TestCase):
         self.parameters.side_effect = [{'password': 'FIRST'}, {'password': 'NEW'}]
         self.assertEqual(self.module.pool_parameters(), {'password': 'FIRST'})
         self.assertEqual(self.module.pool_parameters(), {'password': 'NEW'})
+
+    def test_booking_capacity_is_independent_from_browse(self):
+        booking = self.module.DatabasePool('booking', 'BOOKING_DB_POOL_MAX')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '8', 'BOOKING_DB_POOL_MAX': '2'}):
+            booking.open()
+            self.assertEqual(self.factory.call_args.kwargs['max_size'], 2)
+            self.assertEqual(self.factory.call_args.kwargs['name'], 'booking')
+            self.database.open()
+            self.assertEqual(self.factory.call_args.kwargs['max_size'], 8)
+            self.assertEqual(self.factory.call_args.kwargs['name'], 'browse')
 
     def test_url_is_passed_once_and_cloud_conninfo_is_empty(self):
         self.parameters.return_value = {'conninfo': 'postgresql://local/test', 'connect_timeout': 5}

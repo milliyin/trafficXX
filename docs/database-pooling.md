@@ -48,8 +48,11 @@ the source nor infrastructure had a SQL pool or PgBouncer configuration.
 Browse now owns one synchronous psycopg-pool3.3.3 pool per Uvicorn process. The
 FastAPI lifespan opens it and closes it at shutdown; imports create no threads
 or connections. Both Browse endpoints and database readiness borrow from it.
-Booking, workers, migrations and diagnostic scripts using db.connect keep their
-existing direct connections.
+At that verified Browse checkpoint, Booking, workers, migrations and diagnostic
+scripts using db.connect kept direct connections. A subsequent
+[Booking pool stage](booking-database-pooling.md) is now prepared in source;
+its Azure build/rollout and SQL/HTTP checks remain pending. Workers/migrations
+retain their direct connections. Both API policies reuse database_pool.py.
 
 | Setting | Value | Purpose |
 | --- | --- | --- |

@@ -14,6 +14,7 @@ test-results/
 crash.log
 crash.*.log
 browse-image.txt
+booking-image.txt
 
 operations-image.txt
 publisher-image.txt

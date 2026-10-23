@@ -49,9 +49,11 @@ def view(conn, row):
     }
 
 
-def reserve(customer, key, request):
+def reserve(customer, key, request, *, connection_factory=None):
     canonical = request.model_dump(exclude_none=True)
-    with connect() as conn:
+    # API supplies one pool lease; workers/direct callers retain connect().
+    # Keep the entire operation in this one transaction, without write replay.
+    with (connection_factory or connect)() as conn:
         # Serialize matching keys across processes before touching inventory.
         # Hash collisions only add contention; uniqueness is enforced separately.
         conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))',
@@ -101,9 +103,9 @@ def reserve(customer, key, request):
         return view(conn, row), True
 
 
-def reservation(customer, reservation_id, action=None):
+def reservation(customer, reservation_id, action=None, *, connection_factory=None):
     error = None
-    with connect() as conn:
+    with (connection_factory or connect)() as conn:
         row = conn.execute('SELECT * FROM reservations WHERE id = %s AND customer_id = %s',
                            (reservation_id, customer)).fetchone()
         if not row:

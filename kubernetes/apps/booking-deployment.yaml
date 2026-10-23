@@ -1,4 +1,4 @@
-# Reuses the already built runtime image; booking has its own service account.
+# Deployment helper substitutes the reviewed booking-image.txt digest locally.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,6 +55,8 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        - name: BOOKING_DB_POOL_MAX
+          value: '4'
         - name: DATABASE_AUTH_MODE
           value: workload_identity
         - name: PGHOST

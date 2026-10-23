@@ -8,7 +8,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 [[ "$(kubectl config current-context)" == trafficxx-lab-aks ]] || {
   echo 'Select the trafficxx-lab-aks context first.' >&2; exit 1;
 }
-kubectl apply -f kubernetes/apps/booking-deployment.yaml
+[[ -r booking-image.txt ]] || { echo 'Run scripts/build-booking-image.sh first.' >&2; exit 1; }
+reference=$(cat booking-image.txt)
+[[ "$reference" =~ ^trafficxxacre8708a85\.azurecr\.io/trafficxx@sha256:[0-9a-f]{64}$ ]] || {
+  echo 'Invalid lab image reference; refusing deployment.' >&2; exit 1;
+}
+kubectl set image --local -f kubernetes/apps/booking-deployment.yaml \
+  "booking=$reference" -o yaml | kubectl apply -f -
 kubectl apply -f kubernetes/apps/booking-service.yaml
 kubectl rollout status deployment/booking -n trafficxx --timeout=600s
 kubectl get pods -n trafficxx -l app.kubernetes.io/name=trafficxx-booking -o wide
