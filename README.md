@@ -204,6 +204,9 @@ Next:
    Independent follow-up checks confirmed a Ready consumer, empty native queue,
    clear current warnings and20matching inbox events/ten projections. The runner
    failure and publication-failure counter increase from2to3 remain undiagnosed.
+   [Publisher logs](docs/publisher-retries.md) show three retries followed by
+   successful publication after idle periods; idle-link closure is a hypothesis.
+   Class-only diagnostic logging is prepared and requires a new publisher image.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

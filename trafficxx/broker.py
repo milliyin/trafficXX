@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import ExitStack, contextmanager
 from urllib.request import urlopen
@@ -34,7 +35,10 @@ def send_event(sender, event):
                                 content_type='application/json', subject='reservation.' + event.status.lower())
     try:
         sender.send_messages(message, timeout=10)
-    except AzureError:
+    except AzureError as error:
+        # Preserve a diagnostic class before wrapping; SDK exception text and
+        # AMQP/HTTP traces may contain credentials, endpoints or message bodies.
+        logging.getLogger(__name__).warning('broker_send_failed error_class=%s', type(error).__name__)
         raise PublishError('BROKER_SEND_FAILED') from None
 
 

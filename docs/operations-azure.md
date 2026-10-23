@@ -403,6 +403,10 @@ kubectl logs -n trafficxx deployment/publisher --since=24h --timestamps \
 Do not enable raw Azure HTTP/AMQP payload/credential logging to diagnose this.
 Any future exception-class instrumentation requires a reviewed image build and
 rollout; the helper changes above do not add logs to the already deployed worker.
+The user subsequently supplied three retry/success pairs from the same pod with
+zero restarts. See the [publisher retry investigation](publisher-retries.md) for
+timings, the unconfirmed idle-link hypothesis and the prepared safe diagnostic
+image build. That runtime change is not yet deployed.
 
 The [private Prometheus collector](prometheus-azure.md) passed stored scrape
 verification; the [Grafana HTTPS dashboard](grafana-https-azure.md) passed API,
