@@ -10,6 +10,13 @@ NAMESPACE = 'trafficxx'
 SUBSCRIPTION = '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'
 SELECTOR = 'app.kubernetes.io/name=trafficxx-consumer'
 CURRENT_CHECK = 'preflight'
+CURRENT_OBSERVER_JOB = None
+
+
+class CommandFailed(RuntimeError):
+    def __init__(self, exit_code):
+        super().__init__('Cloud Shell command failed')
+        self.command_exit_code = exit_code
 
 
 def command(args, payload=None):
@@ -17,7 +24,7 @@ def command(args, payload=None):
                             timeout=210, check=False)
     if result.returncode:
         # CLI errors may contain request detail; output only a safe failure class.
-        raise RuntimeError('Cloud Shell command failed')
+        raise CommandFailed(result.returncode)
     return result.stdout.strip()
 
 
@@ -59,8 +66,9 @@ def restore(call, uid):
 
 
 def run(call=command, sleep=time.sleep, while_paused=None):
-    global CURRENT_CHECK
+    global CURRENT_CHECK, CURRENT_OBSERVER_JOB
     CURRENT_CHECK = 'preflight'
+    CURRENT_OBSERVER_JOB = None
     if call(['az', 'account', 'show', '--query', 'id', '-o', 'tsv']) != SUBSCRIPTION:
         raise ValueError('Select the sponsorship subscription')
     if call(['kubectl', 'config', 'current-context']) != 'trafficxx-lab-aks':
@@ -115,20 +123,31 @@ def run(call=command, sleep=time.sleep, while_paused=None):
             CURRENT_CHECK = stage
     CURRENT_CHECK = 'observe_native_drain'
     after = wait_queue(call, sleep, 0)
-    CURRENT_CHECK = 'read_only_database_observer'
+    CURRENT_CHECK = 'prepare_database_observer'
     # Reuse the installed observer ConfigMap and create a distinct short-lived Job.
     job = json.loads(call(['kubectl', 'create', '-f', 'kubernetes/checks/consumer-drain.yaml',
                            '--dry-run=client', '-o', 'json']))
     name = 'backlog-drain-' + uuid4().hex[:12]
+    CURRENT_OBSERVER_JOB = name
     job['metadata']['name'] = name
+    CURRENT_CHECK = 'create_database_observer'
     call(['kubectl', 'apply', '-f', '-'], json.dumps(job))
+    observer_ok = False
     try:
+        CURRENT_CHECK = 'wait_database_observer'
         call(['kubectl', 'wait', '-n', NAMESPACE, '--for=condition=complete', 'job/' + name, '--timeout=180s'])
+        CURRENT_CHECK = 'read_database_observer'
         stored = json.loads(call(['kubectl', 'logs', '-n', NAMESPACE, 'job/' + name, '-c', 'check']))
+        CURRENT_CHECK = 'validate_database_observer'
         if stored.get('result') != 'CONSUMER_DRAIN_OK' or stored.get('read_only') is not True:
             raise ValueError('Stored inbox/projection drain was not verified')
+        observer_ok = True
     finally:
-        call(['kubectl', 'delete', 'job/' + name, '-n', NAMESPACE, '--ignore-not-found=true', '--wait=false'])
+        # Preserve failed evidence until the Job's existing ten-minute TTL.
+        if observer_ok:
+            CURRENT_CHECK = 'delete_database_observer'
+            call(['kubectl', 'delete', 'job/' + name, '-n', NAMESPACE, '--ignore-not-found=true', '--wait=false'])
+    CURRENT_CHECK = 'complete'
     return {'result': 'CONSUMER_BACKLOG_RECOVERY_OK', 'reservation_id': flow['reservation_id'],
             'queue_before': before, 'queue_while_paused': backlog, 'queue_after': after,
             'restored_replicas': 1, 'stored_state': stored}
@@ -143,6 +162,8 @@ def main():
         return 0
     except (Exception, KeyboardInterrupt) as error:
         print(json.dumps({'result': 'CONSUMER_BACKLOG_RECOVERY_FAILED', 'check': CURRENT_CHECK,
+                          'observer_job': CURRENT_OBSERVER_JOB,
+                          'command_exit_code': getattr(error, 'command_exit_code', None),
                           'error_type': type(error).__name__,
                           'recovery': 'Inspect consumer replicas/readiness. To restore the lab: kubectl scale deployment/consumer -n trafficxx --replicas=1; kubectl rollout status deployment/consumer -n trafficxx --timeout=180s'}))
         return 1

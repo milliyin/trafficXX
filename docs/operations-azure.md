@@ -365,6 +365,45 @@ occurred. A screenshot of this particular warning spike/recovery in Grafana has
 not been supplied; earlier normal dashboard rendering was verified. No external
 notification delivery was configured or tested.
 
+### Recovery-runner diagnostics after this failure
+
+The runner now reports its monitoring phase, the nested backlog step, a safe
+command exit code and the observer Job name if one was created. It reads the
+loaded function's live globals rather than runpy's copied namespace, so the
+reported step reflects the actual failure location. It never prints raw CLI
+stderr, exception text or job payloads.
+
+Successful database-observer Jobs are still removed. Failed observer Jobs are
+now retained for inspection until their existing ten-minute finished-job TTL;
+the active deadline remains180seconds. This avoids deleting the evidence that
+would explain an observer wait/log/validation failure. Consumer restoration
+still precedes database observation. These changes do not establish what caused
+the earlier RuntimeError; its original stage/output was not retained. Do not
+repeat an outage merely to obtain a better error message.
+
+Two added offline methods verify failed-wait evidence retention/restored consumer
+and live nested-step reporting without raw exception output. All325offline
+methods passed. These are Cloud Shell helper changes; no runtime image or
+deployment update is needed and no live pause was performed for validation.
+
+Publisher history currently retains a cumulative failure count and the generic
+BROKER_SEND_FAILED code; a successful later publication clears the row's error.
+The broker adapter discards the original Azure exception when wrapping it, and
+the current worker logs retry outcomes rather than the underlying send-error
+class. Existing logs may establish timing and later successes but cannot be
+assumed to contain a recoverable root cause. Inspect them read-only first:
+
+```bash
+kubectl get pods -n trafficxx \
+  -l app.kubernetes.io/name=trafficxx-publisher -o wide
+kubectl logs -n trafficxx deployment/publisher --since=24h --timestamps \
+  | grep -E 'outbox_publish outcome=(retry|published)|publisher_reconnect'
+```
+
+Do not enable raw Azure HTTP/AMQP payload/credential logging to diagnose this.
+Any future exception-class instrumentation requires a reviewed image build and
+rollout; the helper changes above do not add logs to the already deployed worker.
+
 The [private Prometheus collector](prometheus-azure.md) passed stored scrape
 verification; the [Grafana HTTPS dashboard](grafana-https-azure.md) passed API,
 cookie session and user browser-rendering checks. Connect alert rules and notification routing

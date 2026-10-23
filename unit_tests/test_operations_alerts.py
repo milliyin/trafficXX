@@ -120,3 +120,21 @@ class OperationsAlerts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.run(None, drill, http.verify, observe_seconds=seconds)
             drill.assert_not_called()
+
+    def test_failure_report_uses_live_nested_step_and_never_raw_exception_text(self):
+        cloud = Cloud('observer-failure')
+        healthy = evaluate(VALUES, ROWS, 30, EXPECTED)
+
+        def get(path, text=False):
+            return getter(active() if cloud.replicas == 0 else healthy)(path, text)
+
+        def drill(**kwargs):
+            return backlog.run(cloud, lambda _: None, **kwargs)
+        with self.assertRaises(ValueError) as caught:
+            module.run(get, drill, http.verify, lambda _: None)
+        # main passes the original runpy-loaded function, not this test wrapper.
+        report = module.failure_report(caught.exception, backlog.run)
+        self.assertEqual(report['backlog_check'], 'validate_database_observer')
+        self.assertTrue(report['observer_job'].startswith('backlog-drain-'))
+        self.assertNotIn(str(caught.exception), str(report))
+        self.assertEqual(cloud.replicas, 1)

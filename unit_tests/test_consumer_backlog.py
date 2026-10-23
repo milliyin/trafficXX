@@ -110,12 +110,28 @@ class ConsumerBacklog(unittest.TestCase):
         self.assertEqual(cloud.replicas, 1)
         self.assertEqual(cloud.queue_calls, 25)
 
-    def test_failed_sql_evidence_cannot_pass_and_observer_job_is_cleaned(self):
+    def test_failed_sql_evidence_cannot_pass_and_observer_job_is_retained(self):
         cloud = Cloud('observer-failure')
         with self.assertRaises(ValueError):
             module.run(cloud, lambda _: None)
         self.assertEqual(cloud.replicas, 1)
-        self.assertTrue(any(c[:2] == ['kubectl', 'delete'] for c in cloud.calls))
+        self.assertFalse(any(c[:2] == ['kubectl', 'delete'] for c in cloud.calls))
+        self.assertEqual(module.CURRENT_CHECK, 'validate_database_observer')
+        self.assertTrue(module.CURRENT_OBSERVER_JOB.startswith('backlog-drain-'))
+
+    def test_wait_command_failure_preserves_job_and_restored_consumer(self):
+        cloud = Cloud()
+
+        def fail_wait(args, payload=None):
+            if args[:2] == ['kubectl', 'wait']:
+                raise module.CommandFailed(1)
+            return cloud(args, payload)
+        with self.assertRaises(module.CommandFailed) as error:
+            module.run(fail_wait, lambda _: None)
+        self.assertEqual(error.exception.command_exit_code, 1)
+        self.assertEqual(module.CURRENT_CHECK, 'wait_database_observer')
+        self.assertEqual(cloud.replicas, 1)
+        self.assertFalse(any(c[:2] == ['kubectl', 'delete'] for c in cloud.calls))
 
     def test_changed_deployment_is_not_overwritten_during_restore(self):
         def changed(args, payload=None):
