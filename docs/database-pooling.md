@@ -1,8 +1,8 @@
 # Browse database pooling
 
-Status: Azure image build ca6 passed; rollout and real SQL probe are pending.
-The deployed Browse image still opens a connection per operation until the user
-deploys this change. No Terraform or database grants change.
+Status: Azure image build ca6, Browse rollout, demo HTTP check and isolated real
+SQL pool probe passed. No Terraform or database grants changed. Serving-pod
+reuse under load and token renewal across expiry remain unverified.
 
 The user restored a fresh Cloud Shell clone after the previous browser session
 expired. ACR run ca6 succeeded after33seconds, tag browse-20261023150647-3520:
@@ -13,8 +13,28 @@ trafficxxacre8708a85.azurecr.io/trafficxx@sha256:44f5a740913e28861f8549e03243567
 
 The reported Python base digest matches publisher ca4. The validated immutable
 reference was saved in browse-image.txt; the deployment helper uses that file.
-This build does not establish live pooling, a vulnerability scan or hosted CI
-success. Reconnect AKS credentials in the new Cloud Shell before deploying.
+Build success alone does not establish live pooling, a vulnerability scan or
+hosted CI success. Live rollout and probe evidence follow below.
+
+## User-run Azure results
+
+The new Browse pods browse-858f7d4fff-nbznz and browse-858f7d4fff-v9mnv were
+Ready1/1 with zero restarts. Both were on aks-apps-35966020-vmss000000 in the
+supplied snapshot; this does not demonstrate node separation or node-failure
+tolerance. BROWSE_DEMO_HTTP_OK confirmed liveness/readiness, two events and100
+available units each for demo-general and demo-seated.
+
+The separate browse-pool-check Job completed with BROWSE_POOL_OK, identity
+trafficxx-lab-browse and TLSv1.3. It verified physical connection reuse, reuse
+after transaction rollback,503 capacity rejection with a one-slot diagnostic
+pool, and replacement of a deliberately closed connection. No inventory writes
+were performed. The log warning "discarding closed connection" is expected from
+that deliberate close; the subsequent replacement check passed.
+
+The serving pods retain their configured maximum of four connections per
+process. The probe's one-slot limit applies only to the temporary process. This
+probe does not establish serving-pod connection reuse, throughput improvement,
+load behaviour, long-duration renewal or a whole-cluster connection ceiling.
 
 Earlier work reused one WorkloadIdentityCredential and its SDK token cache.
 That saved authentication work but did not reuse PostgreSQL connections. Neither
@@ -119,4 +139,6 @@ success and capacity errors without a database or Azure access.
 Four real PostgreSQL tests were added to the existing dedicated trafficxx_test
 CI suite: physical reuse, failed-write rollback, bounded exhaustion/recovery and
 closed-connection replacement. They were not run locally because Docker remains
-stopped. Their hosted CI result and all live Azure pooling checks remain pending.
+stopped. Their hosted CI result remains unchecked. The separate Azure probe and
+Browse HTTP checks above passed; serving-pod load and token-expiry experiments
+remain pending.

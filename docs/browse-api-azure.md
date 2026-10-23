@@ -34,11 +34,14 @@ a sanitized psycopg OperationalError, which the existing readiness handler
 reports as 503 without raw identity error details.
 
 That initial deployment uses SDK token caching and opens a SQL connection per
-operation. A [Browse-only connection pool](database-pooling.md) is now implemented
-for the next image: bounded reuse, fresh token parameters for replacement
-connections and application-lifespan cleanup. Its build, rollout and live SQL
-probe remain pending. Offline token tests do not prove real renewal across an
-Azure token expiry boundary.
+operation. A [Browse-only connection pool](database-pooling.md) subsequently
+passed ACR build ca6, rollout and demo HTTP verification: bounded reuse, fresh
+token parameters for replacement connections and application-lifespan cleanup.
+An isolated real SQL probe passed reuse, rollback, capacity and replacement
+checks. Serving-pod reuse under load and real renewal across an Azure token
+expiry boundary remain unverified. Both new pods were on the same apps node in
+the supplied rollout snapshot; the original deployment's node separation does
+not describe that later placement.
 
 ## Build in Azure
 
