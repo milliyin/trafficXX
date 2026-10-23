@@ -91,6 +91,12 @@ A Grafana container/browser was not run locally; actual cloud UI remains pending
 
 ## Open the private dashboard
 
+The subsequent user-run cookie probe confirmed server-set cookies fail the
+current preview round trip, although browser-written cookies are stored and
+forwarded. Login still loops after root_url/HTTPS-cookie trials. The user chose
+the [Azure-hostname HTTPS route](grafana-https-azure.md) instead. The preview
+instructions below are historical troubleshooting, not a verified working route.
+
 The bootstrap login is in ~/trafficxx/.env.grafana in Cloud Shell; view it
 privately when logging in, and do not paste its contents. Then run:
 

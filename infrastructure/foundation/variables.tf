@@ -78,3 +78,19 @@ variable "servicebus_namespace_name" {
     error_message = "Use 6-50 lowercase letters, digits or hyphens; start with a letter and end with a letter or digit."
   }
 }
+
+variable "enable_grafana_public_endpoint" {
+  type        = bool
+  description = "Reserve a public IP/DNS name for the authenticated Grafana HTTPS gateway. Persist this choice in the lab tfvars."
+  default     = false
+}
+
+variable "grafana_dns_label" {
+  type        = string
+  description = "Azure-provided DNS label; use the returned FQDN because SubscriptionReuse adds a hash."
+  default     = "trafficxx-grafana-e8708a85"
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{1,61}[a-z0-9]$", var.grafana_dns_label))
+    error_message = "Use 3-63 lowercase letters/digits/hyphens, starting with a letter and ending with a letter or digit."
+  }
+}

@@ -6,3 +6,5 @@ postgres_server_name = "REPLACE_WITH_UNIQUE_POSTGRES_NAME"
 postgres_admin_principal_name = "YOUR-ENTRA-USER-PRINCIPAL-NAME"
 postgres_location = "centralus"
 servicebus_namespace_name = "REPLACE_WITH_UNIQUE_SERVICEBUS_NAME"
+enable_grafana_public_endpoint = false
+grafana_dns_label = "REPLACE_WITH_UNIQUE_GRAFANA_LABEL"
