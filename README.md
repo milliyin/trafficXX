@@ -199,8 +199,11 @@ Next:
    HTTPS gateway deployed and passed trusted-certificate, redirect, cookie-login,
    twelve-panel/datasource query and diagnostic-logout checks. Browser login and
    all twelve panels rendering with data are confirmed by user screenshots.
-   Live warning/recovery experiments were previously verified through the
-   operations API; observing one in Grafana is a useful next learning exercise.
+   A further45second warning observation exercise raised both stale-consumer and
+   aged-backlog flags, but its overall runner reported a recovery-stage error.
+   Independent follow-up checks confirmed a Ready consumer, empty native queue,
+   clear current warnings and20matching inbox events/ten projections. The runner
+   failure and publication-failure counter increase from2to3 remain undiagnosed.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

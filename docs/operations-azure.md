@@ -335,8 +335,35 @@ change if a retry happens. No password, image or SQL grant changes are made.
 
 Three added offline methods cover the45second pause window, restoration after
 observation failure, and rejection of invalid windows before mutation. All323
-offline methods and Bash syntax checks passed. The new dashboard-observed drill
-has not yet been run in Azure.
+offline methods and Bash syntax checks passed.
+
+The user subsequently ran the observation-window drill for cancelled reservation
+6c014a6d-306c-4601-888d-d71e6020b465. Both warning flags/gauges appeared with
+processing outstanding2, event age31.028108seconds, consumer heartbeat40.496109
+seconds and fresh publisher1.035877seconds. The45second observation window
+completed and native counts were active2/DLQ0/total2 with zero consumer pods.
+The overall runner then returned OPERATIONS_ALERT_RECOVERY_FAILED/RuntimeError.
+Its exact failed recovery step remains unknown; this run must not be labelled
+as a successful OPERATIONS_ALERT_RECOVERY_OK result.
+
+Independent follow-up checks, without repeating the pause or booking, verified:
+
+- Consumer Deployment ready1/1; native queue active0/DLQ0/total0.
+- OPERATIONS_HTTP_OK: processed20, outbox/processing backlog0, no active warnings,
+  no processing-failure records, healthy consumer/publisher heartbeat ages
+  2.69356/0.959583seconds.
+- A distinct read-only migrator Job returned CONSUMER_DRAIN_OK over TLSv1.3:
+  total/inbox20, pending/missing/payload mismatches0, ten expected projections
+  with0mismatches, no orphan inbox/projection rows, failure records0 and healthy
+  heartbeat age4.106776seconds.
+- Historical dead-letter audit count remains1. Publication-failure history rose
+  from2to3 during this exercise; the retry cause is undiagnosed.
+
+These independent checks establish recovered processing and stored consistency.
+They do not identify the runner failure or prove that no publication errors
+occurred. A screenshot of this particular warning spike/recovery in Grafana has
+not been supplied; earlier normal dashboard rendering was verified. No external
+notification delivery was configured or tested.
 
 The [private Prometheus collector](prometheus-azure.md) passed stored scrape
 verification; the [Grafana HTTPS dashboard](grafana-https-azure.md) passed API,
