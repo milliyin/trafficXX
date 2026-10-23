@@ -225,7 +225,7 @@ Next:
    attempts per pod; highest sampled pool size three/configured maximum four.
    This supports reuse for that workload, not a sustained-load SLO. A subsequent
    [Booking pool stage](docs/booking-database-pooling.md) is prepared in source;
-   its new build/rollout and SQL/HTTP verification are pending. Workers still
+   ACR build ca9 passed; rollout and SQL/HTTP verification are pending. Workers still
    connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.

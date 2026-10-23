@@ -1,9 +1,23 @@
 # Booking database pooling
 
-Status: source and local validation are prepared. The Azure image build,
-Booking rollout, isolated SQL probe and serving-pod checks are pending.
+Status: source/local validation and Azure image build ca9 passed. Booking
+rollout, isolated SQL probe and serving-pod checks are pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
+
+## Verified image build
+
+The user supplied successful ACR run ca9 after 43 seconds, tag
+booking-20261023173158-17984, with immutable image:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:d00af2abd005f9c73157b8db532fbc45ea1bb51b68bdb2b8cee71fa00afad9e3
+```
+
+The reported Python 3.12-slim-trixie base digest matches the earlier Browse
+build. The helper saved booking-image.txt in Cloud Shell, and the committed
+Booking manifest now pins this reviewed image. Build success does not prove
+rollout, live pooling, transaction correctness or a passing hosted CI run.
 
 ## What changes
 
@@ -79,8 +93,7 @@ bash scripts/check-booking-pool.sh
 
 Deployment validates account/context/digest and substitutes only Booking's
 image using kubectl's local manifest transformation. The committed manifest
-retains the historical digest until a new build is reviewed. Apply through the
-helper; applying that old manifest image directly would not deploy pooling.
+also pins reviewed ca9; the helper still requires the validated build reference.
 The two Booking replicas roll out with BOOKING_DB_POOL_MAX=4. No Browse/Grafana/
 Prometheus/worker or renewal-Job rollout occurs.
 
@@ -130,6 +143,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI and all new Azure checks
-remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI, Azure rollout and the new
+SQL/HTTP checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.
