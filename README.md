@@ -208,8 +208,10 @@ Next:
    successful publication after idle periods; idle-link closure is a hypothesis.
    Class-only diagnostic logging passed ACR build ca3 and its pinned publisher
    rollout. A normal booking/cancel flow then reached22processed events with
-   zero backlog/warnings and no new publication failure. The idle-link cause
-   remains a hypothesis, awaiting a bounded quiet-interval observation.
+   zero backlog/warnings and no new publication failure. A later13minute quiet
+   interval reproduced ServiceBusConnectionError followed by successful retries,
+   reaching28processed events and failure history4. An eight-minute idle sender
+   refresh is prepared and tested; its new image/rollout/live verification is next.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

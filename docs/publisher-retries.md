@@ -122,4 +122,68 @@ the failure counter increased; do not fabricate an error if none occurs. One
 successful send after idle would show that failure is not inevitable, not prove
 all idle cases safe. Even a connection-class error may not establish its exact
 AMQP condition; distinguish observed evidence from the idle-timeout hypothesis.
-The new quiet-interval observation and diagnostic output are pending.
+The user first supplied successful flows at10:34:02 and10:39:30UTC, reaching
+24then26processed events without increasing the failure count. Their quiet
+gaps were only about2minutes and5minutes26seconds, so they did not test the
+requested interval. A single countdown block was then used to wait12minutes
+before generating another booking/cancel pair.
+
+That run passed BOOKING_FLOW_OK for reservation
+887eac3b-2373-458c-b1c4-89fa5407c539 and OPERATIONS_HTTP_OK:28processed,
+no outbox/processing backlog, no alerts or processing-failure records,
+healthy consumer/publisher heartbeat ages0.615515/1.015241sec, historical
+dead-letter audits1 and publish_failures_total4. The relevant log sequence is:
+
+| UTC | Observation |
+|---|---|
+|10:39:33.040|Last preceding published outcome|
+|10:52:41.720|broker_send_failed error_class=ServiceBusConnectionError|
+|10:52:42.109|outbox_publish outcome=retry|
+|10:52:46.360 and10:52:47.251|Two published outcomes|
+
+The connection failure followed about13min9sec without a published outcome.
+The new instrumentation confirms a connection-class error and subsequent
+recovery. It strengthens the idle-link explanation but does not identify the
+exact AMQP detach condition or exclude a coincident network problem. The old
+three failure causes still cannot be reconstructed. Full-row SQL consistency
+was last checked at20events; the28event result is aggregate monitoring evidence.
+
+## Prepared idle-connection refresh
+
+The publisher now retires a sender after480seconds without a successful
+publication. It checks a monotonic clock between publish_one transactions,
+before selecting another row. Returning from the inner session closes sender
+and client through their existing context managers; the outer loop opens fresh
+ones. No keepalive bookings or broker messages are generated during idle time.
+Successful sends reset the idle age, so continuously active senders are retained.
+Connection refresh emits publisher_connection_refresh reason=idle with elapsed
+seconds. Heartbeats continue during normal idle polling.
+
+The eight-minute threshold leaves a margin before the documented ten-minute
+link idle timeout. This is a targeted preventive change, not proof that all
+connection errors are fixed. An explicit reconnect can still fail and is handled
+by the existing sanitized outer error/retry loop. Periodic reconnects add a small
+amount of connection/authentication work; a slow reconnect can affect heartbeat
+freshness. Durable outbox backoff, stable message IDs, send timeout, consumer
+deduplication and historical failure counters are unchanged.
+
+Five offline methods test the exact retirement boundary before another row
+selection, successful activity resetting age, retained retry/heartbeat/sleep
+behavior, propagated database failure, and sender/client closure before reopening.
+All333offline methods passed. The previously tested ACR helper can build this
+source with the same command:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/build-publisher-image.sh
+```
+
+This creates another image, not a deployment. Pin the returned digest before
+rollout. The running ca3 image has class logging but not this new refresh logic
+until that rollout. Afterward, repeat the single12minute quiet-interval test and
+read refresh/error/outcome logs without pausing the consumer. If there is no
+unrelated work, one further pair from28events should reach30. A healthy result
+with unchanged failure count4 and an idle-refresh log would support this
+mitigation for the observed case, not establish a general availability SLO.
+Build, rollout and post-fix quiet-interval results remain pending.
