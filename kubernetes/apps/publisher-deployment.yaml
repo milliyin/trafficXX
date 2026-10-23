@@ -1,4 +1,4 @@
-# Continuously publishes REAL committed outbox history; no consumer is deployed yet.
+# Continuously publishes committed outbox history; runtime pinned to ACR build ca3.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,7 +35,7 @@ spec:
           sizeLimit: 64Mi
       containers:
       - name: publisher
-        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:22a28c8c6cc45354a327b8b7d5423cb4b169daa49a3efe320c392173dc923dbc
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:1b1e8fa39f10b31e59c2d340ea11865b71c04ef374eb55b0c4ea3ae42c64fe0a
         imagePullPolicy: IfNotPresent
         command:
         - python

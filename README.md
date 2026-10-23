@@ -206,7 +206,8 @@ Next:
    failure and publication-failure counter increase from2to3 remain undiagnosed.
    [Publisher logs](docs/publisher-retries.md) show three retries followed by
    successful publication after idle periods; idle-link closure is a hypothesis.
-   Class-only diagnostic logging is prepared and requires a new publisher image.
+   Class-only diagnostic logging passed ACR build ca3; the publisher manifest
+   pins its returned digest. The controlled publisher rollout is next.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

@@ -58,9 +58,36 @@ It saves a validated digest reference to ignored publisher-image.txt (also
 excluded from Docker context). A build does not deploy or restart the publisher.
 Share only IMAGE_BUILD_OK/tag/image metadata. Do not share credential files.
 
-The exact returned digest must be pinned in the publisher manifest before its
-controlled rollout. Its current deployment still uses the earlier image until
-that step. No restart of Booking, Browse, consumer, expiry or monitoring is
-needed for publisher logging. The new image build, digest pin/rollout and actual
-runtime error-class output remain pending. Do not repeat the consumer outage
-to diagnose publication; await a reviewed, bounded send check after deployment.
+The user supplied successful ACR run ca3 after31seconds, tag
+publisher-20261023102713-25933 and image:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:1b1e8fa39f10b31e59c2d340ea11865b71c04ef374eb55b0c4ea3ae42c64fe0a
+```
+
+The publisher manifest now pins that exact digest. The build reports Python
+3.12-slim-trixie base digesta0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704;
+this differs from the earlier runtime base. No new image scan/hosted CI result
+is claimed by the ACR success output.
+
+## Deploy the pinned publisher image
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/deploy-publisher.sh
+```
+
+This applies only the publisher Deployment. It retains one Recreate replica,
+the same publisher identity, SQL/broker grants, non-root security settings and
+readiness probe. Recreate briefly stops publication while its replacement starts;
+outbox work can wait safely, and a sufficiently long startup may produce a stale
+publisher warning. This is not a zero-downtime claim. No other workload is
+restarted. The helper checks subscription/context and waits for rollout.
+
+Expected PUBLISHER_DEPLOYED with one Ready publisher pod. Actual new-image
+rollout and future runtime error-class output remain pending. After rollout,
+check monitoring health and publication/delivery separately; DB-only readiness
+does not prove a successful broker send. Do not repeat the consumer outage to
+diagnose publication. A future bounded booking/cancel check can generate two
+normal events while keeping the consumer running.
