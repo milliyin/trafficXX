@@ -18,20 +18,28 @@ class Probe(BaseHTTPRequestHandler):
                 pass
             present = (cookies.get('trafficxx_preview_probe') is not None
                        and cookies['trafficxx_preview_probe'].value == 'dummy')
+            js_present = (cookies.get('trafficxx_preview_js_probe') is not None
+                          and cookies['trafficxx_preview_js_probe'].value == 'dummy')
             body = json.dumps({'result': 'COOKIE_FORWARDED' if present
-                               else 'COOKIE_MISSING_AT_PROBE'}).encode()
+                               else 'COOKIE_MISSING_AT_PROBE',
+                               'server_cookie_received': present,
+                               'browser_cookie_received': js_present}).encode()
             content_type = 'application/json'
         else:
             body = b'''<!doctype html><meta charset="utf-8">
 <title>trafficXX preview cookie test</title>
 <h1>Preview cookie test</h1><pre id="result">Checking...</pre>
 <script>
+document.cookie = 'trafficxx_preview_js_probe=dummy; Path=/; Max-Age=120; Secure; SameSite=None';
+const browserStored = document.cookie.split(';').some(
+ entry => entry.trim() === 'trafficxx_preview_js_probe=dummy');
 const endpoint = new URL(location.href);
 endpoint.search = ''; endpoint.hash = '';
 if (!endpoint.pathname.endsWith('/')) endpoint.pathname += '/';
 endpoint.pathname += 'check';
 fetch(endpoint, {credentials: 'include', cache: 'no-store'})
  .then(r => r.json()).then(value => {
+   value.browser_cookie_stored = browserStored;
    document.getElementById('result').textContent = JSON.stringify(value);
  }).catch(() => {
    document.getElementById('result').textContent = 'PROBE_REQUEST_FAILED';
