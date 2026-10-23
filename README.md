@@ -211,9 +211,10 @@ Next:
    zero backlog/warnings and no new publication failure. A later13minute quiet
    interval reproduced ServiceBusConnectionError followed by successful retries,
    reaching28processed events and failure history4. An eight-minute idle sender
-   refresh is prepared and tested; ACR build ca4 passed and its digest is pinned.
-   Publisher rollout and post-fix quiet-interval verification are next.
-   Investigate the recorded send failure before claiming clean publication.
+   refresh passed ACR build ca4, rollout and a user-run quiet-period test:
+   refresh logged at481idle seconds, both new events published,30processed,
+   failure history unchanged at4 and no backlog or current warnings. This supports
+   the mitigation for this case; the exact earlier AMQP condition remains unknown.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.

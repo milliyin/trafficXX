@@ -148,7 +148,7 @@ exact AMQP detach condition or exclude a coincident network problem. The old
 three failure causes still cannot be reconstructed. Full-row SQL consistency
 was last checked at20events; the28event result is aggregate monitoring evidence.
 
-## Prepared idle-connection refresh
+## Idle-connection refresh
 
 The publisher now retires a sender after480seconds without a successful
 publication. It checks a monotonic clock between publish_one transactions,
@@ -188,8 +188,8 @@ trafficxxacre8708a85.azurecr.io/trafficxx@sha256:98aa74d378acbcd1f2a5429b00c2118
 
 The manifest now pins this exact image. Its reported Python base digest matches
 ca3; no image vulnerability scan or new hosted CI result is claimed. Build
-success does not deploy the image. The running ca3 image has class logging but
-not the refresh logic until the following user-run rollout:
+success alone does not deploy the image. The user subsequently completed the
+following rollout and healthy Operations check:
 
 ```bash
 cd ~/trafficxx
@@ -198,11 +198,29 @@ bash scripts/deploy-publisher.sh &&
 bash scripts/check-operations-http.sh
 ```
 
-This replaces only the single publisher replica with the same identity, grants
-and security settings. After a healthy rollout, repeat the single12minute
-quiet-interval test and
-read refresh/error/outcome logs without pausing the consumer. If there is no
-unrelated work, one further pair from28events should reach30. A healthy result
-with unchanged failure count4 and an idle-refresh log would support this
-mitigation for the observed case, not establish a general availability SLO.
-The build passed; actual rollout and post-fix quiet-interval results remain pending.
+This replaced only the single publisher replica with the same identity, grants
+and security settings. Pod publisher-565dbbdddd-nzwbn was Ready with zero
+restarts; Operations reported28processed events, no backlog/current warnings,
+and publication failure history4.
+
+The user then ran the twelve-minute quiet-period test followed by a booking and
+cancellation for reservation47dcbabe-2411-4f38-8538-ad14f58cf75d. Supplied logs:
+
+```text
+2026-10-23T11:34:17.752748361Z publisher_connection_refresh reason=idle idle_seconds=481
+2026-10-23T11:39:29.362687440Z outbox_publish outcome=published
+2026-10-23T11:39:31.899077267Z outbox_publish outcome=published
+```
+
+BOOKING_FLOW_OK confirmed the usual duplicate/request-conflict/customer-isolation
+checks and final CANCELLED status. OPERATIONS_HTTP_OK reached30processed events;
+publication failure history remained4, outbox/processing backlog and processing
+failures were zero, current alerts were empty, and both worker heartbeats were
+fresh without errors. The supplied filtered logs contain no send failure or
+outer reconnect warning in that window.
+
+This is live evidence that the idle refresh ran and the subsequent two events
+published without another recorded failure in this test. It supports the
+mitigation for the observed case, not a general availability guarantee or proof
+of the exact earlier AMQP detach cause. The30event check is aggregate monitoring
+evidence; full-row SQL consistency was last independently verified at20events.
