@@ -1,0 +1,106 @@
+# Real database token renewal across expiry
+
+Status: diagnostic implemented and tested offline; live Job startup, observed
+expiry time and final renewal result remain pending. No image build or serving
+deployment update is needed. The helper uses the current immutable Browse image
+and mounts the reviewed diagnostic source from a ConfigMap.
+
+## What this proves
+
+The earlier SQL checks proved short-lived successful logins. Reusing an existing
+PostgreSQL session after token expiry would not prove a new login can acquire a
+valid replacement token. This check keeps one process and one real SDK credential
+object running, opens new physical SQL sessions and waits until the first
+observed database access token has actually expired.
+
+The initial SQL success provides a baseline. An observer around the original
+WorkloadIdentityCredential records AccessToken.expires_on from real get_token
+results. It delegates unchanged calls to that same SDK object; cache handling,
+token acquisition and projected service-account-file access remain SDK work.
+The wrapper changes only this diagnostic process's cached credential reference,
+not serving pods. No credential cache is cleared, expiry policy changed, token
+fabricated or clock altered. Workload identity acquires replacement access
+tokens; no refresh-token credential file is created by this check.
+
+Tokens and SHA256 comparison digests are retained only in memory and never
+logged or written. Logs contain UTC expiry/check times, counts and booleans.
+This uses SDK expiry metadata, not unverified decoded JWT claims. It concerns
+the PostgreSQL workload access token, not the human Azure browser session or
+the Kubernetes projected assertion's own expiry.
+
+Every five minutes the probe closes only its own diagnostic session, waits up
+to60seconds for the pool's replacement, then checks SQL identity/database/TLS
+and a changed backend PID. It uses the real Browse pool and production database
+parameter callback, with max1 only in the Job. No ticket writes, alternate auth
+or application-pod restart is involved. SQL transactions end after each probe.
+
+At30seconds after the initial token expiry, success additionally requires:
+
+- A newly observed token retrieval and physical SQL login after that boundary.
+- PostgreSQL server time past the boundary, and valid replacement-token expiry.
+- A later expiry and token value different from the original observation.
+- The same underlying SDK credential object and expected Browse identity/TLS.
+
+SDK proactive renewal before the first expiry is allowed; the final fresh SQL
+login still must occur after that first expiry. A long-lived open connection or
+an elapsed timer alone cannot pass. The result describes this isolated process,
+not uninterrupted serving-pod availability, all other worker roles or a load SLO.
+
+## Duration and resources
+
+Read the actual initial expiry instead of assuming one hour. Earlier workload
+token evidence was nearly24hours; this check may need to run overnight.
+The application waits at most25hours, the Job has a26hour hard deadline, no
+automatic retries and restartPolicy Never. Failures cannot silently restart the
+process and claim survival across the old boundary. It requests50mCPU/128Mi on
+an existing apps node. Normal pool/SDK connection-attempt retries remain in
+place; an unrecovered probe failure ends the diagnostic.
+
+The Job continues inside AKS when Cloud Shell disconnects. Completed Job/pod
+logs are retained for two days by TTL; save the final safe result before then.
+No PVC or database result row is created for this read-only experiment.
+
+References: [WorkloadIdentityCredential API](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.workloadidentitycredential?view=azure-python),
+[Azure SDK token caching](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/identity/azure-identity/TOKEN_CACHING.md),
+[PostgreSQL Entra authentication](https://learn.microsoft.com/en-us/azure/postgresql/security/security-entra-concepts).
+
+## Start in user Cloud Shell
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/start-token-renewal.sh
+```
+
+The helper checks subscription/context and refuses to overwrite an existing
+browse-token-renewal-check Job before changing its source ConfigMap. It uses the
+deployed immutable Browse image, existing Browse service account and private
+SQL connection settings. There are no new SQL grants, Azure roles, human tokens
+or application Secrets. It waits only for the initial SQL/expiry log, then
+returns; it does not block Cloud Shell for the full test duration.
+
+Share TOKEN_RENEWAL_WAITING with its estimated wait/earliest check time.
+TOKEN_RENEWAL_STARTED means setup passed, not that renewal passed. Progress
+records every five minutes share the same run_id. To inspect later:
+
+```bash
+kubectl get job browse-token-renewal-check -n trafficxx
+kubectl get pods -n trafficxx -l job-name=browse-token-renewal-check
+kubectl logs -n trafficxx job/browse-token-renewal-check -c check --tail=8
+```
+
+Only record renewal success after DATABASE_TOKEN_RENEWAL_OK and a completed Job
+with no restarted/replacement process. Failure JSON prints only a safe check
+identifier/error class; never paste tokens or credential files. A failed run is
+not a renewal success even if application traffic elsewhere remains healthy.
+To cancel, delete only job/browse-token-renewal-check in namespace trafficxx;
+keep its safe logs first. This does not stop Browse, Grafana or the database.
+
+## Local verification limits
+
+Eight offline cases use fake time and metadata to verify the required expiry,
+new-login and changed-token gates, server clock checks, bounded monotonic wait,
+SDK-call delegation, redaction and cleanup preventing false success. They do
+not simulate a real Azure renewal. Bash/YAML/Python checks and mocked
+subscription/existing-Job/startup guards passed. Live boundary proof remains
+pending; Docker remains stopped and no local Azure/credential access occurred.
