@@ -130,15 +130,21 @@ need deletion.
 
 ## Verification limits
 
+Next is the [bounded serving-pod concurrency check](browse-concurrency.md), which
+requires a new Browse image with an internal statistics endpoint. The existing
+ca6 rollout and isolated probe results above remain valid; this new experiment
+has not yet run in Azure.
+
 Offline tests cover pool bounds, fresh parameter callbacks, cloud authentication
 and TLS preservation, sanitized503 responses, shutdown/startup cleanup and
 readiness using the same pool. A local smoke check using the actual pinned
 Psycopg/Pool/FastAPI packages passed callback compatibility, lifespan, HTTP
 success and capacity errors without a database or Azure access.
 
-Four real PostgreSQL tests were added to the existing dedicated trafficxx_test
+Five real PostgreSQL tests were added to the existing dedicated trafficxx_test
 CI suite: physical reuse, failed-write rollback, bounded exhaustion/recovery and
-closed-connection replacement. They were not run locally because Docker remains
+closed-connection replacement, and serving HTTP requests updating the same pool
+statistics. They were not run locally because Docker remains
 stopped. Their hosted CI result remains unchecked. The separate Azure probe and
 Browse HTTP checks above passed; serving-pod load and token-expiry experiments
 remain pending.

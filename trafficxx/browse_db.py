@@ -1,6 +1,7 @@
 """One bounded pool per Browse process, owned by the application lifespan."""
 from contextlib import contextmanager
 import os
+from uuid import uuid4
 
 from fastapi import HTTPException
 from psycopg import OperationalError
@@ -24,6 +25,17 @@ def pool_parameters():
 class BrowseDatabase:
     def __init__(self):
         self.pool = None
+        self.instance_id = uuid4().hex
+
+    def statistics(self):
+        if self.pool is None:
+            raise HTTPException(503, detail={'code': 'DATABASE_UNAVAILABLE'})
+        values = self.pool.get_stats()  # Non-destructive; do not reset counters.
+        keys = ('pool_min', 'pool_max', 'pool_size', 'pool_available',
+                'requests_waiting', 'requests_num', 'requests_errors',
+                'connections_num', 'connections_errors', 'connections_lost', 'returns_bad')
+        return {'instance_id': self.instance_id,
+                'statistics': {key: values.get(key, 0) for key in keys}}
 
     def open(self):
         if self.pool is not None:

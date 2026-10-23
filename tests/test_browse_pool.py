@@ -57,3 +57,18 @@ def test_closed_connection_is_replaced(database):
         conn.close()
     with database.connection() as conn:
         assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] != first
+
+
+def test_serving_api_statistics_track_the_same_pool_as_reads():
+    from fastapi.testclient import TestClient
+    from trafficxx.browse import app
+
+    with TestClient(app) as client:
+        before = client.get('/internal/database-pool').json()
+        assert client.get('/events').status_code == 200
+        assert client.get('/readyz').status_code == 200
+        after = client.get('/internal/database-pool').json()
+        assert before['instance_id'] == after['instance_id']
+        assert after['statistics']['requests_num'] >= before['statistics']['requests_num'] + 2
+        assert after['statistics']['pool_max'] == 4
+        assert 'password' not in str(after)

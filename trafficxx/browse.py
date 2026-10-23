@@ -22,6 +22,11 @@ app = FastAPI(title='trafficXX Browse API', version='0.1.0', lifespan=lifespan)
 register(app, connection_factory=database.connection)
 
 
+@app.get('/internal/database-pool', include_in_schema=False)
+def database_pool():
+    return database.statistics()
+
+
 @app.get('/events')
 def events():
     with database.connection() as conn:

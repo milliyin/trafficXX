@@ -124,3 +124,21 @@ class BrowsePool(unittest.TestCase):
             self.database.open()
         self.pool.close.assert_called_once()
         self.assertIsNone(self.database.pool)
+
+    def test_statistics_are_allowlisted_and_do_not_reset_or_borrow(self):
+        self.database.pool = self.pool
+        self.pool.get_stats.return_value = {'pool_size': 2, 'requests_num': 40,
+                                           'password': 'MUST_NOT_EXPOSE', 'conninfo': 'PRIVATE'}
+        row = self.database.statistics()
+        self.assertEqual(len(row['instance_id']), 32)
+        self.assertEqual(row['statistics']['pool_size'], 2)
+        self.assertEqual(row['statistics']['connections_num'], 0)
+        self.assertNotIn('MUST_NOT_EXPOSE', str(row))
+        self.assertNotIn('conninfo', row['statistics'])
+        self.pool.pop_stats.assert_not_called()
+        self.pool.connection.assert_not_called()
+
+    def test_statistics_before_startup_return_sanitized_503(self):
+        with self.assertRaises(HttpError) as caught:
+            self.database.statistics()
+        self.assertEqual(caught.exception.status_code, 503)
