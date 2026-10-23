@@ -2,8 +2,8 @@
 
 Status: ca8 image build, deployed Browse demo HTTP, monitoring configuration,
 Prometheus stored-sample proof and Grafana dashboard API verification passed.
-Browser rendering of this new dashboard remains pending. The ca7 bounded
-pool/concurrency milestone is separate evidence.
+The user also confirmed browser rendering with a screenshot of all eight panels
+and live data. The ca7 bounded pool/concurrency milestone is separate evidence.
 
 ## Verified Azure checkpoint
 
@@ -34,8 +34,23 @@ long-duration performance or renewal result.
 GRAFANA_BROWSE_POOL_OK confirmed the provisioned eight-panel dashboard, existing
 datasource, two targets and stored samples through its proxy. Original Operations
 dashboard verification passed too; unauthenticated dashboard access was denied.
-External notification delivery remains unconfigured. Browser chart rendering,
-certificate renewal and persistence/restart recovery were not tested here.
+External notification delivery remains unconfigured. Certificate renewal and
+persistence/restart recovery were not tested here.
+
+A subsequent ca8 serving-pod test returned BROWSE_CONCURRENCY_OK for pods
+browse-6775788b9b-g649w and browse-6775788b9b-k6fdk. Each served30test reads and
+reported32pool borrows. New connection attempts were one/two, with sampled peak
+pool sizes two/three against maximum four. Inventory was unchanged.
+
+The user then supplied a browser screenshot showing all eight panels with data:
+two scrape targets up, pool slots below the limit, zero sampled waiting and
+error/lost/bad-return rates, and increased borrow rates following the test.
+Visible current-process totals were109borrows and six connection attempts,
+including readiness activity. These are not109customer requests, six concurrent
+connections, or durable lifetime totals. The busy/opening panel showed one slot
+for one target near the end; this does not identify an active SQL query. Scrape
+sampling does not rule out brief waits between observations. Browser rendering
+and the bounded reuse/monitoring milestone are now verified.
 
 ## What is measured
 
@@ -156,5 +171,5 @@ checks passed /metrics output with no pool borrowing. Bash syntax, YAML/JSON
 structure and a mocked config-only deployment passed. The real SQL HTTP test was
 extended with no-borrow metrics assertions; Docker remains stopped and hosted
 CI is unchecked. The subsequent live stored-sample and dashboard API checks
-passed as recorded above; browser rendering and sustained-load/renewal results
-remain pending.
+and browser rendering passed as recorded above. Sustained-load and token-renewal
+results remain pending.

@@ -133,9 +133,9 @@ need deletion.
 
 [Per-pod Prometheus and Grafana pool monitoring](browse-pool-monitoring.md) passed
 after the ca8 build/deployment and monitoring update: two fresh stored targets,
-an eight-panel provisioned dashboard and real datasource queries. Browser
-rendering of that dashboard remains pending; the earlier bounded reuse test is
-separate evidence.
+an eight-panel provisioned dashboard and real datasource queries. The user also
+confirmed all eight panels render with live data and a further ca8 bounded read
+test passed. Sustained-load and renewal behaviour remain unverified.
 
 The [bounded serving-pod concurrency check](browse-concurrency.md) passed after
 the ca7 rollout with internal pool statistics. Each pod served30test reads with

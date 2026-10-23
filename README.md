@@ -227,7 +227,8 @@ Next:
    directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.
-   Browser rendering of this new dashboard remains pending.
+   User screenshots confirm all eight panels render with live data; a further
+   bounded read test passed on ca8. Sustained-load and token-renewal tests remain.
    Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

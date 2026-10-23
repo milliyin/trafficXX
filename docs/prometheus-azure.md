@@ -112,5 +112,5 @@ DNS-discovered job for each Ready Browse pod and a new Grafana dashboard.
 The ca8 Browse image/deployment and monitoring update passed. Separate
 BROWSE_PROMETHEUS_OK evidence confirmed two healthy targets matched to serving
 pod IPs, each with two stored samples and valid pool statistics. The new Grafana
-dashboard API check also passed; browser rendering remains pending. The original
+dashboard API check and user-confirmed browser rendering also passed. The original
 Operations scrape evidence above is separate from this new job's proof.
