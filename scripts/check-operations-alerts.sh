@@ -26,4 +26,4 @@ done
 grep -q 'Forwarding from 127.0.0.1:18003' "$forward_log" || {
   echo 'Port forward did not become ready.' >&2; exit 1;
 }
-python3 scripts/check-operations-alerts.py
+python3 scripts/check-operations-alerts.py "$@"

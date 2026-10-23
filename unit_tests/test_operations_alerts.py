@@ -92,3 +92,31 @@ class OperationsAlerts(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.run(getter(active()), drill, http.verify, lambda _: None)
         drill.assert_not_called()
+
+    def test_observation_window_retains_pause_then_restores_and_verifies_recovery(self):
+        cloud, get, drill = self.scenario()
+        sleeps = []
+
+        def observe(seconds):
+            self.assertEqual(cloud.replicas, 0)
+            sleeps.append(seconds)
+        result = module.run(get, drill, http.verify, observe, observe_seconds=45)
+        self.assertEqual(sum(sleeps), 45)
+        self.assertEqual(result['result'], 'OPERATIONS_ALERT_RECOVERY_OK')
+        self.assertEqual(cloud.replicas, 1)
+
+    def test_observation_failure_still_restores_consumer(self):
+        cloud, get, drill = self.scenario()
+
+        def fail(seconds):
+            raise OSError('Fake observer failure')
+        with self.assertRaises(OSError):
+            module.run(get, drill, http.verify, fail, observe_seconds=45)
+        self.assertEqual(cloud.replicas, 1)
+
+    def test_invalid_observation_window_cannot_pause_consumer(self):
+        for seconds in [-1, 121, True, 1.5]:
+            drill = MagicMock()
+            with self.assertRaises(ValueError):
+                module.run(None, drill, http.verify, observe_seconds=seconds)
+            drill.assert_not_called()

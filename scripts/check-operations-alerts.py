@@ -1,4 +1,5 @@
 """User-run monitoring appearance/recovery drill; consumer restored by helper."""
+import argparse
 import json
 import math
 from pathlib import Path
@@ -57,12 +58,22 @@ def wait_for_alerts(get, sleep=time.sleep):
     raise TimeoutError('Aged backlog and stale consumer signals were not both observed')
 
 
-def run(get, drill, healthy_check, sleep=time.sleep):
+def run(get, drill, healthy_check, sleep=time.sleep, observe_seconds=0):
+    if type(observe_seconds) is not int or not 0 <= observe_seconds <= 120:
+        raise ValueError('Observation window must be an integer from0 to120seconds')
     baseline = healthy_check(get)
     observed = []
 
     def paused():
         observed.append(wait_for_alerts(get, sleep))
+        if observe_seconds:
+            print(json.dumps({'result': 'GRAFANA_OBSERVATION_WINDOW',
+                              'seconds': observe_seconds,
+                              'note': 'Watch the dashboard; keep this Cloud Shell command running.'}), flush=True)
+            for elapsed in range(0, observe_seconds, 5):
+                sleep(min(5, observe_seconds - elapsed))
+                if active_signals(get) is None:
+                    raise ValueError('Expected warning signals disappeared during observation')
     # The existing drill's finally block restores the consumer if this callback fails.
     recovery = drill(while_paused=paused)
     if recovery.get('result') != 'CONSUMER_BACKLOG_RECOVERY_OK' or len(observed) != 1:
@@ -78,6 +89,10 @@ def run(get, drill, healthy_check, sleep=time.sleep):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--observe-seconds', type=int, default=0,
+                        help='Extra warning observation window,0-120seconds; default0.')
+    args = parser.parse_args()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def get(path, text=False):
@@ -89,7 +104,7 @@ def main():
         os.chdir(folder.parent)
         backlog = runpy.run_path(str(folder / 'check-consumer-backlog.py'))
         http = runpy.run_path(str(folder / 'check-operations-http.py'))
-        print(json.dumps(run(get, backlog['run'], http['verify'])))
+        print(json.dumps(run(get, backlog['run'], http['verify'], observe_seconds=args.observe_seconds)))
         return 0
     except (Exception, KeyboardInterrupt) as error:
         print(json.dumps({'result': 'OPERATIONS_ALERT_RECOVERY_FAILED', 'error_type': type(error).__name__,

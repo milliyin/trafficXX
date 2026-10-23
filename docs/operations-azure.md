@@ -303,11 +303,46 @@ All272offline methods pass, plus Bash syntax/LF checks. The successful user-run 
 
 ## Remaining monitoring integration
 
-The [private Prometheus collector](prometheus-azure.md) is now prepared; actual
-deployment and stored scrape evidence are pending. After that, add a private
-Grafana dashboard. Connect alert rules and notification routing
+### Watch the same drill in Grafana
+
+The user has now verified the HTTPS dashboard and supplied screenshots of all
+twelve panels. To observe the next controlled drill, set Grafana to Last15minutes
+and refresh5seconds, then run in Cloud Shell:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/check-operations-alerts.sh --observe-seconds 45
+```
+
+The default observation window remains0 for existing callers. The optional
+window accepts integer0-120seconds, validated before any pause. Once both API
+warning flags/gauges appear, the runner prints GRAFANA_OBSERVATION_WINDOW and
+keeps checking those signals for another45seconds. This gives the15second
+Prometheus scraper time to collect multiple samples. It does not prove stored
+scrapes itself; actual Grafana screenshots/history are separate evidence.
+
+Expect processing outstanding2, active warning signals2, rising consumer
+heartbeat age and processing event age. Publisher remains fresh. The existing
+finally block restores the consumer if observation fails or is interrupted;
+hard shell termination can still prevent cleanup. Keep the command running.
+After restoration, require OPERATIONS_ALERT_RECOVERY_OK with native empty queue,
+matching SQL state and clear current warnings. Historic chart spikes remain
+visible after current flags clear. Starting from the latest18event snapshot,
+expect20processed events afterward if no unrelated work occurred. Historical
+dead-letter audits stay1; publication-failure history is cumulative and may
+change if a retry happens. No password, image or SQL grant changes are made.
+
+Three added offline methods cover the45second pause window, restoration after
+observation failure, and rejection of invalid windows before mutation. All323
+offline methods and Bash syntax checks passed. The new dashboard-observed drill
+has not yet been run in Azure.
+
+The [private Prometheus collector](prometheus-azure.md) passed stored scrape
+verification; the [Grafana HTTPS dashboard](grafana-https-azure.md) passed API,
+cookie session and user browser-rendering checks. Connect alert rules and notification routing
 separately: API flags and exported metrics alone do not notify anyone. The
 existing Log Analytics workspace alone does not collect application signals.
 Native Service Bus count monitoring needs a separate read/management path;
 operations has no broker send/receive role. No external notification delivery
-or cloud telemetry collection is tested or enabled by this drill.
+is tested or enabled by this drill. Prometheus collection is separate and now verified.
