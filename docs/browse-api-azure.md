@@ -38,10 +38,11 @@ operation. A [Browse-only connection pool](database-pooling.md) subsequently
 passed ACR build ca6, rollout and demo HTTP verification: bounded reuse, fresh
 token parameters for replacement connections and application-lifespan cleanup.
 An isolated real SQL probe passed reuse, rollback, capacity and replacement
-checks. Serving-pod reuse under load and real renewal across an Azure token
-expiry boundary remain unverified. Both new pods were on the same apps node in
-the supplied rollout snapshot; the original deployment's node separation does
-not describe that later placement.
+checks. A subsequent ca7 rollout and [bounded serving-pod test](browse-concurrency.md)
+verified reuse for60test reads across two pods on separate nodes. Sustained-load
+performance and real renewal across an Azure token expiry boundary remain
+unverified. Both ca6 pods were on the same apps node in its supplied snapshot;
+pod placement is specific to each rollout and does not prove node-failure recovery.
 
 ## Build in Azure
 

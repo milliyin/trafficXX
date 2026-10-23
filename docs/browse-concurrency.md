@@ -1,8 +1,43 @@
 # Bounded concurrency check of the serving Browse pods
 
-Status: helper and internal statistics endpoint implemented locally; a new Browse
-image build, rollout and live experiment remain pending. The deployed ca6 image
-has pooling but does not have the statistics endpoint required for this check.
+Status: ACR build ca7, Browse rollout, demo HTTP and the bounded serving-pod
+experiment passed in user-run Cloud Shell. Sustained load and token-expiry
+renewal remain unverified.
+
+## Verified Azure result
+
+ACR run ca7 succeeded after42seconds, tag browse-20261023153010-470, image:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:300d1de5b7e625ed3da2b38e2a38816b4cbe9fd4565f014cf2dec5be18ddd16f
+```
+
+The reported Python base digest matches ca6. The user deployed this image and
+confirmed BROWSE_DEMO_HTTP_OK with two events and100available units each.
+New pods browse-79b5d8cd78-4b6fc and browse-79b5d8cd78-z287l were Ready1/1,
+zero restarts, on separate apps nodes. An old ca6 pod was still Terminating in
+the rollout snapshot; the subsequent experiment's stable two-pod preflight
+passed. These snapshots do not establish node-failure recovery.
+
+BROWSE_CONCURRENCY_OK confirmed48burst requests with eight workload clients and
+12sequential reads. Each serving process reported:
+
+| Observation | Value per pod |
+| --- | --- |
+| Successful test reads | 30 |
+| Pool borrows delta | 32 |
+| New connection attempts delta | 2 |
+| Highest sampled pool size | 3 |
+| Configured maximum | 4 |
+
+These counters support reuse in the actual serving processes. The test also
+verified unchanged demo responses, no increased pool error counters, no waiting
+borrowers at completion, healthy HTTP endpoints and stable process/pod state.
+Inventory writes were false. The extra borrows include readiness work; they are
+not additional test reads. A sampled peak of three does not prove that four
+was never reached between samples, nor establish a throughput or latency SLO.
+
+## Experiment design
 
 The first pool Job verified an isolated process. This next check sends GET
 requests to the actual two serving Browse processes, using separate localhost
@@ -81,5 +116,5 @@ pool errors, oversize snapshots, process restart detection, ownership/readiness
 guards, and owned-forward cleanup with error redaction. Actual-package local
 smoke tests verify the endpoint's allowlist, no SQL borrowing and OpenAPI
 omission. A real PostgreSQL HTTP/counter regression test was added to CI;
-Docker remains stopped and its hosted result is unchecked. Live results remain
-pending.
+Docker remains stopped and its hosted result is unchecked. The bounded live
+result above passed; long-duration renewal and sustained load remain pending.

@@ -1,8 +1,9 @@
 # Browse database pooling
 
 Status: Azure image build ca6, Browse rollout, demo HTTP check and isolated real
-SQL pool probe passed. No Terraform or database grants changed. Serving-pod
-reuse under load and token renewal across expiry remain unverified.
+SQL pool probe passed. A subsequent ca7 rollout and bounded serving-pod
+concurrency check also passed. No Terraform or database grants changed.
+Sustained load and token renewal across expiry remain unverified.
 
 The user restored a fresh Cloud Shell clone after the previous browser session
 expired. ACR run ca6 succeeded after33seconds, tag browse-20261023150647-3520:
@@ -130,10 +131,11 @@ need deletion.
 
 ## Verification limits
 
-Next is the [bounded serving-pod concurrency check](browse-concurrency.md), which
-requires a new Browse image with an internal statistics endpoint. The existing
-ca6 rollout and isolated probe results above remain valid; this new experiment
-has not yet run in Azure.
+The [bounded serving-pod concurrency check](browse-concurrency.md) passed after
+the ca7 rollout with internal pool statistics. Each pod served30test reads with
+32pool borrows and two new connection attempts; highest sampled size was three
+against a configured maximum of four. This supports serving-process reuse for
+the bounded workload, not sustained-load performance or a latency SLO.
 
 Offline tests cover pool bounds, fresh parameter callbacks, cloud authentication
 and TLS preservation, sanitized503 responses, shutdown/startup cleanup and
@@ -146,5 +148,5 @@ CI suite: physical reuse, failed-write rollback, bounded exhaustion/recovery and
 closed-connection replacement, and serving HTTP requests updating the same pool
 statistics. They were not run locally because Docker remains
 stopped. Their hosted CI result remains unchecked. The separate Azure probe and
-Browse HTTP checks above passed; serving-pod load and token-expiry experiments
-remain pending.
+Browse HTTP and bounded serving-pod checks above passed; sustained-load and
+token-expiry experiments remain pending.
