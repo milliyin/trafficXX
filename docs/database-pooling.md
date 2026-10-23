@@ -4,8 +4,8 @@ Status: Azure image build ca6, Browse rollout, demo HTTP check and isolated real
 SQL pool probe passed. A subsequent ca7 rollout and bounded serving-pod
 concurrency check also passed. No Terraform or database grants changed.
 Sustained load and token renewal across expiry remain unverified. A separate
-[background expiry-boundary check](database-token-renewal.md) is prepared;
-it has not yet supplied a live renewal result.
+[background expiry-boundary check](database-token-renewal.md) is running;
+its earliest final check is2026-10-24T16:01:40Z, with no renewal result yet.
 
 The user restored a fresh Cloud Shell clone after the previous browser session
 expired. ACR run ca6 succeeded after33seconds, tag browse-20261023150647-3520:

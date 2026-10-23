@@ -1,9 +1,20 @@
 # Real database token renewal across expiry
 
-Status: diagnostic implemented and tested offline; live Job startup, observed
-expiry time and final renewal result remain pending. No image build or serving
+Status: live Job startup and initial SQL/SDK-expiry observation passed; final
+expiry-boundary renewal result remains pending. No image build or serving
 deployment update is needed. The helper uses the current immutable Browse image
 and mounts the reviewed diagnostic source from a ConfigMap.
+
+## Active user-run check
+
+The user created browse-token-renewal-check and supplied TOKEN_RENEWAL_WAITING
+with run_id f1b7fde54dd24bdda3598c206b3a3e45. Initial access-token expiry is
+2026-10-24T16:01:10+00:00; the earliest final check is
+2026-10-24T16:01:40+00:00 (October24at21:01:40 Asia/Karachi). Initial estimated
+wait was86428seconds, with probes every300seconds. This records initial SQL
+success and scheduling only, not renewal success. Retain this run_id when
+checking progress/final output; actual completion and no-restart status remain
+to be verified after the expiry boundary.
 
 ## What this proves
 

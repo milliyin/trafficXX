@@ -230,8 +230,9 @@ Next:
    User screenshots confirm all eight panels render with live data; a further
    bounded read test passed on ca8. Sustained-load and token-renewal tests remain.
    A [background token-renewal check](docs/database-token-renewal.md) is prepared
-   using the existing image and real SDK expiry metadata. Its live startup and
-   expiry-boundary proof remain pending; short requests do not establish renewal.
+   using the existing image and real SDK expiry metadata. Live startup passed;
+   earliest final check is2026-10-24T16:01:40Z. Expiry-boundary proof remains
+   pending; short requests do not establish renewal.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.
