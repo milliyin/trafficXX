@@ -1,0 +1,25 @@
+{
+	admin off
+	persist_config off
+	http_port 8080
+	https_port 8443
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$GRAFANA_HOST} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+	@private_paths path /metrics /metrics/* /debug /debug/*
+	respond @private_paths 404
+	reverse_proxy grafana.trafficxx-monitoring.svc.cluster.local:3000
+	header -Server
+}
+
+http://:8085 {
+	respond /healthz "ok" 200
+}

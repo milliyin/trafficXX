@@ -194,9 +194,10 @@ Next:
    panel rendering. A dummy-cookie probe found server-set cookie handling fails
    through the current Cloud Shell preview, while browser-written cookies work.
    The user chose a [stable Azure HTTPS address](docs/grafana-https-azure.md).
-   The user-run reservation returned a static IP and Azure hostname. Next run
-   the prepared credential rotation/session revocation helper; a dedicated HTTPS
-   gateway and certificate checks must precede public dashboard access.
+   The user-run reservation returned a static IP and Azure hostname. Credential
+   rotation/session revocation and Secret synchronization passed. Next deploy
+   the prepared dedicated HTTPS gateway and run its trusted-TLS/cookie-login
+   check before verifying public dashboard rendering in a browser.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

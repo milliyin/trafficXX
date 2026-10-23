@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-https
+  namespace: trafficxx-monitoring
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-https-data
+  namespace: trafficxx-monitoring
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-https
+  namespace: trafficxx-monitoring
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 600
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trafficxx-grafana-https
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trafficxx-grafana-https
+    spec:
+      serviceAccountName: grafana-https
+      automountServiceAccountToken: false
+      nodeSelector:
+        agentpool: apps
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: certificates
+          persistentVolumeClaim:
+            claimName: grafana-https-data
+        - name: configuration
+          configMap:
+            name: grafana-https-config
+        - name: temporary
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: runtime-config
+          emptyDir:
+            sizeLimit: 16Mi
+      initContainers:
+        - name: validate-config
+          image: caddy:2.11.7-alpine
+          command: [caddy, validate, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+          env:
+            - name: GRAFANA_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: grafana-https-config
+                  key: GRAFANA_HOST
+            - name: XDG_DATA_HOME
+              value: /data
+            - name: XDG_CONFIG_HOME
+              value: /config
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          volumeMounts:
+            - name: certificates
+              mountPath: /data
+            - name: configuration
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+            - name: runtime-config
+              mountPath: /config
+      containers:
+        - name: gateway
+          image: caddy:2.11.7-alpine
+          command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+          env:
+            - name: GRAFANA_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: grafana-https-config
+                  key: GRAFANA_HOST
+            - name: XDG_DATA_HOME
+              value: /data
+            - name: XDG_CONFIG_HOME
+              value: /config
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+            - name: health
+              containerPort: 8085
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: certificates
+              mountPath: /data
+            - name: configuration
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+            - name: runtime-config
+              mountPath: /config

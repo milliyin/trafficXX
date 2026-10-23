@@ -1,0 +1,23 @@
+# Apply only after the credential gate and gateway config validation pass.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-https
+  namespace: trafficxx-monitoring
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: trafficxx-lab-rg
+    service.beta.kubernetes.io/azure-pip-name: trafficxx-lab-grafana-ip
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: trafficxx-grafana-https
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP

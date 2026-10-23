@@ -22,8 +22,8 @@ The proposed reverse proxy is Caddy with automated publicly trusted certificates
 It needs public DNS and reachable HTTP80/HTTPS443 for certificate validation and
 renewal. HTTP is for ACME/HTTPS redirection, not plaintext credential submission.
 Certificate state must persist on a separate volume. No certificate issuance,
-renewal or browser access has been verified yet. Gateway manifests/deployment
-remain subsequent work. The credential rotation helper is now prepared.
+renewal or browser access has been verified yet. Gateway manifests and the
+Cloud Shell deployment/HTTPS session checks are now prepared.
 
 Before any listener is published, replace the exposed Grafana password in its
 persisted database, revoke existing Grafana sessions, synchronize the bootstrap
@@ -106,10 +106,9 @@ git pull --ff-only origin main
 python3 scripts/rotate-grafana-password.py
 ```
 
-Expected result: GRAFANA_PASSWORD_ROTATED, sessions_revoked=true,
-remaining_sessions=0, secret_synchronized=true, password_printed=false. Actual
-user-run rotation/API compatibility remains pending. Do not deploy a listener
-until this succeeds.
+The user-run result now confirms GRAFANA_PASSWORD_ROTATED, sessions_revoked=true,
+remaining_sessions=0, secret_synchronized=true, password_printed=false and the
+private .env.grafana path. Do not repeat rotation just to deploy the gateway.
 
 The first user attempt returned GRAFANA_ROTATION_FAILED/RuntimeError without
 step information. The helper now reports a safe stage and HTTP status (null for
@@ -124,7 +123,7 @@ revokes each remaining token with revoke-auth-token, then requires an empty
 readback. The password-update handler itself also revokes that user's tokens,
 so the list may already be empty. No second administrator or extra permission
 is introduced. Pull the fix and rerun using the retained pending credential;
-actual corrected completion remains pending.
+the subsequent user result confirmed successful completion.
 
 The helper uses a temporary localhost-only kubectl port-forward on18091, not
 Cloud Shell Web Preview or a local PC account connection. It checks the current
@@ -154,7 +153,109 @@ pending recovery data stops before password mutation.
 
 After success, retain the updated private file for the later website login.
 Grafana database/session mutation, Secret synchronization and localhost
-connectivity need actual user-run proof. No public Service is created by rotation.
+connectivity passed the user-run helper. No public Service was created by rotation.
+
+## Deploy the HTTPS gateway
+
+The deployment helper requires the correct sponsorship account/AKS context,
+actual reserved public-IP metadata, Azure Disk storage class, a healthy Grafana,
+the rotation annotation, matching private credentials and no unfinished pending
+rotation. It checks the password against the actual administrator over an owned
+temporary localhost-only forward. For the initial public Service it also requires
+an empty Grafana session list. Later redeploys permit legitimate active sessions.
+It can restore a lost private file from the synchronized Secret without rotating.
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+python3 scripts/grafana-https.py deploy
+```
+
+The helper sets Grafana's canonical root_url to the actual Azure hostname,
+serve_from_sub_path=false, secure cookies=true, SameSite=lax, anonymous=false and
+signup=false. It waits for Grafana's rollout, applies the gateway ConfigMap,
+ServiceAccount,5Gi managed-csi certificate PVC and one Recreate Caddy2.11.7-alpine
+replica, then publishes its LoadBalancer Service only after gateway rollout.
+The Caddyfile is validated in an init container first. Existing gateways restart
+to reload configuration; both Grafana and certificate PVCs are retained.
+
+Caddy's unprivileged8080/8443 listeners map to public80/443. Its8085 health
+listener is used only by pod probes and is not in the public Service. Readiness
+tests process health, not certificate issuance. HTTP redirects to HTTPS;
+automatic HTTP/TLS ACME challenges require public connectivity for issuance and
+renewal. The configuration selects Let's Encrypt explicitly. The gateway has no
+Kubernetes API token/RBAC, Azure identity, database/broker grants or mounted
+Grafana password. It runs non-root with a read-only root filesystem, no Linux
+capabilities and bounded resources. Certificate/account keys persist on its PVC;
+config/temp paths use bounded emptyDir volumes. HTTP/3 is disabled, so only TCP
+is published. Unauthenticated Grafana /metrics and /debug routes are blocked at
+the gateway. Grafana's internal Service remains ClusterIP; no other app Service
+is changed. There is no access-log configuration that prints cookies/passwords.
+
+Expected GRAFANA_HTTPS_GATEWAY_DEPLOYED with the actual reserved IP, url and
+tls_verified=false. An Azure Disk/image pull or IP role propagation may delay
+rollout. The helper checks the Service attaches exactly the reserved IP. Its
+deployment result does not prove certificate trust or successful login.
+Actual gateway rollout/IP attachment/ACME issuance remain pending.
+
+## Verify trusted HTTPS and the session cookie
+
+```bash
+python3 scripts/grafana-https.py check
+```
+
+The check waits with a bounded retry for DNS to match the reserved IP, a normal
+CA/hostname-verified HTTPS connection, healthy Grafana, a correct HTTP-to-HTTPS
+redirect, protected user/dashboard APIs returning401 without login, and blocked
+diagnostic routes. It never uses -k or an unverified SSL context and disables
+environment proxies/automatic redirects. Plain HTTP is restricted to the
+credential-free redirect probe. No credentials are submitted while TLS/DNS is
+unready; only the read-only readiness phase retries.
+
+It then submits one login using the private credentials, requires the root
+redirect and a Secure HttpOnly grafana_session cookie, and uses that cookie
+(not Basic auth) to read the current administrator and verify all twelve
+provisioned panels, datasource health and the real Prometheus up query. It logs
+out only its diagnostic session in finally and requires the subsequent /api/user
+request to return401. No password/header/cookie values are printed. Expected
+GRAFANA_HTTPS_OK is still pending user-run evidence; a passing result proves an
+HTTP cookie session, while actual browser chart rendering is a separate check.
+
+After GRAFANA_HTTPS_OK, open the returned https URL in a normal browser tab and
+select Dashboards -> trafficXX -> trafficXX | Operations. Use the updated
+~/trafficxx/.env.grafana in Cloud Shell; an old PC/IDE copy is not automatically
+updated. Do not paste credentials into chat. No Cloud Shell preview or persistent
+port-forward is needed for this public route.
+
+## Inspect or stop the listener
+
+If deployment fails, share only the safe GRAFANA_HTTPS_FAILED stage/type/status.
+Keep the Secret and all PVCs. Useful user-run infrastructure checks are:
+
+```bash
+kubectl get pods,pvc,service -n trafficxx-monitoring
+kubectl describe service grafana-https -n trafficxx-monitoring
+kubectl logs -n trafficxx-monitoring deployment/grafana-https -c validate-config
+kubectl logs -n trafficxx-monitoring deployment/grafana-https -c gateway --tail=60
+```
+
+Review logs before sharing; never dump Secret JSON, credential files or
+certificate private keys. If IP assignment cannot find/access the reserved IP,
+inspect the exact Service annotations and the scoped control-plane role before
+changing permissions. Certificate failures require checking DNS/public reachability
+and CA responses, not bypassing TLS validation or repeatedly deleting certificate
+state (which can trigger issuance limits).
+
+To intentionally remove public access, delete only the gateway Service:
+
+```bash
+kubectl delete service grafana-https -n trafficxx-monitoring
+```
+
+This is different from stopping a local port-forward. It removes the public
+listener while retaining application data/certificate state. The Terraform IP
+reservation and its charges remain; detach the Service before planning removal
+of that reservation. Do not delete the namespace/PVCs as a troubleshooting step.
 
 ## Sources and local validation
 
@@ -172,9 +273,24 @@ Fourteen offline rotation methods cover successful password/session/Secret/file
 updates, interrupted synchronization and recovery, retained-session failure,
 non-admin/stale/mismatched credentials, old-password rejection and redirect
 refusal, safe failure stages and redacted HTTP status reporting, rejection of
-self-logout, multiple/zero tokens and malformed token metadata. All304 offline
-methods pass; no real Grafana mutation was run locally.
+self-logout, multiple/zero tokens and malformed token metadata. Sixteen additional
+offline gateway methods cover credential/deployment ordering, failures before
+publication, IP checks, existing rollouts, rotation/private-file gates, DNS,
+cookie login/redirect/logout, bounded retry and no plaintext credentials. All320
+offline methods pass; no real Grafana mutation was run locally.
+
+The official Caddy2.11.7 Windows validator was downloaded to ignored test tools
+and matched the release SHA512 checksum. It validated the actual Caddyfile with
+isolated writable test paths. Kubernetes manifest selectors/ports/ConfigMap/
+identity/security/PVC wiring and Python syntax/LF checks passed. No local Caddy
+web server, container, ACME issuance, Docker restart or Azure account access ran.
+The official Docker-library metadata confirms the2.11.7-alpine image tag; this
+version tag is not a digest pin and no image vulnerability scan is claimed.
 
 The self-logout restriction and password-update revocation are checked against
 [Grafana13.2.4 source](https://github.com/grafana/grafana/blob/v13.2.4/pkg/api/admin_users.go),
 in addition to the Admin API documentation.
+
+- [Caddy global ports and protocols](https://caddyserver.com/docs/caddyfile/options)
+- [Caddy automatic HTTPS requirements](https://caddyserver.com/docs/automatic-https)
+- [Official Caddy image metadata](https://github.com/docker-library/official-images/blob/master/library/caddy)
