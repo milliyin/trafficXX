@@ -216,7 +216,11 @@ Next:
    failure history unchanged at4 and no backlog or current warnings. This supports
    the mitigation for this case; the exact earlier AMQP condition remains unknown.
    External notification delivery remains unconfigured.
-2. Verify sustained token renewal across an actual expiry boundary; repeated
+2. Build and verify the [Browse database pool](docs/database-pooling.md): one
+   bounded pool per process, fresh token parameters for new connections and
+   shared readiness/request borrowing. Implemented locally; Azure build, rollout
+   and SQL reuse/capacity checks remain pending. Other services still connect
+   directly. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod

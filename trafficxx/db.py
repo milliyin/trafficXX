@@ -36,12 +36,12 @@ def _workload_credential(settings):
         return _credential
 
 
-def connect():
+def connection_parameters():
     common = dict(row_factory=dict_row, connect_timeout=5,
                   options='-c statement_timeout=15000 -c lock_timeout=10000')
     mode = os.environ.get('DATABASE_AUTH_MODE', 'url')
     if mode == 'url':
-        return psycopg.connect(os.environ['DATABASE_URL'], **common)
+        return dict(conninfo=os.environ['DATABASE_URL'], **common)
     if mode != 'workload_identity':
         raise psycopg.OperationalError('Unsupported DATABASE_AUTH_MODE')
     if os.environ.get('DATABASE_URL'):
@@ -73,5 +73,12 @@ def connect():
         # Readiness already handles psycopg errors as 503. Do not expose raw
         # identity-service error bodies or fall back to a human/CLI credential.
         raise psycopg.OperationalError('Workload identity database authentication failed') from None
-    return psycopg.connect(host=host, port=port, dbname=database, user=user,
-                           password=token, sslmode='verify-full', sslrootcert=ca, **common)
+    return dict(host=host, port=port, dbname=database, user=user,
+                password=token, sslmode='verify-full', sslrootcert=ca, **common)
+
+
+def connect():
+    parameters = connection_parameters()
+    if 'conninfo' in parameters:
+        return psycopg.connect(parameters.pop('conninfo'), **parameters)
+    return psycopg.connect(**parameters)

@@ -1,22 +1,36 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-from trafficxx.db import connect
+from trafficxx.browse_db import BrowseDatabase
 from trafficxx.health import register
 from trafficxx.service import fail
 
-app = FastAPI(title='trafficXX Browse API', version='0.1.0')
-register(app)
+database = BrowseDatabase()
+
+
+@asynccontextmanager
+async def lifespan(app):
+    database.open()
+    try:
+        yield
+    finally:
+        database.close()
+
+
+app = FastAPI(title='trafficXX Browse API', version='0.1.0', lifespan=lifespan)
+register(app, connection_factory=database.connection)
 
 
 @app.get('/events')
 def events():
-    with connect() as conn:
+    with database.connection() as conn:
         return conn.execute('SELECT * FROM events ORDER BY id').fetchall()
 
 
 @app.get('/events/{event_id}/availability')
 def availability(event_id: str):
-    with connect() as conn:
+    with database.connection() as conn:
         event = conn.execute('SELECT * FROM events WHERE id = %s', (event_id,)).fetchone()
         if not event:
             fail('EVENT_NOT_FOUND', 404)

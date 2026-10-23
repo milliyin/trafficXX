@@ -63,3 +63,19 @@ class HealthReadiness(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 503)
         self.assertEqual(caught.exception.detail, {'code': 'DATABASE_UNAVAILABLE'})
         self.assertNotIn('DO_NOT_LOG_RAW', str(caught.exception.detail))
+
+    def test_browse_readiness_can_use_the_same_pool_as_requests(self):
+        api, driver, database = ModuleType('fastapi'), ModuleType('psycopg'), ModuleType('trafficxx.db')
+        api.HTTPException, driver.Error = HttpError, SqlError
+        database.connect = MagicMock()
+        lease = MagicMock()
+        spec = importlib.util.spec_from_file_location(
+            'pooled_health', Path(__file__).resolve().parents[1] / 'trafficxx/health.py')
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict('sys.modules', {'fastapi': api, 'psycopg': driver, 'trafficxx.db': database}):
+            spec.loader.exec_module(module)
+            app = App()
+            module.register(app, connection_factory=lease)
+        self.assertEqual(app.routes['/readyz'](), {'status': 'ready'})
+        lease.assert_called_once()
+        database.connect.assert_not_called()

@@ -4,7 +4,7 @@ from psycopg import Error
 from trafficxx.db import connect
 
 
-def register(app, readiness_query='SELECT 1 FROM events LIMIT 1'):
+def register(app, readiness_query='SELECT 1 FROM events LIMIT 1', connection_factory=connect):
     @app.get('/healthz')
     def health():
         return {'status': 'alive'}
@@ -12,7 +12,7 @@ def register(app, readiness_query='SELECT 1 FROM events LIMIT 1'):
     @app.get('/readyz')
     def ready():
         try:
-            with connect() as conn:
+            with connection_factory() as conn:
                 conn.execute(readiness_query)
         except Error:
             raise HTTPException(503, detail={'code': 'DATABASE_UNAVAILABLE'}) from None

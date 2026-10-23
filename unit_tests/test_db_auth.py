@@ -93,6 +93,14 @@ class DatabaseAuth(unittest.TestCase):
         self.identity.WorkloadIdentityCredential.assert_called_once()
         self.assertEqual(self.credential.get_token.call_count, 16)
 
+    def test_pool_parameter_callback_resolves_new_token_without_connecting(self):
+        self.credential.get_token.side_effect = [
+            types.SimpleNamespace(token='FIRST'), types.SimpleNamespace(token='REFRESHED')]
+        first, second = self.db.connection_parameters(), self.db.connection_parameters()
+        self.assertEqual((first['password'], second['password']), ('FIRST', 'REFRESHED'))
+        self.assertEqual(second['sslmode'], 'verify-full')
+        self.psycopg.connect.assert_not_called()
+
     def test_auth_failure_is_redacted_and_never_falls_back_to_database(self):
         self.credential.get_token.side_effect = RuntimeError('FAKE_SECRET_IN_RAW_ERROR')
         with self.assertRaises(OperationalError) as result:

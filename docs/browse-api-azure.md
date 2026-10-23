@@ -33,10 +33,12 @@ PGPASSWORD/PGSSLMODE cannot replace the token or weaken TLS. SDK failures become
 a sanitized psycopg OperationalError, which the existing readiness handler
 reports as 503 without raw identity error details.
 
-This is SDK token caching, not a database connection pool. SQL connections still
-open/close per existing operation. Pooling and long-duration renewal experiments
-remain later work. Offline tests simulate changed SDK tokens; they do not prove
-real renewal across an Azure token expiry boundary.
+That initial deployment uses SDK token caching and opens a SQL connection per
+operation. A [Browse-only connection pool](database-pooling.md) is now implemented
+for the next image: bounded reuse, fresh token parameters for replacement
+connections and application-lifespan cleanup. Its build, rollout and live SQL
+probe remain pending. Offline token tests do not prove real renewal across an
+Azure token expiry boundary.
 
 ## Build in Azure
 

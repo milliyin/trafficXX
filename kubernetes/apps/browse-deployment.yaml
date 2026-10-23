@@ -49,6 +49,8 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            - name: BROWSE_DB_POOL_MAX
+              value: "4"
             - name: DATABASE_AUTH_MODE
               value: workload_identity
             - name: PGHOST
