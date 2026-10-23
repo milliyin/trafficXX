@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch, Mock
+import urllib.error
 
 spec = importlib.util.spec_from_file_location(
     'grafana_rotation', Path(__file__).resolve().parents[1] / 'scripts/rotate-grafana-password.py')
@@ -139,3 +141,28 @@ class Rotation(unittest.TestCase):
 
     def test_redirect_handler_does_not_forward_authorization(self):
         self.assertIsNone(module.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://example.com'))
+
+    def test_failure_stage_identifies_revocation_or_secret_sync_without_raw_errors(self):
+        for kind, expected in [('logout', 'revoke_grafana_sessions'), ('replace', 'synchronize_secret')]:
+            stages = []
+            self.fail_logout = kind == 'logout'
+            self.fail_replace = kind == 'replace'
+            with self.assertRaises(RuntimeError) as caught:
+                module.rotate(self.call, self.request, self.path, stages.append)
+            result = module.failure_result(stages[-1], caught.exception)
+            self.assertEqual(result['stage'], expected)
+            self.assertNotIn(str(caught.exception), json.dumps(result))
+            self.assertNotIn(self.password, json.dumps(result))
+
+    def test_http_failure_exposes_only_status_not_sensitive_body_headers_or_url(self):
+        error = urllib.error.HTTPError('http://private/?secret=hidden', 403,
+                                       'sensitive response', {}, None)
+        opener = Mock()
+        opener.open.side_effect = error
+        with patch.object(module.urllib.request, 'build_opener', return_value=opener):
+            with self.assertRaises(module.ApiFailure) as caught:
+                module.api_client('http://127.0.0.1:18091')('GET', '/api/user', 'private-password')
+        result = module.failure_result('authenticate_current_password', caught.exception)
+        self.assertEqual(result['http_status'], 403)
+        for sensitive in ['private-password', 'sensitive response', 'hidden']:
+            self.assertNotIn(sensitive, json.dumps(result))
