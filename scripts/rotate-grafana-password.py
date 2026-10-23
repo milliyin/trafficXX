@@ -129,8 +129,18 @@ def rotate(call, request, path=Path('.env.grafana'), progress=lambda stage: None
         else:
             raise ValueError('Previous password still authenticates')
 
-    progress('revoke_grafana_sessions')
-    request('POST', f'/api/admin/users/{user_id}/logout', new['GF_SECURITY_ADMIN_PASSWORD'], {})
+    # Grafana rejects bulk logout of the caller's own account. Basic auth has
+    # no current session token; enumerate and revoke that user's tokens instead.
+    progress('list_grafana_sessions')
+    tokens = request('GET', f'/api/admin/users/{user_id}/auth-tokens', new['GF_SECURITY_ADMIN_PASSWORD'])
+    if not isinstance(tokens, list) or any(
+            not isinstance(token, dict) or type(token.get('id')) is not int or token['id'] < 1
+            for token in tokens):
+        raise ValueError('Unexpected Grafana session metadata')
+    for token in tokens:
+        progress('revoke_grafana_sessions')
+        request('POST', f'/api/admin/users/{user_id}/revoke-auth-token',
+                new['GF_SECURITY_ADMIN_PASSWORD'], {'authTokenId': token['id']})
     progress('verify_sessions_revoked')
     remaining = request('GET', f'/api/admin/users/{user_id}/auth-tokens', new['GF_SECURITY_ADMIN_PASSWORD'])
     if remaining != []:

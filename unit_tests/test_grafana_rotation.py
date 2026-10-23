@@ -36,6 +36,7 @@ class Rotation(unittest.TestCase):
         self.fail_logout = False
         self.keep_sessions = False
         self.keep_old = False
+        self.revoked = []
 
     def call(self, args, payload=None):
         self.calls.append((args, payload))
@@ -57,10 +58,13 @@ class Rotation(unittest.TestCase):
             self.password = payload['password']
             return {'message': 'updated'}
         if method == 'POST' and path.endswith('/logout'):
+            raise module.ApiFailure(400)  # Grafana13 rejects logging out oneself.
+        if method == 'POST' and path.endswith('/revoke-auth-token'):
             if self.fail_logout:
-                raise RuntimeError('fake logout failure')
+                raise RuntimeError('fake revocation failure')
+            self.revoked.append(payload['authTokenId'])
             if not self.keep_sessions:
-                self.sessions = []
+                self.sessions = [token for token in self.sessions if token['id'] != payload['authTokenId']]
             return {'message': 'revoked'}
         if path.endswith('/auth-tokens'):
             return copy.deepcopy(self.sessions)
@@ -141,6 +145,22 @@ class Rotation(unittest.TestCase):
 
     def test_redirect_handler_does_not_forward_authorization(self):
         self.assertIsNone(module.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://example.com'))
+
+    def test_self_logout_is_not_used_and_each_remaining_session_is_revoked(self):
+        self.sessions = [{'id': 3}, {'id': 8}]
+        self.run_rotation()
+        self.assertEqual(self.revoked, [3, 8])
+
+    def test_no_sessions_after_password_change_needs_no_revocation_requests(self):
+        self.sessions = []
+        self.run_rotation()
+        self.assertEqual(self.revoked, [])
+
+    def test_invalid_session_metadata_does_not_publish_rotation_success(self):
+        self.sessions = [{'id': 'unexpected'}]
+        with self.assertRaises(ValueError): self.run_rotation()
+        self.assertTrue(self.pending.exists())
+        self.assertFalse(any(args[1] == 'replace' for args, _ in self.calls))
 
     def test_failure_stage_identifies_revocation_or_secret_sync_without_raw_errors(self):
         for kind, expected in [('logout', 'revoke_grafana_sessions'), ('replace', 'synchronize_secret')]:

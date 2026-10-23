@@ -117,6 +117,15 @@ non-HTTP errors), never raw response bodies/headers or exception messages. Pull
 the update, rerun the same command and share only that JSON to locate the failure.
 The original result does not establish whether the password was changed.
 
+The next user-run result located HTTP400 at revoke_grafana_sessions, after
+password verification. The pinned Grafana13.2.4 source rejects bulk logout of
+the current administrator. The helper now lists that user's auth tokens and
+revokes each remaining token with revoke-auth-token, then requires an empty
+readback. The password-update handler itself also revokes that user's tokens,
+so the list may already be empty. No second administrator or extra permission
+is introduced. Pull the fix and rerun using the retained pending credential;
+actual corrected completion remains pending.
+
 The helper uses a temporary localhost-only kubectl port-forward on18091, not
 Cloud Shell Web Preview or a local PC account connection. It checks the current
 subscription/context before starting and closes its forward on completion or
@@ -159,8 +168,13 @@ AzureRM provider passed locally. No Azure state, login or plan was accessed
 locally. Live DNS availability, scoped IP attachment, certificate issuance and
 browser login remain user-run checks.
 
-Eleven offline rotation methods cover successful password/session/Secret/file
+Fourteen offline rotation methods cover successful password/session/Secret/file
 updates, interrupted synchronization and recovery, retained-session failure,
 non-admin/stale/mismatched credentials, old-password rejection and redirect
-refusal, safe failure stages and redacted HTTP status reporting. All301 offline
+refusal, safe failure stages and redacted HTTP status reporting, rejection of
+self-logout, multiple/zero tokens and malformed token metadata. All304 offline
 methods pass; no real Grafana mutation was run locally.
+
+The self-logout restriction and password-update revocation are checked against
+[Grafana13.2.4 source](https://github.com/grafana/grafana/blob/v13.2.4/pkg/api/admin_users.go),
+in addition to the Admin API documentation.
