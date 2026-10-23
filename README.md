@@ -211,7 +211,8 @@ Next:
    zero backlog/warnings and no new publication failure. A later13minute quiet
    interval reproduced ServiceBusConnectionError followed by successful retries,
    reaching28processed events and failure history4. An eight-minute idle sender
-   refresh is prepared and tested; its new image/rollout/live verification is next.
+   refresh is prepared and tested; ACR build ca4 passed and its digest is pinned.
+   Publisher rollout and post-fix quiet-interval verification are next.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

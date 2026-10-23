@@ -179,11 +179,30 @@ git pull --ff-only origin main
 bash scripts/build-publisher-image.sh
 ```
 
-This creates another image, not a deployment. Pin the returned digest before
-rollout. The running ca3 image has class logging but not this new refresh logic
-until that rollout. Afterward, repeat the single12minute quiet-interval test and
+The user supplied successful ACR run ca4 after36seconds, tag
+publisher-20261023112132-5328 and digest:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:98aa74d378acbcd1f2a5429b00c2118f48cb66d0a9fd6a13277a7d1ce192c8ac
+```
+
+The manifest now pins this exact image. Its reported Python base digest matches
+ca3; no image vulnerability scan or new hosted CI result is claimed. Build
+success does not deploy the image. The running ca3 image has class logging but
+not the refresh logic until the following user-run rollout:
+
+```bash
+cd ~/trafficxx
+git pull --ff-only origin main
+bash scripts/deploy-publisher.sh &&
+bash scripts/check-operations-http.sh
+```
+
+This replaces only the single publisher replica with the same identity, grants
+and security settings. After a healthy rollout, repeat the single12minute
+quiet-interval test and
 read refresh/error/outcome logs without pausing the consumer. If there is no
 unrelated work, one further pair from28events should reach30. A healthy result
 with unchanged failure count4 and an idle-refresh log would support this
 mitigation for the observed case, not establish a general availability SLO.
-Build, rollout and post-fix quiet-interval results remain pending.
+The build passed; actual rollout and post-fix quiet-interval results remain pending.
