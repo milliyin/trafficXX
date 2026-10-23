@@ -85,9 +85,41 @@ outbox work can wait safely, and a sufficiently long startup may produce a stale
 publisher warning. This is not a zero-downtime claim. No other workload is
 restarted. The helper checks subscription/context and waits for rollout.
 
-Expected PUBLISHER_DEPLOYED with one Ready publisher pod. Actual new-image
-rollout and future runtime error-class output remain pending. After rollout,
-check monitoring health and publication/delivery separately; DB-only readiness
-does not prove a successful broker send. Do not repeat the consumer outage to
-diagnose publication. A future bounded booking/cancel check can generate two
-normal events while keeping the consumer running.
+The user supplied PUBLISHER_DEPLOYED and healthy operations:20processed,
+zero backlog/warnings, fresh consumer/publisher heartbeats2.909667/1.764152sec
+and unchanged publication-failure history3.
+
+A subsequent ordinary booking/cancel check passed for reservation
+4ae564aa-3393-4f4d-a8a3-874bc0835b35: duplicate reuse, changed-request rejection,
+cross-customer hiding, final CANCELLED status and reuse of that cancelled result.
+OPERATIONS_HTTP_OK then reported22processed events, zero outbox/processing lag,
+no active warnings or processing-failure records, consumer/publisher heartbeats
+3.437415/0.306098sec and unchanged historical publish failures3/dead-letter audits1.
+The consumer remained running. This verifies processing of two new events by
+aggregate monitoring, not a new full-row SQL fingerprint check or an idle-timeout
+root cause. No new send failure/error-class output was supplied.
+
+## Next bounded observation after a quiet interval
+
+Leave the lab without new bookings for at least12minutes, keeping publisher and
+consumer running. This is longer than the documented link idle interval; it is
+not a recommendation to pause either worker or send keepalive bookings. Then
+run one ordinary booking/cancel flow and read its outcomes:
+
+```bash
+cd ~/trafficxx
+bash scripts/check-booking-flow.sh &&
+sleep 5 &&
+bash scripts/check-operations-http.sh
+
+kubectl logs -n trafficxx deployment/publisher --since=20m --timestamps \
+  | grep -E 'broker_send_failed|publisher_reconnect|outbox_publish outcome='
+```
+
+Starting from22processed with no other activity, expect24after this check and
+zero outstanding work. Report any new broker_send_failed error_class and whether
+the failure counter increased; do not fabricate an error if none occurs. One
+successful send after idle would show that failure is not inevitable, not prove
+all idle cases safe. Even a connection-class error may not establish its exact
+AMQP condition; distinguish observed evidence from the idle-timeout hypothesis.
+The new quiet-interval observation and diagnostic output are pending.
