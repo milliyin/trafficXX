@@ -13,8 +13,11 @@ reference=$(cat browse-image.txt)
 [[ "$reference" =~ ^trafficxxacre8708a85\.azurecr\.io/trafficxx@sha256:[0-9a-f]{64}$ ]] || {
   echo 'Invalid lab image reference; refusing deployment.' >&2; exit 1;
 }
-kubectl set image --local -f kubernetes/apps/browse-deployment.yaml \
-  "browse=$reference" -o yaml | kubectl apply -f -
+patch='[{"op":"test","path":"/spec/template/spec/containers/0/name","value":"browse"},{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"'"$reference"'"}]'
+rendered=$(kubectl patch --local -f kubernetes/apps/browse-deployment.yaml \
+  --type=json --patch "$patch" -o yaml)
+[[ -n "$rendered" ]] || { echo 'Browse manifest rendering returned no object.' >&2; exit 1; }
+printf '%s\n' "$rendered" | kubectl apply -f -
 kubectl apply -f kubernetes/apps/browse-service.yaml
 kubectl rollout status deployment/browse -n trafficxx --timeout=600s
 kubectl get pods -n trafficxx -l app.kubernetes.io/name=trafficxx-browse -o wide

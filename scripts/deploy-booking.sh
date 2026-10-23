@@ -13,8 +13,13 @@ reference=$(cat booking-image.txt)
 [[ "$reference" =~ ^trafficxxacre8708a85\.azurecr\.io/trafficxx@sha256:[0-9a-f]{64}$ ]] || {
   echo 'Invalid lab image reference; refusing deployment.' >&2; exit 1;
 }
-kubectl set image --local -f kubernetes/apps/booking-deployment.yaml \
-  "booking=$reference" -o yaml | kubectl apply -f -
+# `set image --local` prints nothing for an unchanged image. JSON patch emits
+# the complete object even when the reviewed digest is already in the file.
+patch='[{"op":"test","path":"/spec/template/spec/containers/0/name","value":"booking"},{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"'"$reference"'"}]'
+rendered=$(kubectl patch --local -f kubernetes/apps/booking-deployment.yaml \
+  --type=json --patch "$patch" -o yaml)
+[[ -n "$rendered" ]] || { echo 'Booking manifest rendering returned no object.' >&2; exit 1; }
+printf '%s\n' "$rendered" | kubectl apply -f -
 kubectl apply -f kubernetes/apps/booking-service.yaml
 kubectl rollout status deployment/booking -n trafficxx --timeout=600s
 kubectl get pods -n trafficxx -l app.kubernetes.io/name=trafficxx-booking -o wide

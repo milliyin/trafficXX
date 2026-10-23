@@ -19,6 +19,15 @@ build. The helper saved booking-image.txt in Cloud Shell, and the committed
 Booking manifest now pins this reviewed image. Build success does not prove
 rollout, live pooling, transaction correctness or a passing hosted CI run.
 
+The first user-run deployment attempt returned "no objects passed to apply".
+The helper used kubectl set image --local, which emits nothing when the image
+already matches the file. Pinning ca9 introduced exactly that no-op. The
+deployment apply received no objects; rollout and probes did not run.
+Both Booking and Browse helpers now render with local JSON patch, test the
+expected container name, and reject an empty result before apply. Unchanged
+and changed digests both produce a full object. No rebuild is needed; pull the
+fix and retry the deployment/check commands below. Live retry remains pending.
+
 ## What changes
 
 Booking now owns one synchronous psycopg-pool pool per Uvicorn process. Its
@@ -92,7 +101,7 @@ bash scripts/check-booking-pool.sh
 ```
 
 Deployment validates account/context/digest and substitutes only Booking's
-image using kubectl's local manifest transformation. The committed manifest
+image using kubectl's local JSON patch transformation. The committed manifest
 also pins reviewed ca9; the helper still requires the validated build reference.
 The two Booking replicas roll out with BOOKING_DB_POOL_MAX=4. No Browse/Grafana/
 Prometheus/worker or renewal-Job rollout occurs.
@@ -131,12 +140,18 @@ remain correct. Publisher/consumer may need time to drain the extra events.
 
 ## Validation and remaining evidence
 
-Local validation passed 384 offline tests, including provider injection, rollback
+Local validation passed 387 offline tests, including provider injection, rollback
 versus commit-before-conflict, no write replay, independent pool limits and
 serving-check rejection of process resets, missing reuse or new errors. A smoke
 test using the pinned FastAPI and psycopg-pool packages confirmed app lifespan,
 readiness and injection for all reservation routes with fake SQL. Bash syntax,
 manifest structure and mocked image/build/deploy/probe guards passed.
+
+Three release-helper regression methods cover same/changed digest rendering,
+empty/failed render rejection before apply, and invalid image rejection for
+both APIs. The actual local kubectl v1.32.2 binary reproduced the old no-op and
+validated complete JSON patch output for both cases, using an empty isolated
+kubeconfig and local-only commands. No cluster/account connection was used.
 
 Five real PostgreSQL regression tests are added to the dedicated CI database
 and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
