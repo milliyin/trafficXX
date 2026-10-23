@@ -196,7 +196,21 @@ Expected GRAFANA_HTTPS_GATEWAY_DEPLOYED with the actual reserved IP, url and
 tls_verified=false. An Azure Disk/image pull or IP role propagation may delay
 rollout. The helper checks the Service attaches exactly the reserved IP. Its
 deployment result does not prove certificate trust or successful login.
-Actual gateway rollout/IP attachment/ACME issuance remain pending.
+The first user-run deployment stopped at rollout_gateway. Its image pulled and
+certificate PVC bound/attached, but validate-config entered Init:CrashLoopBackOff
+with exec /usr/bin/caddy: operation not permitted. The official image Dockerfile
+sets cap_net_bind_service=ep on that binary; executing it with drop:ALL can be
+rejected before Caddy starts. The first Windows configuration validation did not
+test this Linux file-capability interaction.
+
+The manifest now starts the init container with /bin/sh, copies only Caddy's
+bytes into a fresh file in a128Mi bounded emptyDir, sets mode0555 and executes
+that copy for validation. The gateway runs the same copy from a read-only
+mount. Reinitialization removes only that temporary binary before recreating it.
+The new file has no inherited file capability. No root, privilege escalation or
+additional capability is granted; only high ports are bound inside the pod.
+Pull the fix and rerun deploy. Existing PVCs/Secret are retained. Actual corrected
+Linux startup, public-IP attachment and ACME issuance still need user-run proof.
 
 ## Verify trusted HTTPS and the session cookie
 
@@ -294,3 +308,4 @@ in addition to the Admin API documentation.
 - [Caddy global ports and protocols](https://caddyserver.com/docs/caddyfile/options)
 - [Caddy automatic HTTPS requirements](https://caddyserver.com/docs/automatic-https)
 - [Official Caddy image metadata](https://github.com/docker-library/official-images/blob/master/library/caddy)
+- [Pinned official image Dockerfile and file capability](https://github.com/caddyserver/caddy-docker/blob/9234f5785658cae8129bfae366e196d0670468ac/2.11/alpine/Dockerfile)

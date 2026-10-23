@@ -61,10 +61,23 @@ spec:
         - name: runtime-config
           emptyDir:
             sizeLimit: 16Mi
+        - name: runtime-binary
+          emptyDir:
+            sizeLimit: 128Mi
       initContainers:
         - name: validate-config
           image: caddy:2.11.7-alpine
-          command: [caddy, validate, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+          # The official binary has cap_net_bind_service=ep. Executing that
+          # inode can fail with EPERM under drop:ALL. Copy bytes to a fresh
+          # inode without file capabilities; only high ports are used here.
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              rm -f /runtime/caddy
+              cat /usr/bin/caddy > /runtime/caddy
+              chmod 0555 /runtime/caddy
+              exec /runtime/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           env:
             - name: GRAFANA_HOST
               valueFrom:
@@ -97,10 +110,12 @@ spec:
               mountPath: /tmp
             - name: runtime-config
               mountPath: /config
+            - name: runtime-binary
+              mountPath: /runtime
       containers:
         - name: gateway
           image: caddy:2.11.7-alpine
-          command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+          command: [/runtime/caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
           env:
             - name: GRAFANA_HOST
               valueFrom:
@@ -156,3 +171,6 @@ spec:
               mountPath: /tmp
             - name: runtime-config
               mountPath: /config
+            - name: runtime-binary
+              mountPath: /runtime
+              readOnly: true
