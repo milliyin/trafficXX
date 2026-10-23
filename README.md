@@ -218,7 +218,7 @@ Next:
    External notification delivery remains unconfigured.
 2. Build and verify the [Browse database pool](docs/database-pooling.md): one
    bounded pool per process, fresh token parameters for new connections and
-   shared readiness/request borrowing. Implemented locally; Azure build, rollout
+   shared readiness/request borrowing. Azure build ca6 passed; rollout
    and SQL reuse/capacity checks remain pending. Other services still connect
    directly. Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.

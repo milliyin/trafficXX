@@ -1,8 +1,20 @@
 # Browse database pooling
 
-Status: implemented locally; Azure image build, rollout and real SQL probe are
-pending. The deployed Browse image still opens a connection per operation until
-the user builds and deploys this change. No Terraform or database grants change.
+Status: Azure image build ca6 passed; rollout and real SQL probe are pending.
+The deployed Browse image still opens a connection per operation until the user
+deploys this change. No Terraform or database grants change.
+
+The user restored a fresh Cloud Shell clone after the previous browser session
+expired. ACR run ca6 succeeded after33seconds, tag browse-20261023150647-3520:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:44f5a740913e28861f8549e0324356705731a84b5dcc557d8257c286e59e0969
+```
+
+The reported Python base digest matches publisher ca4. The validated immutable
+reference was saved in browse-image.txt; the deployment helper uses that file.
+This build does not establish live pooling, a vulnerability scan or hosted CI
+success. Reconnect AKS credentials in the new Cloud Shell before deploying.
 
 Earlier work reused one WorkloadIdentityCredential and its SDK token cache.
 That saved authentication work but did not reuse PostgreSQL connections. Neither
