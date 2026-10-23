@@ -131,6 +131,11 @@ need deletion.
 
 ## Verification limits
 
+[Per-pod Prometheus and Grafana pool monitoring](browse-pool-monitoring.md) is
+prepared for the next Browse image and monitoring configuration update. Its live
+scrapes and new dashboard remain pending; the earlier bounded reuse test is
+separate evidence.
+
 The [bounded serving-pod concurrency check](browse-concurrency.md) passed after
 the ca7 rollout with internal pool statistics. Each pod served30test reads with
 32pool borrows and two new connection attempts; highest sampled size was three

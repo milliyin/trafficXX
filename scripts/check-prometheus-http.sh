@@ -2,6 +2,9 @@
 # Read-only monitoring check through a temporary localhost-only port forward.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --browse-pool ) ]]; then
+  echo 'Usage: check-prometheus-http.sh [--browse-pool]' >&2; exit 2;
+fi
 [[ "$(kubectl config current-context)" == trafficxx-lab-aks ]] || {
   echo 'Select the trafficxx-lab-aks context first.' >&2; exit 1;
 }
@@ -26,4 +29,8 @@ done
 grep -q 'Forwarding from 127.0.0.1:18090' "$forward_log" || {
   echo 'Port forward did not become ready.' >&2; exit 1;
 }
-python3 scripts/check-prometheus-http.py
+if [[ "${1:-}" == --browse-pool ]]; then
+  python3 scripts/check-browse-monitoring.py
+else
+  python3 scripts/check-prometheus-http.py
+fi

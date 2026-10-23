@@ -104,3 +104,11 @@ Scrape evidence passed; the [private Grafana dashboard](grafana-azure.md) is
 now API-verified with twelve provisioned panels and a healthy datasource pointing to
 http://prometheus.trafficxx-monitoring.svc.cluster.local:9090. Alert rules,
 notification routing and native Azure queue metrics remain separate integrations.
+
+## Browse pool extension
+
+The [Browse pool monitoring guide](browse-pool-monitoring.md) adds a separate
+DNS-discovered job for each Ready Browse pod and a new Grafana dashboard.
+Implementation is prepared; its Browse image, monitoring update and stored-sample
+verification remain pending. The original Operations scrape evidence above does
+not establish the new job's health.

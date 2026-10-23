@@ -72,3 +72,7 @@ def test_serving_api_statistics_track_the_same_pool_as_reads():
         assert after['statistics']['requests_num'] >= before['statistics']['requests_num'] + 2
         assert after['statistics']['pool_max'] == 4
         assert 'password' not in str(after)
+        response = client.get('/metrics')
+        assert response.status_code == 200
+        assert '# TYPE trafficxx_browse_pool_borrows_total counter' in response.text
+        assert client.get('/internal/database-pool').json()['statistics']['requests_num'] == after['statistics']['requests_num']

@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from trafficxx.browse_db import BrowseDatabase
+from trafficxx.browse_metrics import render
 from trafficxx.health import register
 from trafficxx.service import fail
 
@@ -25,6 +27,12 @@ register(app, connection_factory=database.connection)
 @app.get('/internal/database-pool', include_in_schema=False)
 def database_pool():
     return database.statistics()
+
+
+@app.get('/metrics', include_in_schema=False, response_class=PlainTextResponse)
+def metrics():
+    return PlainTextResponse(render(database.statistics()['statistics']),
+                             media_type='text/plain; version=0.0.4')
 
 
 @app.get('/events')

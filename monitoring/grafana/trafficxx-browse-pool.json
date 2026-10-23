@@ -1,0 +1,479 @@
+{
+  "uid": "trafficxx-browse-pool",
+  "title": "trafficXX | Browse database pool",
+  "description": "Process-local pool observations, per discovered pod target. No latency or throughput SLO.",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "trafficxx",
+    "lab",
+    "database"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Browse scrape targets up",
+      "description": "Expected two ready Browse pod targets; not a count of database connections.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(up{job=\"trafficxx-browse-pool\"})",
+          "legendFormat": "Healthy Browse targets",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Pool slots busy or opening",
+      "description": "Pool size minus idle slots includes connections being prepared; not active SQL queries.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"} - trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}",
+          "legendFormat": "{{instance}} busy/opening",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Pool slots and configured limit",
+      "description": "Per process, not a whole-cluster connection cap. Size includes slots being prepared.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}",
+          "legendFormat": "{{instance}} slots",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}",
+          "legendFormat": "{{instance}} limit",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Requests waiting for a connection",
+      "description": "Current borrowers queued inside each pool. Does not include HTTP requests outside the pool.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}",
+          "legendFormat": "{{instance}} waiting",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Borrow and connection attempt rates",
+      "description": "Borrows reuse sessions. Attempts include failed logins and are not simultaneous connections. Rates need multiple scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} borrows/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "rate(trafficxx_browse_pool_connection_attempts_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} attempts/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Borrow and connection error rates",
+      "description": "Per-process counter rates; no external notifications are configured.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(trafficxx_browse_pool_borrow_errors_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} borrow errors/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "rate(trafficxx_browse_pool_connection_errors_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} connection errors/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Lost and unusable connection rates",
+      "description": "Lost on checkout or returned unusable. Replacement can be normal during a deliberate diagnostic.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(trafficxx_browse_pool_connections_lost_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} lost/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "rate(trafficxx_browse_pool_bad_returns_total{job=\"trafficxx-browse-pool\"}[5m])",
+          "legendFormat": "{{instance}} bad returns/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Current-process borrow and attempt totals",
+      "description": "Sums of current process counters, reset on restart. Not durable booking history or concurrent connections.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "trafficxx-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})",
+          "legendFormat": "Borrows since process start",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "expr": "sum(trafficxx_browse_pool_connection_attempts_total{job=\"trafficxx-browse-pool\"})",
+          "legendFormat": "Attempts since process start",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "trafficxx-prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": []
+}

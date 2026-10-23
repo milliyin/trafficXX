@@ -1,7 +1,9 @@
 """AKS-only read checks for provisioned dashboard/data source; no secret output."""
 import base64
 import json
+import importlib.util
 from pathlib import Path
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -10,6 +12,7 @@ import urllib.request
 BASE = 'http://grafana.trafficxx-monitoring.svc.cluster.local:3000'
 UID = 'trafficxx-operations'
 SOURCE = 'trafficxx-prometheus'
+POOL_UID = 'trafficxx-browse-pool'
 
 
 def verify(get):
@@ -44,8 +47,32 @@ def verify(get):
             'operations_up_via_datasource': 1, 'notification_delivery_configured': False}
 
 
+def verify_pool(get):
+    verify(get)  # Preserve proof that the existing Operations dashboard still works.
+    payload = get('/api/dashboards/uid/' + POOL_UID)
+    document = payload['dashboard']
+    panels = document.get('panels', [])
+    if (document.get('uid') != POOL_UID or document.get('title') != 'trafficXX | Browse database pool'
+            or payload.get('meta', {}).get('provisioned') is not True or len(panels) != 8
+            or any(panel.get('datasource', {}).get('uid') != SOURCE for panel in panels)):
+        raise ValueError('Unexpected Browse pool dashboard')
+    spec = importlib.util.spec_from_file_location(
+        'browse_monitoring', Path(__file__).with_name('check-browse-monitoring.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    prefix = '/api/datasources/proxy/uid/' + SOURCE
+    stored = module.verify(lambda path: get(prefix + path))
+    return {'result': 'GRAFANA_BROWSE_POOL_OK', 'dashboard_uid': POOL_UID,
+            'panel_count': 8, 'datasource_uid': SOURCE, 'target_count': stored['target_count'],
+            'stored_samples_per_target_minimum': 2,
+            'operations_dashboard_verified': True, 'notification_delivery_configured': False}
+
+
 def main():
     try:
+        if sys.argv[1:] not in ([], ['--browse-pool']):
+            raise ValueError('Unsupported dashboard check option')
+        pool_mode = sys.argv[1:] == ['--browse-pool']
         user = Path('/credentials/admin-user').read_text().strip()
         password = Path('/credentials/admin-password').read_text().strip()
         if user != 'admin' or len(password) < 32:
@@ -58,20 +85,20 @@ def main():
             with opener.open(request, timeout=15) as response:
                 return json.load(response)
         try:
-            get('/api/dashboards/uid/' + UID, authenticated=False)
+            get('/api/dashboards/uid/' + (POOL_UID if pool_mode else UID), authenticated=False)
         except urllib.error.HTTPError as error:
             if error.code != 401:
                 raise
         else:
             raise ValueError('Dashboard unexpectedly accessible without login')
-        for attempt in range(12):
+        for attempt in range(48 if pool_mode else 12):
             try:
-                result = verify(get)
+                result = verify_pool(get) if pool_mode else verify(get)
                 result['unauthenticated_dashboard_denied'] = True
                 print(json.dumps(result))
                 return 0
             except (ValueError, KeyError, OSError):
-                if attempt == 11:
+                if attempt == (47 if pool_mode else 11):
                     raise
                 time.sleep(5)
     except Exception as error:
