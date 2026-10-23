@@ -36,7 +36,7 @@ we learn in [memeory.md](memeory.md).
 | Consumer database permissions | Exact grants verified, then 14 required operations and 30 denials passed as the consumer over TLS 1.3; diagnostic writes rolled back and no broker messages sent or received |
 | Live monitoring warning and recovery | Consumer pause produced aged-processing and stale-heartbeat signals in JSON/metrics; restart cleared both, emptied the native queue and verified18inbox events/nine latest projections. One additional publish failure was recorded and delivery recovered; cause undiagnosed |
 | Internal operations monitoring | One read-only operations replica deployed; live health/readiness/backlog and worker/alert metric checks passed with no active alerts. Historical audits remain separate; notification delivery is not configured |
-| Private metrics and dashboard | Prometheus verified stored scrape samples. Grafana verified twelve provisioned panels, healthy datasource and a real query; browser login remains blocked by the preview cookie issue |
+| Metrics and HTTPS dashboard | Prometheus verified stored samples. Grafana's Azure HTTPS endpoint passed certificate/redirect checks, Secure HttpOnly cookie login, twelve-panel/datasource query checks and diagnostic logout; browser rendering remains to be confirmed |
 | Invalid message isolation and recovery | Unsupported schema was dead-lettered with INVALID_EVENT_SCHEMA; business-table fingerprints stayed unchanged; targeted cleanup emptied the queue. Follow-up SQL verified 16 events/eight latest projections, a retained rejection audit and healthy heartbeat; native queue counts all zero |
 | Azure consumer backlog recovery | With zero consumer pods, two hold/cancel events waited in the queue; restoring one replica drained it to zero. Read-only SQL verified all 14 inbox records and seven latest projections, with no mismatches/failure records and a healthy heartbeat |
 | Duplicate message delivery | One acknowledged resend of the original message produced a new duplicate outcome; all inbox/outbox/projection counts and full-row fingerprints stayed unchanged, and native queue counts returned to zero |
@@ -195,9 +195,10 @@ Next:
    through the current Cloud Shell preview, while browser-written cookies work.
    The user chose a [stable Azure HTTPS address](docs/grafana-https-azure.md).
    The user-run reservation returned a static IP and Azure hostname. Credential
-   rotation/session revocation and Secret synchronization passed. Next deploy
-   the prepared dedicated HTTPS gateway and run its trusted-TLS/cookie-login
-   check before verifying public dashboard rendering in a browser.
+   rotation/session revocation and Secret synchronization passed. The dedicated
+   HTTPS gateway deployed and passed trusted-certificate, redirect, cookie-login,
+   twelve-panel/datasource query and diagnostic-logout checks. Next open the
+   direct HTTPS dashboard and verify its rendering in the browser.
    Investigate the recorded send failure before claiming clean publication.
    External notification delivery remains unconfigured.
 2. Verify sustained token renewal across an actual expiry boundary; repeated

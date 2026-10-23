@@ -5,7 +5,10 @@ same probe confirms that a browser-written cookie is stored and forwarded. This
 narrows the failure to response-cookie handling; it does not prove which relay
 or browser component removes/rejects Set-Cookie. Grafana itself returns a
 successful login and issues a cookie over the direct connection. Its provisioned
-dashboard/datasource API checks passed. Browser dashboard access remains pending.
+dashboard/datasource API checks passed. The replacement Azure HTTPS route now
+passed GRAFANA_HTTPS_OK: trusted certificate, HTTP redirect, Secure HttpOnly cookie
+login, unauthenticated dashboard denial, twelve panels, datasource up1 and
+diagnostic session logout. Actual browser chart rendering remains pending.
 
 The user chose an Azure-provided hostname and Cloud Shell-only administration.
 No local Azure CLI login/account connection is required.
@@ -21,9 +24,9 @@ learning-lab endpoint, not production SSO, a WAF, HA or a completed security aud
 The proposed reverse proxy is Caddy with automated publicly trusted certificates.
 It needs public DNS and reachable HTTP80/HTTPS443 for certificate validation and
 renewal. HTTP is for ACME/HTTPS redirection, not plaintext credential submission.
-Certificate state must persist on a separate volume. No certificate issuance,
-renewal or browser access has been verified yet. Gateway manifests and the
-Cloud Shell deployment/HTTPS session checks are now prepared.
+Certificate state persists on a separate volume. Initial deployment and trusted
+HTTPS session checks passed. Certificate renewal, disk recovery and browser
+chart rendering have not been verified yet.
 
 Before any listener is published, replace the exposed Grafana password in its
 persisted database, revoke existing Grafana sessions, synchronize the bootstrap
@@ -209,8 +212,9 @@ that copy for validation. The gateway runs the same copy from a read-only
 mount. Reinitialization removes only that temporary binary before recreating it.
 The new file has no inherited file capability. No root, privilege escalation or
 additional capability is granted; only high ports are bound inside the pod.
-Pull the fix and rerun deploy. Existing PVCs/Secret are retained. Actual corrected
-Linux startup, public-IP attachment and ACME issuance still need user-run proof.
+The subsequent GRAFANA_HTTPS_GATEWAY_DEPLOYED confirmed corrected Linux startup
+and attachment to20.124.118.213. GRAFANA_HTTPS_OK then confirmed trusted HTTPS and
+cookie authentication. Existing PVCs/Secret were retained by the helper.
 
 ## Verify trusted HTTPS and the session cookie
 
@@ -231,9 +235,12 @@ redirect and a Secure HttpOnly grafana_session cookie, and uses that cookie
 (not Basic auth) to read the current administrator and verify all twelve
 provisioned panels, datasource health and the real Prometheus up query. It logs
 out only its diagnostic session in finally and requires the subsequent /api/user
-request to return401. No password/header/cookie values are printed. Expected
-GRAFANA_HTTPS_OK is still pending user-run evidence; a passing result proves an
-HTTP cookie session, while actual browser chart rendering is a separate check.
+request to return401. No password/header/cookie values are printed. The actual
+user-run GRAFANA_HTTPS_OK confirmed certificate_verified, http_redirect_verified,
+cookie_session_authenticated, session_cookie_secure_httponly,
+unauthenticated_dashboard_denied and diagnostic_session_logged_out all true,
+panel_count12 and datasource_up1. Notification delivery remains unconfigured.
+This proves an HTTP cookie session; actual browser rendering is a separate check.
 
 After GRAFANA_HTTPS_OK, open the returned https URL in a normal browser tab and
 select Dashboards -> trafficXX -> trafficXX | Operations. Use the updated
