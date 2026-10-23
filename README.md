@@ -225,8 +225,9 @@ Next:
    attempts per pod; highest sampled pool size three/configured maximum four.
    This supports reuse for that workload, not a sustained-load SLO. Other services still connect
    directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
-   is prepared with per-pod discovery and a separate eight-panel dashboard;
-   its new image build, rollout and live verification remain pending.
+   passed after ca8 build/deployment: two healthy discovered targets with fresh
+   stored samples and an eight-panel dashboard verified through its datasource.
+   Browser rendering of this new dashboard remains pending.
    Verify sustained token renewal across an actual expiry boundary; repeated
    short-lived successful requests do not prove this behavior over time.
 3. Configure and test the remaining worker identities' SQL permissions before

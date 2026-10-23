@@ -109,6 +109,8 @@ notification routing and native Azure queue metrics remain separate integrations
 
 The [Browse pool monitoring guide](browse-pool-monitoring.md) adds a separate
 DNS-discovered job for each Ready Browse pod and a new Grafana dashboard.
-Implementation is prepared; its Browse image, monitoring update and stored-sample
-verification remain pending. The original Operations scrape evidence above does
-not establish the new job's health.
+The ca8 Browse image/deployment and monitoring update passed. Separate
+BROWSE_PROMETHEUS_OK evidence confirmed two healthy targets matched to serving
+pod IPs, each with two stored samples and valid pool statistics. The new Grafana
+dashboard API check also passed; browser rendering remains pending. The original
+Operations scrape evidence above is separate from this new job's proof.

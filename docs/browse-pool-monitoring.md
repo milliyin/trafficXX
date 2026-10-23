@@ -1,8 +1,41 @@
 # Browse pool metrics and Grafana
 
-Status: implemented and tested locally; new Browse image build/rollout,
-Prometheus scrape proof, dashboard API verification and browser rendering are
-pending. The ca7 pool/concurrency milestone remains verified separately.
+Status: ca8 image build, deployed Browse demo HTTP, monitoring configuration,
+Prometheus stored-sample proof and Grafana dashboard API verification passed.
+Browser rendering of this new dashboard remains pending. The ca7 bounded
+pool/concurrency milestone is separate evidence.
+
+## Verified Azure checkpoint
+
+User-run ACR ca8 succeeded after37seconds, tag browse-20261023154334-7633:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:f09d49ce8044461be8dbde85835888fec67a5ca5a2d848b20ed422da211c1e51
+```
+
+Its reported Python base matches ca7. After the deployment instructions, the
+user supplied BROWSE_DEMO_HTTP_OK: alive/ready, two events and100available units
+per demo event. Monitoring configuration then created the headless Service,
+updated the collector ConfigMap, successfully rolled out Prometheus and updated
+the two-dashboard ConfigMap. This rollout passed the configured promtool init;
+no separate validation log was supplied.
+
+BROWSE_PROMETHEUS_OK correlated two healthy targets with serving pod IPs:
+
+| Target | Stored scrapes | Freshness seconds | Slots / limit | Available | Waiting | Borrows / attempts |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10.244.3.23:8000 | 2 | 8.545 | 2 / 4 | 2 | 0 | 11 / 2 |
+| 10.244.3.246:8000 | 2 | 7.191 | 1 / 4 | 1 | 0 | 6 / 1 |
+
+Both targets reported zero borrow errors, connection errors, lost connections
+and bad returns at this checkpoint. These are process-local counters, not a
+long-duration performance or renewal result.
+
+GRAFANA_BROWSE_POOL_OK confirmed the provisioned eight-panel dashboard, existing
+datasource, two targets and stored samples through its proxy. Original Operations
+dashboard verification passed too; unauthenticated dashboard access was denied.
+External notification delivery remains unconfigured. Browser chart rendering,
+certificate renewal and persistence/restart recovery were not tested here.
 
 ## What is measured
 
@@ -122,5 +155,6 @@ requirements. All360offline methods pass. Actual pinned-library/FastAPI smoke
 checks passed /metrics output with no pool borrowing. Bash syntax, YAML/JSON
 structure and a mocked config-only deployment passed. The real SQL HTTP test was
 extended with no-borrow metrics assertions; Docker remains stopped and hosted
-CI is unchecked. The collector's real promtool startup check and all live new
-metrics/dashboard results remain pending.
+CI is unchecked. The subsequent live stored-sample and dashboard API checks
+passed as recorded above; browser rendering and sustained-load/renewal results
+remain pending.
