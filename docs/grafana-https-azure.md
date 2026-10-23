@@ -8,7 +8,15 @@ successful login and issues a cookie over the direct connection. Its provisioned
 dashboard/datasource API checks passed. The replacement Azure HTTPS route now
 passed GRAFANA_HTTPS_OK: trusted certificate, HTTP redirect, Secure HttpOnly cookie
 login, unauthenticated dashboard denial, twelve panels, datasource up1 and
-diagnostic session logout. Actual browser chart rendering remains pending.
+diagnostic session logout. The user subsequently confirmed successful browser
+login and supplied screenshots of all twelve panels rendering with data. The
+visible snapshot has scrape up1, zero outbox/processing backlog and active
+warnings, fresh consumer/publisher heartbeats, processed history18, historical
+dead-letter audits1 and publication failures2. These historical counters are not
+current native queue/DLQ counts. The screenshots do not prove future availability
+or notification delivery. An IDE-attached credential selection was exposed
+again; the user explicitly declined additional rotation. No further password
+change was performed or authorized after that instruction.
 
 The user chose an Azure-provided hostname and Cloud Shell-only administration.
 No local Azure CLI login/account connection is required.
@@ -25,8 +33,8 @@ The proposed reverse proxy is Caddy with automated publicly trusted certificates
 It needs public DNS and reachable HTTP80/HTTPS443 for certificate validation and
 renewal. HTTP is for ACME/HTTPS redirection, not plaintext credential submission.
 Certificate state persists on a separate volume. Initial deployment and trusted
-HTTPS session checks passed. Certificate renewal, disk recovery and browser
-chart rendering have not been verified yet.
+HTTPS session checks passed. Certificate renewal and disk recovery have not
+been verified yet. Browser rendering is now confirmed.
 
 Before any listener is published, replace the exposed Grafana password in its
 persisted database, revoke existing Grafana sessions, synchronize the bootstrap
@@ -240,7 +248,8 @@ user-run GRAFANA_HTTPS_OK confirmed certificate_verified, http_redirect_verified
 cookie_session_authenticated, session_cookie_secure_httponly,
 unauthenticated_dashboard_denied and diagnostic_session_logged_out all true,
 panel_count12 and datasource_up1. Notification delivery remains unconfigured.
-This proves an HTTP cookie session; actual browser rendering is a separate check.
+This proves an HTTP cookie session; the subsequent user screenshots separately
+confirmed browser rendering.
 
 After GRAFANA_HTTPS_OK, open the returned https URL in a normal browser tab and
 select Dashboards -> trafficXX -> trafficXX | Operations. Use the updated
