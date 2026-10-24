@@ -42,7 +42,7 @@ spec:
           sizeLimit: 64Mi
       containers:
       - name: booking
-        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:d00af2abd005f9c73157b8db532fbc45ea1bb51b68bdb2b8cee71fa00afad9e3
+        image: trafficxxacre8708a85.azurecr.io/trafficxx@sha256:c94884448905a0e94f2e4b8502ed120767f8cf46a2aa2f8747862ad5f6a663f0
         imagePullPolicy: IfNotPresent
         command:
         - uvicorn

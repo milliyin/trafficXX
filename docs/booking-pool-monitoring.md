@@ -1,10 +1,23 @@
 # Booking pool metrics and Grafana
 
-Status: source and local validation are prepared. The new Booking image build,
+Status: source/local validation and Booking image build caa passed. The new
 rollout, live Prometheus stored-sample check, Grafana API check and browser
 rendering remain pending. The preceding ca9 pool/functional milestone passed;
 see [Booking pooling](booking-database-pooling.md). The existing Browse renewal
 Job continues on its original image and run, without restart or source changes.
+
+## Verified image build
+
+User-run ACR caa succeeded after35seconds, tag booking-20261024093201-5112:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:c94884448905a0e94f2e4b8502ed120767f8cf46a2aa2f8747862ad5f6a663f0
+```
+
+The reported Python base digest matches ca9. The helper saved the immutable
+reference to booking-image.txt in Cloud Shell; the committed Booking manifest
+now pins this reviewed image too. Build success is not rollout, metrics scrape,
+dashboard or hosted CI proof. Those live checks remain pending.
 
 ## Measurements and limits
 
