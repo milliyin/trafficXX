@@ -108,7 +108,7 @@ def metrics():
     return json.loads(base.kube('get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'))
 
 
-def validate(outcome, run_id, users=50):
+def validate(outcome, run_id, users=50, warm_pool=False):
     require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
     require(outcome.get('result') == 'BROWSE_USERS_WORKLOAD_OK' and outcome.get('run_id') == run_id
             and outcome.get('users') == users and outcome.get('users_with_requests') == users
@@ -123,6 +123,13 @@ def validate(outcome, run_id, users=50):
             and 60 <= outcome.get('elapsed_seconds', 0) <= 75
             and 1 <= outcome.get('sampled_peak_workload_http_in_flight', 0) <= users,
             'INCOMPLETE_WORKLOAD_EVIDENCE')
+    if warm_pool:
+        require(outcome.get('warm_pool_verified') is True, 'WARM_POOL_NOT_VERIFIED')
+        initial = outcome.get('initial_pools', {})
+        require(len(initial) == 2 and set(initial) == {row['pod'] for row in outcome.get('pools', [])}
+                and all(row['statistics']['pool_min'] == 4
+                and row['statistics']['pool_max'] == 4 and row['statistics']['pool_size'] == 4
+                for row in initial.values()), 'WARM_POOL_NOT_VERIFIED')
     values = [outcome['latency_ms'][name] for name in ('p50', 'p95', 'p99', 'max')]
     require(all(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
                 for value in values) and values == sorted(values), 'INVALID_LATENCY_SUMMARY')
@@ -150,10 +157,13 @@ def release_gate(pod, run_id, job_name=JOB):
               + json.dumps(run_id) + "); p.replace('/state/start')")
 
 
-def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
+def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False):
     require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
     require(not diagnostic_retry or users == 100, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
-    job_name = ('browse-users-100-diagnostic' if diagnostic_retry else
+    require(not warm_pool or users == 100, 'WARM_POOL_REQUIRES_100_USERS')
+    require(not (warm_pool and diagnostic_retry), 'SELECT_ONE_COMPARISON')
+    job_name = ('browse-users-100-warm' if warm_pool else
+                'browse-users-100-diagnostic' if diagnostic_retry else
                 JOB if users == 50 else 'browse-users-100')
     stage, job, files_name = 'subscription', None, None
     create_requested = False
@@ -195,6 +205,10 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
                 'GENERATOR_GATE_EXEC_NOT_ALLOWED')
         app = json.loads(base.kube('get', 'deployment', 'browse', '-n', 'trafficxx', '-o', 'json'))
         container = next(row for row in app['spec']['template']['spec']['containers'] if row['name'] == 'browse')
+        if warm_pool:
+            policy = {row['name']: row.get('value') for row in container.get('env', [])}
+            require(policy.get('BROWSE_DB_POOL_MIN') == '4' and policy.get('BROWSE_DB_POOL_MAX') == '4',
+                    'DEPLOY_WARM_BROWSE_POOL_FIRST')
         limits = container['resources']['limits']
         require(quantity(limits['cpu'], 'cpu') == .5 and quantity(limits['memory'], 'memory') == 256,
                 'REVIEW_BROWSE_RESOURCE_LIMITS')
@@ -218,7 +232,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
         base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
         with tempfile.TemporaryDirectory(prefix='trafficxx-browse-users-') as folder:
             path = Path(folder) / 'targets.json'
-            path.write_text(json.dumps({'run_id': run_id, 'users': users, 'targets': {
+            path.write_text(json.dumps({'run_id': run_id, 'users': users, 'require_warm_pool': warm_pool, 'targets': {
                 api: row['pods'] for api, row in before.items()}}))
             manifest = base.kube('create', 'configmap', files_name, '-n', 'trafficxx',
                                  '--from-file=probe.py=' + str(ROOT / 'scripts/check-browse-users.py'),
@@ -242,7 +256,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
                           'users': users, 'duration_seconds': 60, 'think_seconds': 2,
                           'max_workload_attempts': users * 30, 'runtime_image': reference,
                           'generator_node': generator_node,
-                          'diagnostic_retry': diagnostic_retry,
+                          'diagnostic_retry': diagnostic_retry, 'warm_pool_comparison': warm_pool,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'generator_metrics_warmup_seconds': GENERATOR_METRICS_WARMUP,
                           'inventory_writes': False,
@@ -298,7 +312,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
         require(bool(logs.splitlines()), 'WORKLOAD_LOGS_MISSING')
         outcome = json.loads(logs.splitlines()[-1])
         require(gate_released, 'RESOURCE_GATE_NOT_RELEASED')
-        validate(outcome, run_id, users)
+        validate(outcome, run_id, users, warm_pool)
         require(generator is not None and set(watch.rows) == set(expected) | {generator}
                 and all(len(row['timestamps']) >= 2 for row in watch.rows.values()),
                 'INSUFFICIENT_DISTINCT_RESOURCE_SAMPLES')
@@ -309,6 +323,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
         print(json.dumps({'result': 'BROWSE_USERS_' + str(users) + '_OK', 'run_id': run_id, 'job': job_name,
                           'resources': watch.summary(), 'serving_pods_unchanged': True,
                           'resource_gate_released': True,
+                          'warm_pool_comparison': warm_pool,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'inventory_writes': False, 'latency_slo_tested': False,
                           'note': 'Review results before preparing any higher stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
@@ -355,8 +370,12 @@ if __name__ == '__main__':
     parser.add_argument('--users', type=int, choices=(50, 100), default=50)
     parser.add_argument('--diagnostic-retry', action='store_true',
                         help='Use the separate 100-user diagnostic Job; no automatic retries.')
+    parser.add_argument('--warm-pool-comparison', action='store_true',
+                        help='Require deployed Browse minimum/maximum four; separate 100-user Job.')
     args = parser.parse_args()
+    if args.warm_pool_comparison and (args.users != 100 or args.diagnostic_retry):
+        parser.error('--warm-pool-comparison requires --users 100 and excludes --diagnostic-retry')
     if args.diagnostic_retry and args.users != 100:
         parser.error('--diagnostic-retry requires --users 100')
     raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users,
-                             diagnostic_retry=args.diagnostic_retry))
+                             diagnostic_retry=args.diagnostic_retry, warm_pool=args.warm_pool_comparison))

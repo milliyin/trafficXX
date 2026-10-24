@@ -307,6 +307,9 @@ Next:
    The diagnostic retry stopped on two DATABASE_BUSY responses while both pools
    grew from one to four connections; startup queue pressure is the leading
    hypothesis. A warm-pool comparison is proposed; 100 users have not passed.
+   Recovery is confirmed. A warm-pool comparison is prepared: Browse minimum
+   four, maximum four, with startup fill verification. It requires a new Browse
+   image/rollout before --users 100 --warm-pool-comparison; live result pending.
    Higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

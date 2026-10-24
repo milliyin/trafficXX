@@ -23,9 +23,10 @@ def pool_parameters():
 
 
 class DatabasePool:
-    def __init__(self, name, size_variable):
+    def __init__(self, name, size_variable, minimum_variable=None):
         self.name = name
         self.size_variable = size_variable
+        self.minimum_variable = minimum_variable
         self.pool = None
         self.instance_id = uuid4().hex
 
@@ -44,21 +45,24 @@ class DatabasePool:
             raise RuntimeError('Database pool already open')
         try:
             maximum = int(os.environ.get(self.size_variable, '4'))
-            if not 1 <= maximum <= 8:
+            minimum = int(os.environ.get(self.minimum_variable, '1')) if self.minimum_variable else 1
+            if not 1 <= minimum <= maximum <= 8:
                 raise ValueError
         except ValueError:
-            raise ValueError(self.size_variable + ' must be an integer from 1 to 8') from None
+            raise ValueError('Pool bounds must be integers with 1 <= minimum <= maximum <= 8') from None
         # Callable kwargs run on EVERY physical connection attempt, not once at
         # startup. No token/password is frozen in the pool configuration.
         pool = ConnectionPool(
             conninfo=pool_conninfo, kwargs=pool_parameters,
-            min_size=1, max_size=maximum,
+            min_size=minimum, max_size=maximum,
             timeout=3, max_waiting=8, max_lifetime=1800, max_idle=60,
             check=ConnectionPool.check_connection, open=False,
             name=self.name, num_workers=2,
         )
         try:
             pool.open(wait=False)
+            if minimum > 1:
+                pool.wait(timeout=30)
         except BaseException:
             pool.close()
             raise

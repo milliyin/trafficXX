@@ -14,6 +14,8 @@ def run(database_type=BrowseDatabase, size_variable='BROWSE_DB_POOL_MAX',
     # Only this temporary check process uses one slot, making reuse and capacity
     # observable without borrowing or disrupting the serving Browse pods' pool.
     os.environ[size_variable] = '1'
+    if size_variable == 'BROWSE_DB_POOL_MAX':
+        os.environ['BROWSE_DB_POOL_MIN'] = '1'
     database = database_type()
     database.open()
     try:

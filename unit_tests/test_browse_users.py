@@ -81,6 +81,25 @@ class BrowseUsers(unittest.TestCase):
         with self.assertRaises(fixtures.probe.CheckFailed):
             probe.run(fixtures.config(), http, service, users=100)
 
+    def test_warm_comparison_rejects_cold_baseline_and_accepts_full_existing_pool(self):
+        config = dict(fixtures.config(), users=100, require_warm_pool=True)
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'WARM_POOL_NOT_READY'):
+            probe.run(config, fixtures.Http(), Mock())
+        class Warm(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, body = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    body['statistics'].update(pool_min=4, pool_size=4, pool_available=4)
+                return status, body
+        http = Warm()
+        def service(url, customer):
+            return http(config['targets']['browse'][0], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=.4, think=.02)
+        self.assertTrue(result['warm_pool_verified'])
+        self.assertEqual(result['users_with_requests'], 100)
+        self.assertEqual(len(result['initial_pools']), 2)
+
     def test_unexpected_http_response_stops_without_printing_response_body(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(fixtures.probe.CheckFailed):
@@ -229,9 +248,10 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False):
         commands, polls = [], [0]
-        job_name = ('browse-users-100-diagnostic' if diagnostic_retry else
+        job_name = ('browse-users-100-warm' if warm_pool else
+                    'browse-users-100-diagnostic' if diagnostic_retry else
                     runner.JOB if users == 50 else 'browse-users-100')
         generator = job_name + '-pod'
         now = datetime.now(timezone.utc).isoformat()
@@ -273,10 +293,12 @@ class BrowseUsersRunner(unittest.TestCase):
                                    'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}})
             if args[:2] == ('get', 'deployment'):
                 return json.dumps({'spec': {'template': {'spec': {'containers': [
-                    {'name': 'browse', 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
+                    {'name': 'browse', 'env': ([{'name': 'BROWSE_DB_POOL_MIN', 'value': '4'},
+                        {'name': 'BROWSE_DB_POOL_MAX', 'value': '4'}] if warm_pool and fault != 'cold-policy' else []), 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
             if args[:2] == ('create', 'configmap'):
                 source = next(arg.split('=', 2)[2] for arg in args if arg.startswith('--from-file=targets.json='))
                 self.assertEqual(json.loads(Path(source).read_text())['users'], users)
+                self.assertEqual(json.loads(Path(source).read_text())['require_warm_pool'], warm_pool)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -313,7 +335,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'validate', side_effect=ValueError('INCOMPLETE') if fault == 'invalid' else None), \
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
-            result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry)
+            result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -355,6 +377,18 @@ class BrowseUsersRunner(unittest.TestCase):
         self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
         with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS'):
             runner.execute(users=50, diagnostic_retry=True)
+
+    def test_warm_comparison_requires_deployed_policy_and_separate_owned_job(self):
+        code, output, commands = self.scenario(users=100, warm_pool=True)
+        self.assertEqual(code, 0)
+        self.assertIn('"job": "browse-users-100-warm"', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-warm-pod' in args for args in commands))
+        code, output, commands = self.scenario('cold-policy', users=100, warm_pool=True)
+        self.assertEqual(code, 1)
+        self.assertIn('DEPLOY_WARM_BROWSE_POOL_FIRST', output)
+        self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
+        with self.assertRaisesRegex(ValueError, 'SELECT_ONE_COMPARISON'):
+            runner.execute(users=100, warm_pool=True, diagnostic_retry=True)
 
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
@@ -401,6 +435,15 @@ class BrowseUsersRunner(unittest.TestCase):
                        valid_responses=3000, status_counts={'200': 3000},
                        sampled_peak_workload_http_in_flight=100)
         runner.validate(hundred, 'abcdef123456', 100)
+        with self.assertRaisesRegex(ValueError, 'WARM_POOL_NOT_VERIFIED'):
+            runner.validate(hundred, 'abcdef123456', 100, True)
+        warm = dict(hundred, warm_pool_verified=True, initial_pools={name: {
+                    'statistics': {'pool_min': 4, 'pool_max': 4, 'pool_size': 4}}
+                    for name in ('browse-a', 'browse-b')})
+        runner.validate(warm, 'abcdef123456', 100, True)
+        warm['initial_pools']['browse-a']['statistics']['pool_min'] = 1
+        with self.assertRaisesRegex(ValueError, 'WARM_POOL_NOT_VERIFIED'):
+            runner.validate(warm, 'abcdef123456', 100, True)
         for changed in (dict(hundred, attempts=3001), dict(hundred, users_with_requests=99),
                         dict(hundred, users=50), dict(hundred, sampled_peak_workload_http_in_flight=101)):
             with self.assertRaises(ValueError):

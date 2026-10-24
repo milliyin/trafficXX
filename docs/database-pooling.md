@@ -161,3 +161,22 @@ statistics. They were not run locally because Docker remains
 stopped. Their hosted CI result remains unchecked. The separate Azure probe and
 Browse HTTP and bounded serving-pod checks above passed; sustained-load and
 token-expiry experiments remain pending.
+
+
+## Prepared warm Browse floor after 100-user diagnostics
+
+The [user-load record](browse-user-load.md) now includes a successful paced
+50-user read test and two early 100-user stops. The diagnostic retry captured
+DATABASE_BUSY while serving pools grew from one to four. Recovery checks passed.
+The proposed cause is startup queue pressure, rather than a proved sustained
+capacity ceiling.
+
+The next prepared Browse deployment sets BROWSE_DB_POOL_MIN=4 and leaves
+BROWSE_DB_POOL_MAX=4. The minimum defaults to one when unspecified. For a minimum
+above one, startup waits up to 30 seconds for the pool to fill; a failed wait
+closes it and fails startup. Booking's floor stays one. The isolated SQL probe
+keeps its own minimum/maximum one. Both serving-pod read diagnostics accept the
+reviewed Browse floors one or four; the explicit warm-load comparison requires
+actual minimum/size four in both pods. No higher pool ceiling or waiting-queue
+limit is added. This source policy needs a new Browse image and rollout before
+its separate live comparison; it is not yet a verified performance improvement.

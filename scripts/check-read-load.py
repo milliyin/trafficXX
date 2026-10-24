@@ -72,7 +72,8 @@ def pool_snapshot(target, customer, http):
     keys = ('pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
             'requests_num', 'connections_num', *ERROR_KEYS)
     require(all(type(values.get(key)) is int and values[key] >= 0 for key in keys), 'INVALID_POOL_COUNTER')
-    require(values['pool_min'] == 1 and values['pool_max'] == 4
+    require(values['pool_min'] in ((1, 4) if target['api'] == 'browse' else (1,))
+            and values['pool_max'] == 4
             and 1 <= values['pool_size'] <= 4 and values['pool_available'] <= values['pool_size']
             and values['requests_waiting'] <= 8, 'POOL_BOUNDS_CHANGED')
     return row

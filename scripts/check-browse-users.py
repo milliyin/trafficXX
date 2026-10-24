@@ -76,6 +76,9 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             status, body = http(target, '/events/demo-' + route + '/availability', customer)
             read.validate_response('browse', route, status, body)
     initial = {target['pod']: read.pool_snapshot(target, customer, http) for target in targets}
+    if config.get('require_warm_pool'):
+        read.require(all(row['statistics']['pool_min'] == 4 and row['statistics']['pool_size'] == 4
+                         for row in initial.values()), 'WARM_POOL_NOT_READY')
     peaks = {target['pod']: {'size': initial[target['pod']]['statistics']['pool_size'],
                              'waiting': initial[target['pod']]['statistics']['requests_waiting']}
              for target in targets}
@@ -205,6 +208,8 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     return {'result': 'BROWSE_USERS_WORKLOAD_OK', 'run_id': config['run_id'], **summary,
             'pools': pools, 'inventory_writes': False, 'availability_before_and_after': 100,
             'pool_processes_unchanged': True, 'latency_slo_tested': False,
+            'warm_pool_verified': bool(config.get('require_warm_pool')),
+            'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
 

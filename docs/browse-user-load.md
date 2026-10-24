@@ -493,3 +493,71 @@ browse-users-05ba94b69327-files. Confirm terminal diagnostic Job status and fres
 demo/Operations health before a deployment or new experiment. Pre-run checks
 were healthy (inventory 100 each, processed total 72, no backlog/alerts); fresh
 post-retry health has not yet been supplied. The renewal Job is unchanged.
+
+
+## Recovery confirmed; warm-pool comparison prepared
+
+The user confirmed browse-users-100-diagnostic Failed (4m5s). Fresh demo checks
+reported alive/ready, two events and availability 100 each. Operations remained
+healthy: processed 72, pending/outstanding work zero, no active alerts or worker
+errors; historical publish failures four and dead-letter audit count one stayed
+unchanged. Heartbeats were consumer 3.302005s and publisher 0.781066s. This confirms
+the post-diagnostic recovery checkpoint; no native broker count was measured.
+
+Source now adds BROWSE_DB_POOL_MIN, default one for ordinary/local diagnostics.
+The Browse Kubernetes manifest sets minimum four and maximum four. When minimum
+exceeds one, startup waits up to 30 seconds for the initial pool to fill before
+publishing it to request handlers. Failure closes the partial pool and fails
+startup. This follows [Psycopg's startup check](https://www.psycopg.org/psycopg3/docs/advanced/pool.html#pool-startup-check).
+Booking retains minimum one. The isolated one-slot Browse probe explicitly
+sets both minimum and maximum one in its own process. The already-running
+token-renewal Job and its mounted scripts are not changed.
+
+This requires a new Browse image and rollout. Two serving Browse pods now aim
+to retain eight idle connections in total, with the same existing maximum of
+eight. The default rolling update can temporarily have three pods (up to 12
+Browse connections), in addition to Booking, workers and diagnostic connections.
+No cluster-wide connection ceiling is established by these per-process limits.
+Maximum waiting remains eight and acquisition timeout remains three seconds;
+request pacing, stop conditions, app resources and replica counts are unchanged.
+Fixed minimum does not guarantee every connection is usable at every instant:
+replacement/checking after lifetime expiry or failure still occurs.
+
+After the build/rollout and fresh health checks, select the separate comparison:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/build-browse-image.sh
+```
+
+After IMAGE_BUILD_OK:
+
+```bash
+bash scripts/deploy-browse.sh &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 100 --warm-pool-comparison
+```
+
+The new fixed Job is browse-users-100-warm. Existing failed Jobs are retained;
+active load Jobs and an existing warm comparison still block startup. The flag
+requires 100 users and cannot be combined with --diagnostic-retry. Preflight
+requires the deployed minimum/maximum environment values both four. The in-cluster
+probe additionally checks both actual serving pools report minimum four and
+size four before user traffic; this prevents an old image ignoring the new
+setting from being treated as a warm-pool test. Initial validated statistics
+are retained in the workload result, and final evidence validation checks both
+expected pods. Existing HTTP/pool failure capture remains active. One-minute
+100-user/3,000-GET caps and startup/resource gates are unchanged. Keep Cloud Shell
+open for up to seven minutes. No 250-user progression is started.
+
+All 458 offline methods passed, including warm startup wait/cleanup on timeout,
+invalid minimum bounds, unchanged Booking policy, refusal of a cold serving
+baseline, valid warm baseline, selected Job/config propagation and rejection of
+missing warm evidence. Shortened real loopback HTTP smokes exercised all 50 users
+(75 reads), all 100 users (149 reads), and a simulated warm baseline with all
+100 users (147 reads). Native isolated renders checked the new Job's unchanged
+budgets and deployment min/max four. These are local correctness checks, not
+real SQL/warm-pool performance evidence. Azure build, rollout and live comparison
+are still pending. Docker remained stopped and no local Azure login was used.

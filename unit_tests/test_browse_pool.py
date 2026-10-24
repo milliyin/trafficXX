@@ -56,9 +56,41 @@ class BrowsePool(unittest.TestCase):
         self.assertEqual((options['timeout'], options['max_lifetime']), (3, 1800))
         self.assertIs(options['check'], self.factory.check_connection)
         self.pool.open.assert_called_once_with(wait=False)
+        self.pool.wait.assert_not_called()
         self.database.close()
         self.database.close()
         self.pool.close.assert_called_once()
+
+    def test_warm_floor_waits_for_initial_connections_and_keeps_existing_ceiling(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4', 'BROWSE_DB_POOL_MIN': '4'}):
+            database.open()
+        options = self.factory.call_args.kwargs
+        self.assertEqual((options['min_size'], options['max_size'], options['max_waiting']), (4, 4, 8))
+        self.pool.wait.assert_called_once_with(timeout=30)
+        self.assertIs(database.pool, self.pool)
+
+    def test_warm_startup_timeout_closes_pool_without_admitting_requests(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN')
+        self.pool.wait.side_effect = PoolTimeout('PRIVATE')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4', 'BROWSE_DB_POOL_MIN': '4'}), \
+                self.assertRaises(PoolTimeout):
+            database.open()
+        self.pool.close.assert_called_once()
+        self.assertIsNone(database.pool)
+
+    def test_invalid_minimum_fails_before_connecting_and_booking_ignores_browse_floor(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN')
+        for minimum in ('0', '5', 'invalid', '-1'):
+            with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4', 'BROWSE_DB_POOL_MIN': minimum}), \
+                    self.assertRaises(ValueError):
+                database.open()
+        self.factory.assert_not_called()
+        booking = self.module.DatabasePool('booking', 'BOOKING_DB_POOL_MAX')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MIN': '4', 'BOOKING_DB_POOL_MAX': '4'}):
+            booking.open()
+        self.assertEqual(self.factory.call_args.kwargs['min_size'], 1)
+        self.pool.wait.assert_not_called()
 
     def test_new_connection_parameters_are_resolved_each_time(self):
         self.parameters.side_effect = [{'password': 'FIRST'}, {'password': 'NEW'}]
