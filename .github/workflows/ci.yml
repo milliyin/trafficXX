@@ -26,7 +26,7 @@ jobs:
       - name: Validate workflow and Bash scripts
         run: |
           source ci/tools.env
-          docker run --rm --mount "type=bind,source=$PWD,target=/workspace,readonly" --workdir /workspace "$ACTIONLINT_IMAGE" -color .github/workflows/ci.yml
+          docker run --rm --mount "type=bind,source=$PWD,target=/workspace,readonly" --workdir /workspace "$ACTIONLINT_IMAGE" -color .github/workflows/ci.yml .github/workflows/docs.yml
           docker run --rm --mount "type=bind,source=$PWD,target=/workspace,readonly" --workdir /workspace --entrypoint shellcheck "$ACTIONLINT_IMAGE" -x ci/test.sh ci/security.sh
       - name: Offline authentication and migration safety tests
         run: python3 -m unittest discover -s unit_tests -v

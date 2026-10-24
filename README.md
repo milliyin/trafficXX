@@ -4,7 +4,9 @@ trafficXX is a learning project for building a reliable ticket reservation backe
 and operating it on Azure. We build in small steps, test failures, and record what
 we learn in [memeory.md](memeory.md).
 
-## Verified progress - updated 2026-10-23
+[Documentation website](https://milliyin.github.io/trafficXX/) | [Learning path](docs/getting-started.md) | [Latest results](docs/progress.md)
+
+## Verified progress - updated 2026-10-24
 
 | Part | Implemented and verified |
 |---|---|

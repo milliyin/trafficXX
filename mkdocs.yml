@@ -1,0 +1,117 @@
+site_name: trafficXX Docs
+site_description: Building, testing, and operating a ticket reservation backend on Azure.
+site_url: https://milliyin.github.io/trafficXX/
+repo_url: https://github.com/milliyin/trafficXX
+repo_name: milliyin/trafficXX
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: test-results/docs-site
+strict: true
+
+theme:
+  name: material
+  language: en
+  font: false
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/milliyin/trafficXX
+      name: View the source on GitHub
+
+copyright: trafficXX - a learning project. Evidence before claims.
+
+nav:
+  - Start here:
+      - Overview: index.md
+      - Learning path: getting-started.md
+      - Verified progress: progress.md
+      - System design: architecture.md
+      - Local development: local-development.md
+      - Documentation site: documentation-site.md
+  - Azure foundation:
+      - Infrastructure setup: aks.md
+      - Private PostgreSQL: postgresql.md
+      - Workload identity: workload-identity.md
+      - Schema bootstrap: schema-bootstrap.md
+      - Demo inventory: demo-inventory.md
+  - APIs and database:
+      - Browse API: browse-api-azure.md
+      - Booking API: booking-api-azure.md
+      - Browse connection pool: database-pooling.md
+      - Booking connection pool: booking-database-pooling.md
+      - Database token renewal: database-token-renewal.md
+  - Messaging:
+      - Design and local setup: messaging.md
+      - Expiry worker: expiry-worker-azure.md
+      - Outbox publisher: publisher-azure.md
+      - Publisher connection recovery: publisher-retries.md
+      - Event consumer: consumer-azure.md
+      - Duplicate delivery: consumer-duplicate.md
+      - Consumer backlog recovery: consumer-backlog.md
+      - Invalid message handling: consumer-poison.md
+  - Observability:
+      - Operations API: operations-azure.md
+      - Prometheus: prometheus-azure.md
+      - Grafana: grafana-azure.md
+      - Grafana HTTPS: grafana-https-azure.md
+      - Browse pool dashboard: browse-pool-monitoring.md
+      - Booking pool dashboard: booking-pool-monitoring.md
+      - Browse alert rules: browse-pool-alerts.md
+      - Booking alert rules: booking-pool-alerts.md
+  - Testing and recovery:
+      - Read load baseline: read-load-baseline.md
+      - Browse user-load experiments: browse-user-load.md
+      - Booking write baseline: booking-write-baseline.md
+      - Browse concurrency: browse-concurrency.md
+      - Browse pod recovery: browse-recovery.md
+      - Booking alert recovery: booking-alert-recovery.md
+      - Continuous integration: ci.md
