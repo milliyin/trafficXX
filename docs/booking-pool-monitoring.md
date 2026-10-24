@@ -6,9 +6,10 @@ The preceding ca9 pool/functional milestone passed;
 see [Booking pooling](booking-database-pooling.md). The existing Browse renewal
 Job continues on its original image and run, without restart or source changes.
 
-The next [Booking pool alert-rule stage](booking-pool-alerts.md) is prepared and
-locally tested. Live deployment/evaluation remains pending; this does not change
-the existing eight-panel dashboard or configure external notifications.
+The subsequent [Booking pool alert-rule stage](booking-pool-alerts.md) passed
+local tests and live deployment/evaluation: five healthy inactive Booking rules,
+two targets and fresh samples, with existing Browse rules also verified healthy.
+The eight-panel dashboard is unchanged; external notifications remain unconfigured.
 
 ## Verified image build
 

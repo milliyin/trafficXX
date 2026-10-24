@@ -267,10 +267,10 @@ Next:
    and Booking missing-lookup p95 was 165.072 ms; sampled waiting peaked at 1 on
    two pods, with pool sizes below 4 and unchanged error counters. This is a
    short internal read baseline, not a latency SLO or booking-write benchmark.
-   [Booking pool alert rules](docs/booking-pool-alerts.md) are now prepared and
-   locally tested: unavailable targets, missing metrics, sustained waiting and
-   recent borrow/connection errors. Live loading/evaluation is the next step;
-   external notification delivery remains unconfigured.
+   [Booking pool alert rules](docs/booking-pool-alerts.md) passed local tests and
+   live loading/evaluation: five healthy inactive rules, two targets and fresh
+   stored samples. All five existing Browse rules also remained healthy and
+   inactive. External notification delivery remains unconfigured.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

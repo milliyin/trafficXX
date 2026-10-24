@@ -1,8 +1,23 @@
 # Booking pool alert rules
 
-Status: source and local validation passed. Live AKS loading and evaluation
-remain pending. This follows the verified Booking pool dashboard and the
+Status: source, local validation and live AKS loading/evaluation passed.
+This follows the verified Booking pool dashboard and the
 [read-only load baseline](read-load-baseline.md).
+
+## Verified live checkpoint
+
+The user supplied a successful Prometheus rollout, BOOKING_ALERT_RULES_OK and
+BROWSE_ALERT_RULES_OK. Both components had five installed rules, all healthy
+and inactive, with two healthy targets and fresh stored samples verified.
+Target/metric-absence rules had 120-second holds; waiting/borrow/connection
+rules had 60-second holds. The checker validated expressions, labels and
+evaluation freshness as well as rule completeness.
+
+Inactive means no warning condition was present at that checkpoint; the rules
+are enabled. The existing Browse rules remained healthy after the update.
+Synthetic firing/recovery passed separately; this checkpoint did not inject
+a real Booking outage or test external notification delivery. The Booking
+dashboard remains eight panels, and no new token-renewal result was supplied.
 
 ## Conditions
 
