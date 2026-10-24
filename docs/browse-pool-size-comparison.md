@@ -254,5 +254,8 @@ The original one-minute restore command continues to use its original journal.
 Do not remove either journal or reset a Job to bypass an existing-run guard.
 The longer mode accepts only the explicit 250-user, eight-connection,
 single-query configuration; it is not a general arbitrary-duration load tool.
-No live preflight, temporary rollout or workload has been supplied for this mode
-yet. The original token-renewal Job remains a separate pending verification.
+The live three-minute preflight passed: both Browse pods remained at minimum
+and maximum four connections, queue limit 16, with healthy demo and Operations
+checks. No journal was created or pool policy changed. Source CI also passed.
+The temporary rollout and three-minute workload remain pending. The original
+token-renewal Job remains a separate pending verification.

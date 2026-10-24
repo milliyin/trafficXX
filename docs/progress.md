@@ -51,7 +51,8 @@ or establish sustained production capacity.
   It restored four connections per pod, verified health and retained its
   recovery journal. The current default remains four; the pass applies to
   the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
-  is prepared, awaiting live preflight. A decision on retaining eight and
+  passed live preflight without changing pool policy; its workload is pending.
+  A decision on retaining eight and
   pod autoscaling remain later work. No 500/1,000-user test ran.
 - **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
   cached SQL and much longer client calls support investigating round-trip
