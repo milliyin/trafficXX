@@ -261,9 +261,12 @@ Next:
    five healthy inactive rules and zero pending/firing alert counts. Browser
    rendering of the two additions remains unconfirmed.
    See the [deployment steps](docs/browse-pool-alerts.md#show-pending-and-firing-alerts-in-grafana).
-   A [bounded read-only load baseline](docs/read-load-baseline.md) is prepared
-   next: two30second in-cluster phases, response percentiles and per-pod pool
-   observations. No live latency result or SLO pass has been recorded yet.
+   A [bounded read-only load baseline](docs/read-load-baseline.md) passed
+   with 600 valid read responses, no workload errors,
+   and unchanged pods/inventory. At 8 requests/s per API, Browse p95 was 203.162 ms
+   and Booking missing-lookup p95 was 165.072 ms; sampled waiting peaked at 1 on
+   two pods, with pool sizes below 4 and unchanged error counters. This is a
+   short internal read baseline, not a latency SLO or booking-write benchmark.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

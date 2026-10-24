@@ -1,9 +1,48 @@
 # Bounded read-only latency baseline
 
-Status: source and local validation are prepared. No live load run or latency
-result has been recorded. This follows the verified Browse/Booking pool and
+Status: local validation and a live two-phase baseline passed, as recorded
+below. This follows the verified Browse/Booking pool and
 dashboard milestones. The independent Browse token-renewal Job stays running
 on its original image/run.
+
+## Verified Azure baseline
+
+The user supplied READ_LOAD_WORKLOAD_OK and the final READ_LOAD_BASELINE_OK for
+run efd5650cc272 / Job read-load-baseline. Both phases ran for 30 seconds, using
+Browse image f09d49ce8044461be8dbde85835888fec67a5ca5a2d848b20ed422da211c1e51
+and Booking/runtime image c94884448905a0e94f2e4b8502ed120767f8cf46a2aa2f8747862ad5f6a663f0.
+The runner confirmed unchanged serving pods; the probe confirmed unchanged pool
+processes and demo availability of 100 before/after, with no inventory writes.
+
+| API/profile | Workers per API | Requests | Achieved requests/s | p50 ms | p95 ms | p99 ms | Maximum ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Browse availability | 1 | 60 | 2 | 174.619 | 206.066 | 246.909 | 246.909 |
+| Booking missing lookup | 1 | 60 | 2 | 140.114 | 157.462 | 173.429 | 173.429 |
+| Browse availability | 4 | 240 | 8 | 170.707 | 203.162 | 235.639 | 370.345 |
+| Booking missing lookup | 4 | 240 | 8 | 141.844 | 165.072 | 215.352 | 354.242 |
+
+All 600 workload responses were valid: 300 Browse HTTP 200 responses and 300 expected
+Booking HTTP 404 RESERVATION_NOT_FOUND responses. Browse general/seated reads
+were evenly split within each phase. There were no unexpected workload errors,
+and all four pods' pool error counters remained unchanged.
+
+At the lower rate each pod served 30 test reads with 33 pool borrows (including
+readiness). New connection-attempt deltas were 1/0 for Browse and 0/1 for Booking;
+sampled peak sizes were 2/1 and 1/2 respectively, with zero sampled waiting.
+At the higher rate each pod served 120 test reads with 123 pool borrows. Browse
+attempt deltas were 0/1 with peak sizes 2/2; Booking attempts were 2/0 with peak
+sizes 3/2. The configured maximum was 4 throughout. One Browse pod
+(browse-6775788b9b-k6fdk) and one Booking pod (booking-67b7966d6c-npkcg) each
+reported a sampled peak of one waiting borrower. Other pods' waiting peaks were 0.
+This can happen while connections are occupied or being prepared; the samples
+do not identify an exact cause or establish queue duration.
+
+For this run, four times the per-API request rate did not materially change
+Browse p95; Booking lookup p95 increased about 7.6 ms. This is an observation from
+one short controlled run, not statistical significance, a capacity limit or a
+production SLO. Higher-rate maxima exceeded 300 ms even though both p95 values
+were below it. Booking writes, public/Service/HTTPS paths, CPU-throttling causes,
+long-duration stability and token renewal were not tested by this workload.
 
 ## Workload and boundaries
 
@@ -132,5 +171,6 @@ A real local standard-library HTTP server/client smoke confirmed expected 404
 handling and redirect refusal, then stopped. Native kubectl rendered the Job
 locally using an empty isolated kubeconfig; image/ConfigMap substitutions and
 the no-identity/security/deadline settings passed inspection. Python compilation,
-manifest parsing and diff checks passed. Docker stayed stopped; hosted CI,
-actual in-cluster traffic, pool observations and latency results are pending.
+manifest parsing and diff checks passed. Docker stayed stopped. Actual
+in-cluster traffic, pool observations and latency results were supplied
+separately by the user above. Hosted CI remains unchecked.
