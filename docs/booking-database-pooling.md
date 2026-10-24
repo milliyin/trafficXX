@@ -1,7 +1,8 @@
 # Booking database pooling
 
-Status: source/local validation and Azure image build ca9 passed. Booking
-rollout, isolated SQL probe and serving-pod checks are pending.
+Status: source/local validation, Azure image build ca9, Booking rollout,
+read-only serving-pod reuse check and isolated SQL pool probe passed.
+Post-pooling reservation flow/concurrency/seat-contention checks are pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -26,7 +27,30 @@ deployment apply received no objects; rollout and probes did not run.
 Both Booking and Browse helpers now render with local JSON patch, test the
 expected container name, and reject an empty result before apply. Unchanged
 and changed digests both produce a full object. No rebuild is needed; pull the
-fix and retry the deployment/check commands below. Live retry remains pending.
+fix and retry the deployment/check commands below. The user-run retry has now
+passed rollout and both read-only checks, as recorded below.
+
+## Verified live pool checkpoint
+
+The fixed helper successfully rolled out Booking. New pods
+booking-76c99c6fbb-dwtxs and booking-76c99c6fbb-tzq9r were Ready 1/1 with zero
+restarts on the two different apps nodes. One old pod was still Terminating in
+the displayed snapshot; this does not establish node-failure resilience.
+
+BOOKING_HTTP_OK confirmed alive/ready, the expected API and customer-scoped
+missing-reservation404. The same forwarded process reported four pool borrows,
+zero new connection attempts, sampled size1 and maximum4. Reuse was supported,
+and readiness passed after the lookup's rollback. No inventory writes occurred.
+This is a bounded read-only observation of one serving pod, not both replicas
+or a load/latency SLO.
+
+The separate booking-pool-check Job completed with BOOKING_POOL_OK, identity
+trafficxx-lab-booking and TLSv1.3. Physical connection reuse, rollback reuse,
+capacity503 and closed-connection replacement all passed with its own one-slot
+pool. The "discarding closed connection" warning belongs to the deliberate
+diagnostic close. It made no inventory writes and does not prove Booking token
+renewal or serving-pod write correctness. Repeat the behavioural tests below
+before claiming the pooled booking flow and concurrency cases passed.
 
 ## What changes
 
@@ -158,6 +182,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI, Azure rollout and the new
-SQL/HTTP checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI and post-pooling write-flow/
+concurrency checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.
