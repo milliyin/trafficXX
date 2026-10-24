@@ -1,0 +1,50 @@
+groups:
+  - name: trafficxx-booking-pool
+    interval: 15s
+    rules:
+      - alert: TrafficxxBookingTargetsUnavailable
+        expr: (sum(up{job="trafficxx-booking-pool"}) or vector(0)) < 2
+        for: 2m
+        labels:
+          severity: warning
+          component: booking-pool
+          job: trafficxx-booking-pool
+        annotations:
+          summary: Fewer than two Booking scrape targets are healthy
+          description: Expected two ready Booking replicas; DNS discovery also removes unready pods.
+      - alert: TrafficxxBookingPoolMetricsMissing
+        expr: (up{job="trafficxx-booking-pool"} == 1) unless on(job, instance) trafficxx_booking_pool_size{job="trafficxx-booking-pool"}
+        for: 2m
+        labels:
+          severity: warning
+          component: booking-pool
+        annotations:
+          summary: Booking pool metrics are missing from a healthy scrape
+          description: A successful target scrape has not exposed pool size for two minutes.
+      - alert: TrafficxxBookingPoolWaiting
+        expr: trafficxx_booking_pool_waiting{job="trafficxx-booking-pool"} > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: booking-pool
+        annotations:
+          summary: Booking database pool has queued requests
+          description: A pool has had waiting borrowers for at least one minute.
+      - alert: TrafficxxBookingPoolBorrowErrors
+        expr: increase(trafficxx_booking_pool_borrow_errors_total{job="trafficxx-booking-pool"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: booking-pool
+        annotations:
+          summary: Booking database pool has recent borrow failures
+          description: A five-minute borrow-error increase has remained visible for one minute.
+      - alert: TrafficxxBookingPoolConnectionErrors
+        expr: increase(trafficxx_booking_pool_connection_errors_total{job="trafficxx-booking-pool"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: booking-pool
+        annotations:
+          summary: Booking database pool has recent connection failures
+          description: A five-minute connection-error increase has remained visible for one minute.

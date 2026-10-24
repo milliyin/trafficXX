@@ -15,6 +15,7 @@ kubectl apply -f kubernetes/monitoring/booking-metrics-service.yaml
 kubectl create configmap prometheus-config -n trafficxx-monitoring \
   --from-file=prometheus.yml=monitoring/prometheus/prometheus.yml \
   --from-file=browse-alerts.yml=monitoring/prometheus/browse-alerts.yml \
+  --from-file=booking-alerts.yml=monitoring/prometheus/booking-alerts.yml \
   --dry-run=client -o yaml | kubectl apply -f -
 # Existing collector validates the new config with promtool on startup.
 kubectl rollout restart deployment/prometheus -n trafficxx-monitoring

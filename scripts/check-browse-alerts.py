@@ -42,60 +42,72 @@ def evaluation_epoch(value):
     return evaluated.timestamp()
 
 
-def verify(get, clock=time.time):
+def rules_for(component):
+    require(component in ('browse', 'booking'), 'UNKNOWN_COMPONENT')
+    if component == 'browse':
+        return RULES
+    return {name.replace('Browse', 'Booking'):
+            (duration, expression.replace('browse', 'booking'))
+            for name, (duration, expression) in RULES.items()}
+
+
+def verify(get, clock=time.time, *, component='browse'):
+    expected = rules_for(component)
+    job = 'trafficxx-' + component + '-pool'
     payload = get('/api/v1/rules')
     require(payload.get('status') == 'success', 'RULES_API_FAILED')
-    groups = [row for row in payload['data']['groups'] if row['name'] == JOB]
+    groups = [row for row in payload['data']['groups'] if row['name'] == job]
     require(len(groups) == 1 and groups[0]['interval'] == 15, 'RULE_GROUP_MISSING_OR_WRONG_INTERVAL')
     rules = groups[0]['rules']
-    require(len(rules) == 5 and {row['name'] for row in rules} == set(RULES), 'EXPECTED_FIVE_RULES')
+    require(len(rules) == 5 and {row['name'] for row in rules} == set(expected), 'EXPECTED_FIVE_RULES')
     states = {}
     for rule in rules:
         name = rule['name']
-        duration, expression = RULES[name]
+        duration, expression = expected[name]
         require(rule['type'] == 'alerting' and rule['duration'] == duration, 'RULE_TYPE_OR_HOLD_CHANGED')
-        require(rule['labels'].get('component') == 'browse-pool'
+        require(rule['labels'].get('component') == component + '-pool'
                 and rule['labels'].get('severity') == 'warning', 'RULE_LABELS_CHANGED')
         require(rule['health'] == 'ok' and not rule.get('lastError'), 'RULE_EVALUATION_ERROR')
         require(0 <= clock() - evaluation_epoch(rule['lastEvaluation']) <= 45,
                 'RULE_EVALUATION_NOT_FRESH')
         require(canonical(get, rule['query']) == canonical(get, expression), 'INSTALLED_EXPRESSION_CHANGED')
-        require(rule['state'] == 'inactive' and not rule.get('alerts'), 'BROWSE_RULE_ACTIVE_' + name)
+        require(rule['state'] == 'inactive' and not rule.get('alerts'), component.upper() + '_RULE_ACTIVE_' + name)
         states[name] = {'state': rule['state'], 'health': rule['health'], 'hold_seconds': duration}
     spec = importlib.util.spec_from_file_location(
         'browse_monitoring', Path(__file__).with_name('check-browse-monitoring.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    samples = module.verify(get)
-    return {'result': 'BROWSE_ALERT_RULES_OK', 'rules': states, 'rule_count': 5,
+    samples = module.verify(get, component=component)
+    return {'result': component.upper() + '_ALERT_RULES_OK', 'rules': states, 'rule_count': 5,
             'target_count': samples['target_count'], 'fresh_stored_samples_verified': True,
             'notification_delivery_configured': False,
             'note': 'Loaded healthy rules; synthetic firing/recovery tested separately. No email/phone notification tested.'}
 
 
-def wait(get, sleep=time.sleep):
+def wait(get, sleep=time.sleep, *, component='browse'):
     for attempt in range(30):
         try:
-            return verify(get)
+            return verify(get, component=component)
         except (ValueError, KeyError, OSError):
             if attempt == 29:
                 raise
             sleep(5)
 
 
-def main():
+def main(*, component='browse'):
+    rules_for(component)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def get(path):
         with opener.open('http://127.0.0.1:18090' + path, timeout=15) as response:
             return json.load(response)
     try:
-        print(json.dumps(wait(get)))
+        print(json.dumps(wait(get, component=component)))
         return 0
     except Exception as error:
-        print(json.dumps({'result': 'BROWSE_ALERT_RULES_FAILED', 'error_type': type(error).__name__,
+        print(json.dumps({'result': component.upper() + '_ALERT_RULES_FAILED', 'error_type': type(error).__name__,
                           'check': str(error) if isinstance(error, CheckFailed) else None,
-                          'note': 'Inspect Prometheus config/rules and Browse metrics. Renewal Job was not modified.'}))
+                          'note': 'Inspect Prometheus config/rules and pool metrics. Renewal Job was not modified.'}))
         return 1
 
 

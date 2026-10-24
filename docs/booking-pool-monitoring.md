@@ -6,6 +6,10 @@ The preceding ca9 pool/functional milestone passed;
 see [Booking pooling](booking-database-pooling.md). The existing Browse renewal
 Job continues on its original image and run, without restart or source changes.
 
+The next [Booking pool alert-rule stage](booking-pool-alerts.md) is prepared and
+locally tested. Live deployment/evaluation remains pending; this does not change
+the existing eight-panel dashboard or configure external notifications.
+
 ## Verified image build
 
 User-run ACR caa succeeded after35seconds, tag booking-20261024093201-5112:

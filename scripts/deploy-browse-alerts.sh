@@ -12,6 +12,7 @@ kubectl rollout status deployment/prometheus -n trafficxx-monitoring --timeout=1
 kubectl create configmap prometheus-config -n trafficxx-monitoring \
   --from-file=prometheus.yml=monitoring/prometheus/prometheus.yml \
   --from-file=browse-alerts.yml=monitoring/prometheus/browse-alerts.yml \
+  --from-file=booking-alerts.yml=monitoring/prometheus/booking-alerts.yml \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/prometheus -n trafficxx-monitoring
 kubectl rollout status deployment/prometheus -n trafficxx-monitoring --timeout=600s

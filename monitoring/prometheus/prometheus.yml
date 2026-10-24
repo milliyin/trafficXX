@@ -8,6 +8,7 @@ global:
 
 rule_files:
   - /etc/prometheus/browse-alerts.yml
+  - /etc/prometheus/booking-alerts.yml
 
 scrape_configs:
   - job_name: trafficxx-operations
