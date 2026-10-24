@@ -17,7 +17,8 @@ Inactive means no warning condition was present at that checkpoint; the rules
 are enabled. The existing Browse rules remained healthy after the update.
 Synthetic firing/recovery passed separately; this checkpoint did not inject
 a real Booking outage or test external notification delivery. The Booking
-dashboard remains eight panels, and no new token-renewal result was supplied.
+dashboard at that checkpoint had eight panels; the ten-panel follow-up below
+has since passed live API verification. No new token-renewal result was supplied.
 
 ## Conditions
 
@@ -45,8 +46,8 @@ in the five-minute window even after requests recover. Waiting samples can miss
 short queues between scrapes. High pool occupancy alone does not fire a rule.
 
 These rules evaluate in Prometheus. External email/phone/chat delivery is not
-configured. A dashboard follow-up adds alert counts and history below; its
-live deployment and browser rendering remain pending. An independent
+configured. A dashboard follow-up adds alert counts and history below; live
+API verification passed and browser rendering remains unconfirmed. An independent
 monitor is needed to detect Prometheus itself being unavailable.
 
 ## Deploy from browser Cloud Shell
@@ -131,4 +132,12 @@ pending 1 and firing 0, and its history query found the pending series. All 16
 Booking panel queries executed successfully, then the process stopped. This
 was local query validation, not an AKS outage test. Bash syntax, mocked
 dashboard-only/account/context guards and diff checks passed. Docker stayed
-stopped; hosted CI and live deployment of this follow-up remain unverified.
+stopped; hosted CI remains unverified.
+
+The user subsequently supplied a completed grafana-booking-pool-check Job and
+GRAFANA_BOOKING_POOL_OK: ten panels, datasource trafficxx-prometheus, two targets
+with at least two stored samples each, pending 0 and firing 0, and five healthy
+inactive Booking rules. Operations and Browse dashboard/rule verification also
+passed, and unauthenticated dashboard access was denied. This proves live
+provisioning and datasource checks for the new panels; their browser rendering
+still needs separate confirmation. External notifications remain unconfigured.

@@ -272,8 +272,9 @@ Next:
    stored samples. All five existing Browse rules also remained healthy and
    inactive. External notification delivery remains unconfigured.
    A [Booking dashboard follow-up](docs/booking-pool-alerts.md#show-pending-and-firing-alerts-in-grafana)
-   adds pending/firing counts and history (ten panels total) in source; local
-   query tests passed, with live deployment/browser confirmation pending.
+   adds pending/firing counts and history (ten panels total). Live API checks
+   passed with two targets, five healthy inactive rules and zero active counts;
+   browser confirmation of the additions remains pending.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

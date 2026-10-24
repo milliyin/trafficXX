@@ -11,8 +11,9 @@ local tests and live deployment/evaluation: five healthy inactive Booking rules,
 two targets and fresh samples, with existing Browse rules also verified healthy.
 External notifications remain unconfigured. A subsequent
 [dashboard-only update](booking-pool-alerts.md#show-pending-and-firing-alerts-in-grafana)
-adds two alert panels in source (ten total); deployment and browser proof of
-those additions remain pending.
+adds two alert panels (ten total). Live API verification passed: two targets,
+fresh stored samples, five healthy inactive rules and zero pending/firing counts.
+Browser rendering of those additions remains unconfirmed.
 
 ## Verified image build
 
