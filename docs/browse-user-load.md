@@ -691,3 +691,81 @@ Before further tuning, the useful next preparation is per-exception pool
 rejection metrics (queue-full versus timeout/closed), alongside a review of the
 load generator's observed memory overhead. Another identical retry alone would
 not resolve those diagnostic gaps. The original renewal Job stays unchanged.
+
+
+## Prepared per-exception rejection and generator-memory diagnostics
+
+Following the recovered warm-run checkpoint, the user authorized better
+observability before further tuning. Source now counts caught pool rejection
+exceptions separately, under a lock, in process-local monotonic counters:
+
+| Statistics field | Caught exception | Browse Prometheus metric |
+| --- | --- | --- |
+| rejections_queue_full | TooManyRequests | trafficxx_browse_pool_queue_full_total |
+| rejections_timeout | PoolTimeout | trafficxx_browse_pool_acquire_timeouts_total |
+| rejections_closed | PoolClosed | trafficxx_browse_pool_closed_rejections_total |
+
+The public HTTP response remains 503 / DATABASE_BUSY. No raw exception text,
+connection parameters, SQL or response payloads are added. Statistics reads
+remain nondestructive and borrow no SQL connection. Counters reset on process
+replacement and are compared only with the same process ID. The shared renderer
+also supports Booking prefixes in future images, but no Booking rollout is
+performed by this work. Current Prometheus scrape configuration will collect
+additional Browse series after deployment; the existing stored-sample checker
+still covers its original metrics and does not separately prove these new
+series. No dashboard panel, alert rule or external notification is added.
+
+The generator already bounds receipt storage to 30 attempts per user (at most
+3,000 records at 100 users). That review does not identify a memory leak or
+attribute the observed 227 MiB to Python objects, native allocations or thread
+stacks. It uses 100 user threads plus its observer. Instead of changing the
+resource limit or concurrency, the probe now samples its own Linux
+/proc/self/status before the workload, during observer iterations (roughly one
+second apart), and after in-flight work ends. It reports numeric process RSS,
+thread counts and sampled maxima in generator_memory on success and failure.
+Process RSS differs from container/cgroup memory, includes resident thread
+stacks, and can miss peaks between samples. Unsupported/unavailable readings are
+null; Kubernetes resource gates remain required. No extra load thread or
+unbounded memory profile is added, and no memory reduction is claimed.
+
+A separate explicit mode retains the existing warm policy and adds the new
+counter requirement:
+
+```bash
+python3 scripts/run-browse-users.py --users 100 --warm-pool-comparison --rejection-diagnostics
+```
+
+It creates fixed Job browse-users-100-rejections, preserving all previous failed
+Jobs. The flag requires the warm 100-user comparison. Active-load/existing-Job
+checks, ownership-scoped gate/stop, unchanged serving snapshots and final evidence
+checks remain. The actual initial pool statistics must contain all three numeric
+rejection counters or the probe fails before offering user traffic. Failure
+snapshots/deltas include these counters; increases also trip the existing
+pool-error stop. Final success requires verified initial counter evidence.
+All pool/resource/wait/timeout/request-count/pacing limits remain unchanged.
+
+This needs another Browse image because the serving process owns the counters:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/build-browse-image.sh
+```
+
+After IMAGE_BUILD_OK, deploy and check fresh health. Following a rollout, wait
+for both new pods to have resource metrics before launching the diagnostic.
+A missing baseline metric still fails before Job creation; do not bypass it.
+The original renewal Job and its mounted scripts stay untouched. Do not start a
+higher user stage based on this preparation.
+
+Local validation: all 464 offline methods passed, including separate rejection
+types with unchanged HTTP codes, 100 concurrent increments without loss,
+numeric-only metric rendering, Linux memory parsing/missing sources, per-type
+failure deltas, new-counter presence guards and separate diagnostic Job/config
+selection. Shortened real loopback HTTP checks exercised 50 users (75 reads),
+100 users (148 reads) and warm/counter-enabled 100 users (149 reads). All passed,
+and the local server stopped. Native kubectl with an isolated empty kubeconfig
+rendered the new Job with unchanged resource/security settings. These are local
+correctness checks, not SQL performance or a live memory verdict. The new image
+build, rollout, stored rejection-series checks and live diagnostic are pending.
+Docker stayed stopped and no local Azure connection was used.

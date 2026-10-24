@@ -190,3 +190,13 @@ This rules out startup growth as a complete explanation for the remaining
 rejections; bounded queue saturation is a leading inference, not an exact
 exception diagnosis. The 100-user stage remains failed. See the load record for
 pool counter deltas, generator memory observations and required recovery checks.
+
+
+Prepared follow-up source adds process-local, lock-protected rejection counters
+for TooManyRequests, PoolTimeout and PoolClosed while keeping public 503 responses
+unchanged. They are exposed as numeric statistics and Prometheus counters. The
+[explicit rejection diagnostic](browse-user-load.md) requires the new serving
+fields before user traffic and captures same-process deltas. It also measures
+the generator's sampled Linux RSS/thread count to investigate its memory use.
+No connection/queue/resource limits or request pacing changed. This requires a
+new Browse image/rollout and has no live diagnostic result yet.

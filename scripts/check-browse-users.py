@@ -38,7 +38,8 @@ POOL_KEYS = ('pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_wa
 
 def safe_pool(row):
     return {'instance_id': row['instance_id'],
-            'statistics': {key: row['statistics'][key] for key in POOL_KEYS}}
+            'statistics': {key: row['statistics'][key] for key in (*POOL_KEYS, *read.REJECTION_KEYS)
+                           if key in row['statistics']}}
 
 
 def failure_pools(targets, initial, customer, http):
@@ -52,7 +53,8 @@ def failure_pools(targets, initial, customer, http):
             row['same_process'] = after['instance_id'] == initial[name]['instance_id']
             if row['same_process']:
                 deltas = {key: after['statistics'][key] - initial[name]['statistics'][key]
-                          for key in ('requests_num', 'connections_num', *read.ERROR_KEYS)}
+                          for key in ('requests_num', 'connections_num', *read.ERROR_KEYS, *read.REJECTION_KEYS)
+                          if key in after['statistics'] and key in initial[name]['statistics']}
                 row['counter_deltas'] = deltas if all(n >= 0 for n in deltas.values()) else None
             else:
                 row['counter_deltas'] = None
@@ -60,6 +62,21 @@ def failure_pools(targets, initial, customer, http):
             row['snapshot_error_type'] = type(error).__name__
         observations.append(row)
     return observations
+
+
+def generator_memory(path=Path('/proc/self/status')):
+    # Linux process RSS includes resident thread stacks; this is not cgroup usage.
+    try:
+        rows = dict(line.split(':', 1) for line in path.read_text().splitlines() if ':' in line)
+        parts = rows['VmRSS'].split()
+        if len(parts) != 2 or parts[1] != 'kB':
+            return None
+        rss, threads = int(parts[0]), int(rows['Threads'].strip())
+        if rss < 0 or threads < 1:
+            return None
+        return {'rss_mib': round(rss / 1024, 3), 'threads': threads}
+    except (OSError, KeyError, ValueError):
+        return None
 
 
 def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
@@ -79,6 +96,13 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     if config.get('require_warm_pool'):
         read.require(all(row['statistics']['pool_min'] == 4 and row['statistics']['pool_size'] == 4
                          for row in initial.values()), 'WARM_POOL_NOT_READY')
+    error_keys = read.ERROR_KEYS
+    if config.get('require_rejection_counters'):
+        read.require(all(all(key in row['statistics'] for key in read.REJECTION_KEYS)
+                         for row in initial.values()), 'DEPLOY_POOL_REJECTION_COUNTERS_FIRST')
+        error_keys += read.REJECTION_KEYS
+    memory_start = generator_memory()
+    memory_samples = []
     peaks = {target['pod']: {'size': initial[target['pod']]['statistics']['pool_size'],
                              'waiting': initial[target['pod']]['statistics']['requests_waiting']}
              for target in targets}
@@ -92,6 +116,9 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     def observe():
         try:
             while not stop.is_set():
+                memory = generator_memory()
+                if memory is not None:
+                    memory_samples.append(memory)
                 for target in targets:
                     if stop.is_set():
                         return
@@ -99,7 +126,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                     row = read.pool_snapshot(target, customer, http)
                     before, values = initial[name], row['statistics']
                     read.require(row['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
-                    read.require(all(values[key] == before['statistics'][key] for key in read.ERROR_KEYS),
+                    read.require(all(values[key] == before['statistics'][key] for key in error_keys),
                                  'POOL_ERROR_COUNTER_INCREASED')
                     peaks[name]['size'] = max(peaks[name]['size'], values['pool_size'])
                     peaks[name]['waiting'] = max(peaks[name]['waiting'], values['requests_waiting'])
@@ -169,6 +196,12 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             elapsed = time.monotonic() - begun
             stop.set()
             observer.result(timeout=15)
+    memory_end = generator_memory()
+    memory_rows = [row for row in (memory_start, *memory_samples, memory_end) if row is not None]
+    memory_report = {'source': '/proc/self/status', 'scope': 'Process RSS; not cgroup memory',
+                     'start': memory_start, 'end': memory_end, 'samples': len(memory_rows),
+                     'sampled_max_rss_mib': max((row['rss_mib'] for row in memory_rows), default=None),
+                     'sampled_max_threads': max((row['threads'] for row in memory_rows), default=None)}
     errors = Counter(row[4] for row in results if row[4])
     summary = {'users': users, 'users_with_requests': len({row[0] for row in results}),
                'attempts': len(results), 'valid_responses': len(results) - sum(errors.values()),
@@ -177,7 +210,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                'latency_ms': read.percentiles([row[1] for row in results]) if results else None,
                'elapsed_seconds': round(elapsed, 3),
                'observed_requests_per_second': round(len(results) / elapsed, 3) if elapsed > 0 else 0,
-               'sampled_peak_workload_http_in_flight': peak_active, 'observer_checks': failures}
+               'sampled_peak_workload_http_in_flight': peak_active, 'observer_checks': failures, 'generator_memory': memory_report}
     if errors or failures or summary['users_with_requests'] != users:
         diagnostics = {'first_failure': first_failure[0] if first_failure else None,
                        'service_error_codes': dict(Counter(row[5] for row in results if row[5])),
@@ -191,7 +224,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         after = read.pool_snapshot(target, customer, http)
         before = initial[name]
         read.require(after['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
-        read.require(all(after['statistics'][key] == before['statistics'][key] for key in read.ERROR_KEYS),
+        read.require(all(after['statistics'][key] == before['statistics'][key] for key in error_keys),
                      'POOL_ERROR_COUNTER_INCREASED')
         read.require(after['statistics']['requests_num'] >= before['statistics']['requests_num']
                      and after['statistics']['connections_num'] >= before['statistics']['connections_num'],
@@ -209,6 +242,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             'pools': pools, 'inventory_writes': False, 'availability_before_and_after': 100,
             'pool_processes_unchanged': True, 'latency_slo_tested': False,
             'warm_pool_verified': bool(config.get('require_warm_pool')),
+            'rejection_counters_verified': bool(config.get('require_rejection_counters')),
             'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 

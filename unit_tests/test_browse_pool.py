@@ -1,4 +1,5 @@
 """Offline pool wiring, backpressure and lifecycle tests; no live database."""
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import importlib.util
 import os
@@ -132,6 +133,40 @@ class BrowsePool(unittest.TestCase):
                         self.fail('must not yield')
                 self.assertEqual(caught.exception.status_code, 503)
                 self.assertEqual(caught.exception.detail, {'code': 'DATABASE_BUSY'})
+
+    def test_rejection_types_are_separate_numeric_and_leave_public_response_unchanged(self):
+        self.database.pool = self.pool
+        self.pool.get_stats.return_value = {}
+        for error, key in ((TooManyRequests, 'rejections_queue_full'),
+                           (PoolTimeout, 'rejections_timeout'), (PoolClosed, 'rejections_closed')):
+            self.pool.connection.side_effect = error('PRIVATE')
+            with self.assertRaises(HttpError) as caught:
+                with self.database.connection():
+                    self.fail('must not yield')
+            self.assertEqual(caught.exception.detail, {'code': 'DATABASE_BUSY'})
+            self.assertEqual(self.database.statistics()['statistics'][key], 1)
+        values = self.database.statistics()['statistics']
+        self.assertEqual([values[key] for key in ('rejections_queue_full', 'rejections_timeout', 'rejections_closed')], [1, 1, 1])
+        self.assertNotIn('PRIVATE', str(values))
+        self.pool.pop_stats.assert_not_called()
+
+    def test_concurrent_rejections_do_not_lose_increments(self):
+        self.database.pool = self.pool
+        self.pool.get_stats.return_value = {}
+        self.pool.connection.side_effect = TooManyRequests('PRIVATE')
+        def borrow(index):
+            try:
+                with self.database.connection():
+                    self.fail('must not yield')
+            except HttpError as error:
+                return error.status_code
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            codes = list(executor.map(borrow, range(100)))
+        self.assertEqual(codes, [503] * 100)
+        values = self.database.statistics()['statistics']
+        self.assertEqual(values['rejections_queue_full'], 100)
+        self.assertEqual(values['rejections_timeout'], 0)
+        self.assertEqual(values['rejections_closed'], 0)
 
     def test_request_failure_reaches_pool_context_for_rollback(self):
         self.database.pool = self.pool

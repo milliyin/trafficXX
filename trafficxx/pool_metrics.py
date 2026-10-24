@@ -9,6 +9,9 @@ METRICS = {
     'connection_attempts_total': ('counter', 'connections_num', 'Physical connection attempts since process start.'),
     'connection_errors_total': ('counter', 'connections_errors', 'Failed physical connection attempts.'),
     'connections_lost_total': ('counter', 'connections_lost', 'Connections found lost during checkout checks.'),
+    'queue_full_total': ('counter', 'rejections_queue_full', 'Pool queue-full rejections since process start.'),
+    'acquire_timeouts_total': ('counter', 'rejections_timeout', 'Pool acquisition timeouts since process start.'),
+    'closed_rejections_total': ('counter', 'rejections_closed', 'Closed-pool rejections since process start.'),
     'bad_returns_total': ('counter', 'returns_bad', 'Connections returned in an unusable state.'),
 }
 

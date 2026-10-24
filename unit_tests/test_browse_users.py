@@ -155,6 +155,40 @@ class BrowseUsers(unittest.TestCase):
         self.assertFalse(result[0]['same_process'])
         self.assertIsNone(result[0]['counter_deltas'])
 
+    def test_generator_memory_reads_only_linux_numeric_fields_and_handles_missing_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'status'
+            self.assertIsNone(probe.generator_memory(path))
+            path.write_text('Name: ignored\nVmRSS: 65536 kB\nThreads: 102\n')
+            self.assertEqual(probe.generator_memory(path), {'rss_mib': 64, 'threads': 102})
+            path.write_text('VmRSS: INVALID kB\nThreads: 102\n')
+            self.assertIsNone(probe.generator_memory(path))
+
+    def test_rejection_diagnostic_requires_new_counters_and_captures_per_type_delta(self):
+        config = dict(fixtures.config(), users=100, require_rejection_counters=True)
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'DEPLOY_POOL_REJECTION_COUNTERS_FIRST'):
+            probe.run(config, fixtures.Http(), Mock())
+        failed = [False]
+        class Diagnostic(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, body = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    body['statistics'].update(rejections_queue_full=int(failed[0]),
+                                              rejections_timeout=0, rejections_closed=0)
+                return status, body
+        def service(*args):
+            failed[0] = True
+            return 503, {'detail': {'code': 'DATABASE_BUSY'}}
+        output = io.StringIO()
+        with patch.object(probe, 'generator_memory', return_value={'rss_mib': 160, 'threads': 102}), \
+                redirect_stdout(output), self.assertRaises(fixtures.probe.CheckFailed):
+            probe.run(config, Diagnostic(), service, duration=.3, think=.02)
+        failure = next(json.loads(line) for line in output.getvalue().splitlines()
+                       if json.loads(line)['result'] == 'BROWSE_USERS_PHASE_FAILED')
+        self.assertEqual(failure['pool_snapshots_after_workload_stopped'][0]['counter_deltas']['rejections_queue_full'], 1)
+        self.assertEqual(failure['generator_memory']['sampled_max_rss_mib'], 160)
+        self.assertEqual(failure['generator_memory']['sampled_max_threads'], 102)
+
     def test_pool_errors_or_initial_inventory_changes_prevent_success(self):
         for fault in ('observer', 'inventory'):
             with self.subTest(fault=fault), redirect_stdout(io.StringIO()), \
@@ -248,9 +282,10 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False):
         commands, polls = [], [0]
-        job_name = ('browse-users-100-warm' if warm_pool else
+        job_name = ('browse-users-100-rejections' if rejection_diagnostics else
+                    'browse-users-100-warm' if warm_pool else
                     'browse-users-100-diagnostic' if diagnostic_retry else
                     runner.JOB if users == 50 else 'browse-users-100')
         generator = job_name + '-pod'
@@ -299,6 +334,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 source = next(arg.split('=', 2)[2] for arg in args if arg.startswith('--from-file=targets.json='))
                 self.assertEqual(json.loads(Path(source).read_text())['users'], users)
                 self.assertEqual(json.loads(Path(source).read_text())['require_warm_pool'], warm_pool)
+                self.assertEqual(json.loads(Path(source).read_text())['require_rejection_counters'], rejection_diagnostics)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -335,7 +371,8 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'validate', side_effect=ValueError('INCOMPLETE') if fault == 'invalid' else None), \
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
-            result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool)
+            result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
+                                    rejection_diagnostics=rejection_diagnostics)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -390,6 +427,14 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SELECT_ONE_COMPARISON'):
             runner.execute(users=100, warm_pool=True, diagnostic_retry=True)
 
+    def test_rejection_diagnostic_selects_own_job_and_requires_warm_mode(self):
+        code, output, commands = self.scenario(users=100, warm_pool=True, rejection_diagnostics=True)
+        self.assertEqual(code, 0)
+        self.assertIn('"job": "browse-users-100-rejections"', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-rejections-pod' in args for args in commands))
+        with self.assertRaisesRegex(ValueError, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON'):
+            runner.execute(users=100, rejection_diagnostics=True)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -441,6 +486,12 @@ class BrowseUsersRunner(unittest.TestCase):
                     'statistics': {'pool_min': 4, 'pool_max': 4, 'pool_size': 4}}
                     for name in ('browse-a', 'browse-b')})
         runner.validate(warm, 'abcdef123456', 100, True)
+        with self.assertRaisesRegex(ValueError, 'REJECTION_COUNTERS_NOT_VERIFIED'):
+            runner.validate(warm, 'abcdef123456', 100, True, True)
+        warm['rejection_counters_verified'] = True
+        for row in warm['initial_pools'].values():
+            row['statistics'].update(rejections_queue_full=0, rejections_timeout=0, rejections_closed=0)
+        runner.validate(warm, 'abcdef123456', 100, True, True)
         warm['initial_pools']['browse-a']['statistics']['pool_min'] = 1
         with self.assertRaisesRegex(ValueError, 'WARM_POOL_NOT_VERIFIED'):
             runner.validate(warm, 'abcdef123456', 100, True)

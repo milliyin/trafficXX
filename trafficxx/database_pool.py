@@ -1,6 +1,7 @@
 """Bounded process-local API pools with transaction-scoped borrowing."""
 from contextlib import contextmanager
 import os
+from threading import Lock
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -29,6 +30,8 @@ class DatabasePool:
         self.minimum_variable = minimum_variable
         self.pool = None
         self.instance_id = uuid4().hex
+        self._rejection_lock = Lock()
+        self._rejections = dict(rejections_queue_full=0, rejections_timeout=0, rejections_closed=0)
 
     def statistics(self):
         if self.pool is None:
@@ -37,8 +40,10 @@ class DatabasePool:
         keys = ('pool_min', 'pool_max', 'pool_size', 'pool_available',
                 'requests_waiting', 'requests_num', 'requests_errors',
                 'connections_num', 'connections_errors', 'connections_lost', 'returns_bad')
+        with self._rejection_lock:
+            rejections = dict(self._rejections)
         return {'instance_id': self.instance_id,
-                'statistics': {key: values.get(key, 0) for key in keys}}
+                'statistics': {**{key: values.get(key, 0) for key in keys}, **rejections}}
 
     def open(self):
         if self.pool is not None:
@@ -83,5 +88,9 @@ class DatabasePool:
             # the raw connection context here instead would close the socket.
             with pool.connection() as conn:
                 yield conn
-        except (PoolTimeout, TooManyRequests, PoolClosed):
+        except (PoolTimeout, TooManyRequests, PoolClosed) as error:
+            key = ('rejections_queue_full' if isinstance(error, TooManyRequests) else
+                   'rejections_timeout' if isinstance(error, PoolTimeout) else 'rejections_closed')
+            with self._rejection_lock:
+                self._rejections[key] += 1
             raise HTTPException(503, detail={'code': 'DATABASE_BUSY'}) from None

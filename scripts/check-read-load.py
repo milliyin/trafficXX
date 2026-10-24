@@ -13,6 +13,7 @@ import urllib.request
 
 PERIOD = 0.5
 DURATION = 30
+REJECTION_KEYS = ('rejections_queue_full', 'rejections_timeout', 'rejections_closed')
 ERROR_KEYS = ('requests_errors', 'connections_errors', 'connections_lost', 'returns_bad')
 
 
@@ -72,6 +73,10 @@ def pool_snapshot(target, customer, http):
     keys = ('pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
             'requests_num', 'connections_num', *ERROR_KEYS)
     require(all(type(values.get(key)) is int and values[key] >= 0 for key in keys), 'INVALID_POOL_COUNTER')
+    present = set(REJECTION_KEYS) & set(values)
+    require(not present or (present == set(REJECTION_KEYS) and
+            all(type(values[key]) is int and values[key] >= 0 for key in REJECTION_KEYS)),
+            'INVALID_POOL_REJECTION_COUNTERS')
     require(values['pool_min'] in ((1, 4) if target['api'] == 'browse' else (1,))
             and values['pool_max'] == 4
             and 1 <= values['pool_size'] <= 4 and values['pool_available'] <= values['pool_size']
