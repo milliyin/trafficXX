@@ -301,7 +301,10 @@ Next:
    python3 scripts/run-browse-users.py --users 100 after fresh health checks.
    Its first live attempt stopped after one HTTP 503 (22 successful reads,
    less than one second); cause investigation and fresh health checks are next.
-   Higher stages are not started automatically.
+   Recovery checks passed; the failing replica recorded one pool request error.
+   A separate diagnostic retry captures allowlisted error codes and pool deltas:
+   python3 scripts/run-browse-users.py --users 100 --diagnostic-retry.
+   Its live result is pending. Higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

@@ -90,6 +90,51 @@ class BrowseUsers(unittest.TestCase):
         self.assertIn('UNEXPECTED_HTTP_STATUS_503', output.getvalue())
         self.assertNotIn('DEMO_INVENTORY_CHANGED', output.getvalue())
         self.assertNotIn('PRIVATE', output.getvalue())
+        self.assertIn('UNRECOGNIZED', output.getvalue())
+
+    def test_failure_captures_only_known_service_code_and_same_process_counter_delta(self):
+        failed = [False]
+        class Counters(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, body = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    body['PRIVATE'] = 'DO_NOT_PRINT'
+                    body['statistics']['private'] = 'DO_NOT_PRINT'
+                    if failed[0] and target['pod'] == 'browse-1':
+                        body['statistics']['requests_errors'] += 1
+                return status, body
+        def service(*args):
+            failed[0] = True
+            return 503, {'detail': {'code': 'DATABASE_BUSY', 'private': 'DO_NOT_PRINT'}}
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(fixtures.probe.CheckFailed):
+            probe.run(fixtures.config(), Counters(), service, duration=.3, think=.02)
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        failure = next(row for row in rows if row['result'] == 'BROWSE_USERS_PHASE_FAILED')
+        self.assertEqual(failure['first_failure']['service_error_code'], 'DATABASE_BUSY')
+        self.assertEqual(failure['first_failure']['http_status'], 503)
+        self.assertGreaterEqual(failure['service_error_codes']['DATABASE_BUSY'], 1)
+        pools = failure['pool_snapshots_after_workload_stopped']
+        self.assertEqual(pools[1]['before']['statistics']['requests_errors'], 0)
+        self.assertEqual(pools[1]['counter_deltas']['requests_errors'], 1)
+        self.assertTrue(pools[1]['same_process'])
+        self.assertNotIn('DO_NOT_PRINT', output.getvalue())
+        self.assertNotIn('PRIVATE', output.getvalue())
+
+    def test_failure_snapshots_do_not_mask_original_failure_or_compare_changed_process(self):
+        config, http = fixtures.config(), fixtures.Http()
+        targets = config['targets']['browse']
+        initial = {row['pod']: fixtures.probe.pool_snapshot(row, 'test', http) for row in targets}
+        with patch.object(probe.read, 'pool_snapshot', side_effect=RuntimeError('PRIVATE')):
+            result = probe.failure_pools(targets, initial, 'test', http)
+        self.assertEqual(result[0]['snapshot_error_type'], 'RuntimeError')
+        self.assertNotIn('PRIVATE', json.dumps(result))
+        after = deepcopy(initial[targets[0]['pod']])
+        after['instance_id'] = 'a' * 32
+        with patch.object(probe.read, 'pool_snapshot', return_value=after):
+            result = probe.failure_pools(targets, initial, 'test', http)
+        self.assertFalse(result[0]['same_process'])
+        self.assertIsNone(result[0]['counter_deltas'])
 
     def test_pool_errors_or_initial_inventory_changes_prevent_success(self):
         for fault in ('observer', 'inventory'):
@@ -184,9 +229,10 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False):
         commands, polls = [], [0]
-        job_name = runner.JOB if users == 50 else 'browse-users-100'
+        job_name = ('browse-users-100-diagnostic' if diagnostic_retry else
+                    runner.JOB if users == 50 else 'browse-users-100')
         generator = job_name + '-pod'
         now = datetime.now(timezone.utc).isoformat()
         config = fixtures.config()
@@ -267,7 +313,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'validate', side_effect=ValueError('INCOMPLETE') if fault == 'invalid' else None), \
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
-            result = runner.execute(preflight_only=preflight_only, users=users)
+            result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -293,6 +339,22 @@ class BrowseUsersRunner(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('OTHER_READ_LOAD_ACTIVE', output)
         self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
+
+    def test_diagnostic_retry_is_explicit_separate_and_stops_only_its_owned_job(self):
+        code, output, commands = self.scenario(users=100, diagnostic_retry=True)
+        self.assertEqual(code, 0)
+        self.assertIn('"job": "browse-users-100-diagnostic"', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-diagnostic-pod' in args
+                            for args in commands))
+        code, output, commands = self.scenario('resource-stop', users=100, diagnostic_retry=True)
+        self.assertEqual(code, 1)
+        stops = [args for args in commands if args[:2] == ('patch', 'job')]
+        self.assertEqual(stops[0][2], 'browse-users-100-diagnostic')
+        code, output, commands = self.scenario('active-earlier-stage', users=100, diagnostic_retry=True)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
+        with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS'):
+            runner.execute(users=50, diagnostic_retry=True)
 
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')

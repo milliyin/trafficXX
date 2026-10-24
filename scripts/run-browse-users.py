@@ -150,9 +150,11 @@ def release_gate(pod, run_id, job_name=JOB):
               + json.dumps(run_id) + "); p.replace('/state/start')")
 
 
-def execute(*, preflight_only=False, users=50):
+def execute(*, preflight_only=False, users=50, diagnostic_retry=False):
     require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
-    job_name = JOB if users == 50 else 'browse-users-100'
+    require(not diagnostic_retry or users == 100, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
+    job_name = ('browse-users-100-diagnostic' if diagnostic_retry else
+                JOB if users == 50 else 'browse-users-100')
     stage, job, files_name = 'subscription', None, None
     create_requested = False
     gate_released = False
@@ -240,6 +242,7 @@ def execute(*, preflight_only=False, users=50):
                           'users': users, 'duration_seconds': 60, 'think_seconds': 2,
                           'max_workload_attempts': users * 30, 'runtime_image': reference,
                           'generator_node': generator_node,
+                          'diagnostic_retry': diagnostic_retry,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'generator_metrics_warmup_seconds': GENERATOR_METRICS_WARMUP,
                           'inventory_writes': False,
@@ -350,5 +353,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--users', type=int, choices=(50, 100), default=50)
+    parser.add_argument('--diagnostic-retry', action='store_true',
+                        help='Use the separate 100-user diagnostic Job; no automatic retries.')
     args = parser.parse_args()
-    raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users))
+    if args.diagnostic_retry and args.users != 100:
+        parser.error('--diagnostic-retry requires --users 100')
+    raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users,
+                             diagnostic_retry=args.diagnostic_retry))

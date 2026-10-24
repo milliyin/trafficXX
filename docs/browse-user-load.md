@@ -398,3 +398,56 @@ capacity and no waiters confirm pool recovery at observation time, not unused
 capacity during the initial burst. No pool size or wait-limit tuning has been
 applied. Before a controlled retry, preserve the allowlisted service error code
 and immediate failure-time pool counters so the next diagnosis is specific.
+
+
+## Explicit diagnostic retry after the first 100-user failure
+
+The user authorized one separately prepared diagnostic retry. It uses the same
+100-user/60-second/two-second-think/3,000-GET limits and unchanged pool/resource
+budgets. No pool prewarming, tuning, replica scaling or image rebuild is added.
+Select it explicitly with --users 100 --diagnostic-retry. This creates the fixed
+Job browse-users-100-diagnostic, leaving browse-users-100 and its logs intact.
+An existing diagnostic Job blocks a repeat; any active earlier load also blocks
+startup. The flag is invalid for the 50-user stage. It does not retry any HTTP
+request or automatically repeat a failed workload.
+
+On workload failure, BROWSE_USERS_PHASE_FAILED now includes the run ID, the
+first completed failing request's status/route/latency/phase elapsed time and
+an allowlisted service code. Only DATABASE_BUSY and DATABASE_UNAVAILABLE are
+retained from error payloads; unrecognized values become UNRECOGNIZED. Response
+bodies and headers are not printed. DATABASE_BUSY confirms the application pool
+rejection path but still does not distinguish timeout, full queue or closed
+pool, which share that application code.
+
+The failure report also includes pool_snapshots_after_workload_stopped for both
+replicas: validated numeric counters and process IDs before the workload and
+after its in-flight requests and observer finish. Snapshots are sequential
+read-only GETs to the existing private statistics endpoint; they borrow no SQL
+connections. Counter deltas are emitted only for unchanged process IDs with
+nondecreasing counters. Changed processes or reset counters make deltas null;
+an unavailable snapshot records only its exception type and does not mask the
+original failure. These are post-stop observations, not simultaneous peak or
+per-request attribution. They may show recovery by the time they are read.
+
+Run in the current Cloud Shell session:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 100 --diagnostic-retry
+```
+
+Keep Cloud Shell open for up to seven minutes and retain the complete output
+on either pass or failure. The runner still stops on the first error and requires
+full Job/resource/serving-pod evidence for BROWSE_USERS_100_OK. There is no higher
+stage or notification test. The original token-renewal Job stays untouched.
+
+All 453 offline methods passed. Added regression coverage verifies allowlisted
+service codes, exclusion of arbitrary payload/counter fields, before/after
+request-error deltas, changed-process/unavailable snapshot behavior and separate
+retry Job gate/UID-scoped stop/overlap guards. Shortened real loopback HTTP
+smokes again exercised all 50 and 100 users (75 and 148 valid reads respectively)
+and stopped the server. Native isolated Job renders retained identical security
+and resource settings. The live diagnostic retry remains pending.

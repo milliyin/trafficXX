@@ -31,6 +31,37 @@ def execute(config):
     return run(config)
 
 
+SERVICE_ERROR_CODES = frozenset(('DATABASE_BUSY', 'DATABASE_UNAVAILABLE'))
+POOL_KEYS = ('pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
+             'requests_num', 'connections_num', *read.ERROR_KEYS)
+
+
+def safe_pool(row):
+    return {'instance_id': row['instance_id'],
+            'statistics': {key: row['statistics'][key] for key in POOL_KEYS}}
+
+
+def failure_pools(targets, initial, customer, http):
+    observations = []
+    for target in targets:
+        name = target['pod']
+        row = {'pod': name, 'before': safe_pool(initial[name])}
+        try:
+            after = read.pool_snapshot(target, customer, http)
+            row['after'] = safe_pool(after)
+            row['same_process'] = after['instance_id'] == initial[name]['instance_id']
+            if row['same_process']:
+                deltas = {key: after['statistics'][key] - initial[name]['statistics'][key]
+                          for key in ('requests_num', 'connections_num', *read.ERROR_KEYS)}
+                row['counter_deltas'] = deltas if all(n >= 0 for n in deltas.values()) else None
+            else:
+                row['counter_deltas'] = None
+        except Exception as error:
+            row['snapshot_error_type'] = type(error).__name__
+        observations.append(row)
+    return observations
+
+
 def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
         think=THINK, users=None):
     targets = read.targets_from(config)['browse']
@@ -49,7 +80,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                              'waiting': initial[target['pod']]['statistics']['requests_waiting']}
              for target in targets}
     waiting_since = {target['pod']: None for target in targets}
-    results, failures = [], []
+    results, failures, first_failure = [], [], []
     lock, stop = threading.Lock(), threading.Event()
     active, peak_active = 0, 0
     begun = time.monotonic()
@@ -92,13 +123,17 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                 return
             route = ('general', 'seated')[(index + iteration) % 2]
             start = time.perf_counter()
-            status, error = None, None
+            status, error, service_code = None, None, None
             with lock:
                 active += 1
                 peak_active = max(active, peak_active)
             try:
                 status, body = service('http://browse.trafficxx.svc.cluster.local/events/demo-'
                                        + route + '/availability', customer)
+                if status != 200:
+                    detail = body.get('detail') if isinstance(body, dict) else None
+                    code = detail.get('code') if isinstance(detail, dict) else None
+                    service_code = code if isinstance(code, str) and code in SERVICE_ERROR_CODES else 'UNRECOGNIZED'
                 read.validate_response('browse', route, status, body)
                 read.require(time.perf_counter() - start <= 2, 'REQUEST_OVER_TWO_SECONDS')
             except Exception as problem:
@@ -108,7 +143,12 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                 elapsed = time.perf_counter() - start
                 with lock:
                     active -= 1
-                    results.append((index, elapsed, status, route, error))
+                    results.append((index, elapsed, status, route, error, service_code))
+                    if error and not first_failure:
+                        first_failure.append({'http_status': status, 'route': route,
+                                              'service_error_code': service_code,
+                                              'check': error, 'latency_ms': round(elapsed * 1000, 3),
+                                              'phase_elapsed_seconds': round(time.monotonic() - begun, 3)})
             if error or stop.wait(min(think, max(0, deadline - time.monotonic()))):
                 return
 
@@ -136,7 +176,11 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                'observed_requests_per_second': round(len(results) / elapsed, 3) if elapsed > 0 else 0,
                'sampled_peak_workload_http_in_flight': peak_active, 'observer_checks': failures}
     if errors or failures or summary['users_with_requests'] != users:
-        print(json.dumps({'result': 'BROWSE_USERS_PHASE_FAILED', **summary}), flush=True)
+        diagnostics = {'first_failure': first_failure[0] if first_failure else None,
+                       'service_error_codes': dict(Counter(row[5] for row in results if row[5])),
+                       'pool_snapshots_after_workload_stopped': failure_pools(targets, initial, customer, http)}
+        print(json.dumps({'result': 'BROWSE_USERS_PHASE_FAILED', 'run_id': config['run_id'],
+                          **summary, **diagnostics}), flush=True)
         raise read.CheckFailed('BROWSE_USERS_WORKLOAD_OR_POOL_STOP')
     pools = []
     for target in targets:
