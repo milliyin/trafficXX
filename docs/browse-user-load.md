@@ -1329,9 +1329,50 @@ readiness and image/pod placement can differ between runs.
 Offline response/parameter tests pass. Dedicated PostgreSQL CI tests cover
 full general/seated inventory, numeric seat ordering, empty/missing events,
 expired versus active holds, retained assignments and the HTTP 404/timer
-contract. Live build, rollout and timing comparison remain pending.
+contract. These PostgreSQL tests and all other CI jobs passed in
+[run 40109855943](https://github.com/milliyin/trafficXX/actions/runs/40109855943).
 
 After CI correctness checks, pull and build a new Browse image. Once the build
 is reviewed, deploy with the existing script, verify demo/Operations health,
 then run `python3 scripts/check-browse-timing.py`. No load-test command or
 automatic retry is part of this comparison. Keep the failed 250-user evidence.
+
+## Live single-statement timing comparison passed
+
+ACR build caf succeeded in 36 seconds, tag `browse-20261024163035-9413`, digest
+`sha256:f3242207750d853f9980a1b18d72b618e8b40abea8aef5afd6e820d50be61cac`.
+Two new ready Browse pods were observed, `browse-6449545789-mht5h` on apps
+000001 and `browse-6449545789-p85p4` on apps 000000. The old pod was terminating
+in the rollout listing; the subsequent timing probe confirmed two stable
+serving pods. No restart was reported in the new pods.
+
+Demo health remained alive/ready, both events retained availability 100, and
+Operations reported processed 72 with no backlog, processing failures or
+active alerts. Historical publication failures four and dead-letter audit
+one were unchanged; worker heartbeats were healthy.
+
+The probe reported BROWSE_TIMING_BASELINE_OK, query_mode single-query, 12
+sequential reads per pod and no inventory writes:
+
+| Mean client-observed milliseconds | mht5h | p85p4 |
+| --- | ---: | ---: |
+| Acquisition | 29.356 | 25.661 |
+| Connection body | 59.374 | 51.808 |
+| Transaction completion / return | 29.150 | 25.477 |
+| Combined availability query and fetch | 59.346 | 52.279 |
+| Port-forward HTTP request | 392.426 | 382.019 |
+
+The combined query contains the earlier two query operations. Its observed
+means (52-59 ms) are lower than the earlier event-plus-units means (78-87 ms).
+Body means likewise moved from 76-84 ms to 52-59 ms, while acquisition and
+return stayed near their previous ranges. This is consistent with avoiding
+one database round trip. It is not an isolated causal or sustained load test:
+pod placement changed, samples were small, and pool phases contained 12/13
+observations versus 12 for each query phase. Background readiness can affect
+those populations; the nested phase means must not all be added together.
+Port-forward HTTP times include client/network overhead and are not a service SLO.
+
+Next prepare a separate guarded 100-user regression comparison before reviewing
+a new 250-user attempt. The original failed 250-user Job remains evidence;
+no new load, queue/connection increase or replica scaling occurred here. The
+original token-renewal Job still requires its separate final verdict.
