@@ -44,11 +44,12 @@ or establish sustained production capacity.
   100 per event, healthy workers, no backlog or active alerts. One comparison
   does not establish a causal memory profile or higher-load capacity.
 - **250-user attempt:** stopped early after one confirmed queue-full rejection
-  returned HTTP 503; only 60 users made requests before the stop. Post-failure
-  recovery checks are pending. See the [diagnostic record](browse-user-load.md#first-250-user-attempt-stopped-on-queue-rejection).
+  returned HTTP 503; only 60 users made requests before the stop. Fresh health
+  checks after the subsequent instrumentation rollout passed. See the [diagnostic record](browse-user-load.md#first-250-user-attempt-stopped-on-queue-rejection).
   There is no 250-user pass or capacity verdict; 500 and 1,000 remain untested.
-  Browse acquisition/query/transaction timing instrumentation and a 24-read
-  sequential diagnostic are prepared; a new image and live results are pending.
+  Browse timing instrumentation is deployed and its 24-read sequential
+  diagnostic passed. Repeated database round trips are a hypothesis to
+  investigate; PostgreSQL CPU saturation or 250-user recovery is not established.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

@@ -1250,5 +1250,53 @@ Its timing snapshots borrow no SQL connections. It cannot establish the
 baseline alone; it helps choose a subsequent controlled investigation.
 
 No automatic 250-user retry or queue/connection/replica increase is part of
-this diagnostic. Live instrumented build, rollout and timing results remain
-pending; the original token-renewal Job remains untouched.
+this diagnostic. The live result follows; the original token-renewal Job
+remains untouched.
+
+## Live sequential timing baseline passed
+
+The instrumented Browse image built successfully in ACR run cae (40 seconds),
+tag `browse-20261024155648-19623`, digest
+`sha256:d708badfc0f0bbe29c860024cf3928b5adcfda24a82815c91b9972fbf29a6fa9`.
+Rollout completed with two ready pods, `browse-64568785f-vljjs` and
+`browse-64568785f-xdkdg`, both on apps node 000000. This differs from the
+previous serving placement and is not a controlled load comparison.
+
+Fresh demo checks reported alive/ready and availability 100 for each event.
+Operations reported processed 72, no backlog, processing failures or active
+alerts, and healthy consumer/publisher heartbeats (1.201253s/1.235765s).
+Historical publication failures four and dead-letter audit one stayed unchanged.
+These checks establish health after rollout, not a separate native queue audit.
+
+BROWSE_TIMING_BASELINE_OK then confirmed 12 sequential reads per pod and
+final pod stability, without inventory writes:
+
+| Mean client-observed milliseconds | vljjs | xdkdg |
+| --- | ---: | ---: |
+| Acquisition including checkout check | 28.532 | 26.129 |
+| Borrowed-connection body | 84.025 | 76.449 |
+| Transaction completion / return | 28.310 | 25.935 |
+| Event query and fetch | 57.469 | 51.624 |
+| Availability query and fetch | 29.352 | 26.390 |
+| Port-forward HTTP request | 419.751 | 408.605 |
+
+Pool phases each contained 13 observations, while each query phase contained
+12. Background readiness can explain the extra pool borrow; it is not separately
+attributed by this probe. Body includes both queries, and sample populations
+differ, so these means must not all be summed or subtracted as exact request
+components. Port-forward HTTP time includes Cloud Shell/network overhead.
+
+The similar 26-29 ms acquisition, return and availability-query means, plus
+an event-query mean near twice that, are consistent with repeated database
+round trips contributing to connection occupancy. This is an inference, not
+a measured network RTT, PostgreSQL CPU profile or query-plan result.
+[Psycopg documents](https://www.psycopg.org/psycopg3/docs/basic/transactions.html)
+that a first SELECT normally starts an implicit transaction (BEGIN plus SELECT),
+and successful context exit commits it. The existing pool also checks connections
+on acquisition. These boundaries provide a plausible explanation to investigate;
+the sequential baseline does not prove the dominant cause under 250-user load.
+
+Next review how to reduce Browse read-path round trips, preserving its response,
+expiry semantics, permissions and error handling. No autocommit, query merge,
+checkout-check removal, pool resize, replica change or new load run has been
+performed at this checkpoint. The 250-user queue rejection remains unresolved.
