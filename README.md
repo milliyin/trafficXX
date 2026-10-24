@@ -309,7 +309,8 @@ Next:
    hypothesis. A warm-pool comparison is proposed; 100 users have not passed.
    Recovery is confirmed. A warm-pool comparison is prepared: Browse minimum
    four, maximum four, with startup fill verification. It requires a new Browse
-   image/rollout before --users 100 --warm-pool-comparison; live result pending.
+   image/rollout before --users 100 --warm-pool-comparison. ACR build cab passed;
+   the warm image is ready, while rollout and live comparison remain pending.
    Higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

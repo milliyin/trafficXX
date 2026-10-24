@@ -561,3 +561,21 @@ missing warm evidence. Shortened real loopback HTTP smokes exercised all 50 user
 budgets and deployment min/max four. These are local correctness checks, not
 real SQL/warm-pool performance evidence. Azure build, rollout and live comparison
 are still pending. Docker remained stopped and no local Azure login was used.
+
+
+### Warm image built; deployment and comparison pending
+
+The user supplied ACR run cab, successful after 37 seconds, with
+IMAGE_BUILD_OK and tag browse-20261024141922-13349. The immutable reference saved
+by the build helper to browse-image.txt is:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:85b47ca41a2d1add3fd7f1deac95a63d9cf44e08c412ba07d23e341d5c62361e
+```
+
+The Python 3.12-slim-trixie base digest remained
+a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704.
+Build success establishes the release artifact, not deployed pool readiness or
+100-user performance. Next deploy using the saved immutable reference, run demo
+and Operations checks, then the explicit --users 100 --warm-pool-comparison
+command above. No warm rollout or live comparison result has yet been supplied.
