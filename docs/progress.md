@@ -56,7 +56,9 @@ or establish sustained production capacity.
   with one fewer round trip. Placement/sample differences limit comparison;
   The guarded 100-user single-query comparison also passed with 2,804 valid
   reads and zero rejections; fresh post-run health checks passed. A separate
-  guarded 250-user single-query comparison is prepared, with no live result yet.
+  guarded 250-user single-query comparison then stopped early: 77 participants,
+  75 HTTP 200 and two confirmed queue-full HTTP 503 responses on one pod.
+  Post-failure health checks are pending; there is still no 250-user pass.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

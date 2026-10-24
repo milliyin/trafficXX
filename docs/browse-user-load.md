@@ -1502,5 +1502,41 @@ this diagnostic. It does not automatically retry or advance to 500 users.
 Keep Cloud Shell running for up to eight minutes and retain complete output.
 On pass or failure, obtain fresh demo/Operations health again; on failure
 also confirm the diagnostic Job is terminal before any new load. There is
-no live result for this mode yet. The smaller-stage improvement does not
-guarantee this stage will pass or define the system's maximum capacity.
+no guarantee this stage will pass or define the system's maximum capacity.
+The first live result follows.
+
+## 250-user single-query attempt stopped on queue rejections
+
+Run `9cb4d7cc0deb`, Job `browse-users-250-singlequery`, began on the caf image
+after fresh demo/Operations checks and two fresh resource samples per pod.
+The warm four-connection pools and queue limit 16 were in place. It stopped
+after 1.203 seconds: only 77 of 250 users had made requests, with 75 HTTP 200
+and two HTTP 503 DATABASE_BUSY responses. First failure was on the general
+route at 0.621 seconds and returned in 20.118 ms. Observed HTTP concurrency
+peaked at 41. This is an early failed workload, not a completed 250-user test
+or a steady throughput/capacity result.
+
+Pod mht5h recorded exactly two new queue-full rejections and two request
+errors. Pod p85p4 recorded no errors. Both had zero new acquisition timeouts,
+closed-pool rejections, connection attempts, connection failures, lost
+connections or bad returns. Request-counter deltas were 38 and 39, respectively:
+near-equal request totals do not establish equal instantaneous concurrency
+or explain why only one pod rejected requests. Both process identities stayed
+unchanged and post-stop snapshots showed all four connections available with
+zero queued requests.
+
+The generator reported only three process-memory samples (maximum RSS
+28.703 MiB, sampled threads three), and Kubernetes metrics mostly cover startup.
+Neither establishes representative resource peaks for this short failure.
+Reported mixed-outcome p50/p95/p99/max were 334.768/562.518/642.426/642.426 ms;
+these are not successful full-stage latency statistics. No observer stop fired
+before the HTTP failure. Phase timing deltas were not emitted on this failure
+path, so the earlier 100-user phase means cannot substitute for its profile.
+
+The parent reported DIAGNOSTIC_JOB_FAILED and requested a UID-scoped stop.
+Serving replicas and configuration were not changed, and no inventory writes
+were generated. Native Job terminal state and fresh post-failure demo/Operations
+health remain next. Preserve both failed 250-user Jobs; no larger run, automatic
+retry, queue/connection increase, checkout-check removal or replica scaling
+has been performed. The 100-user improvement remains valid at its measured
+scope; it did not establish recovery at the 250-user workload.
