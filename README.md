@@ -314,7 +314,7 @@ Next:
    at 33.250 MiB, about 86% below the earlier 241.094 MiB observation, with
    the same application image, serving pods and pool limits. No image rebuild
    was required. This is one bounded comparison, not higher-load capacity proof;
-   fresh post-comparison health checks remain next.
+   fresh post-comparison health checks also passed with no backlog or alerts.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

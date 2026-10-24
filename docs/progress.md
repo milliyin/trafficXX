@@ -38,10 +38,11 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
-- **Post-comparison health:** the HTTP-only, per-thread client passed its live
-  Linux comparison with substantially lower sampled process RSS. Fresh demo and
-  Operations checks after that run are still pending. One comparison does not
-  establish a causal memory profile or higher-load capacity.
+- **Client memory comparison completed:** the HTTP-only, per-thread client
+  passed its live Linux comparison with substantially lower sampled process
+  RSS. Fresh post-run demo and Operations checks also passed: availability
+  100 per event, healthy workers, no backlog or active alerts. One comparison
+  does not establish a causal memory profile or higher-load capacity.
 - **Higher user counts:** 250, 500, and 1,000 users have not been tested. Each
   requires a separately reviewed workload and adequate generator headroom.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in

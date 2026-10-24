@@ -1121,5 +1121,11 @@ or latency SLO. Neither 250 nor 1,000 users were tested.
 
 Pre-run demo and Operations checks passed (processed 72, no backlog or active
 alerts; historical publication failures four and dead-letter audit one).
-Fresh post-comparison demo and Operations checks are next before any larger
-stage. The original token-renewal Job remains a separate pending verdict.
+Fresh post-comparison demo and Operations checks subsequently passed:
+alive/ready, availability 100 per event, processed 72, zero pending/outstanding
+work or processing failures, and no active alerts. Consumer/publisher heartbeat
+ages were 2.64715s/1.296267s without errors; historical publication failures four
+and dead-letter audit one stayed unchanged. Native broker counts were not
+measured by these checks. This completes the post-run health checkpoint;
+higher stages still require separate review. The original token-renewal Job
+remains a separate pending verdict.
