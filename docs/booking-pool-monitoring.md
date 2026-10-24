@@ -1,7 +1,7 @@
 # Booking pool metrics and Grafana
 
-Status: source/local validation and Booking image build caa passed. The new
-rollout, live Prometheus stored-sample check, Grafana API check and browser
+Status: source/local validation, Booking image build caa, rollout and HTTP pool
+check passed. The live Prometheus stored-sample check, Grafana API check and browser
 rendering remain pending. The preceding ca9 pool/functional milestone passed;
 see [Booking pooling](booking-database-pooling.md). The existing Browse renewal
 Job continues on its original image and run, without restart or source changes.
@@ -17,7 +17,22 @@ trafficxxacre8708a85.azurecr.io/trafficxx@sha256:c94884448905a0e94f2e4b8502ed120
 The reported Python base digest matches ca9. The helper saved the immutable
 reference to booking-image.txt in Cloud Shell; the committed Booking manifest
 now pins this reviewed image too. Build success is not rollout, metrics scrape,
-dashboard or hosted CI proof. Those live checks remain pending.
+dashboard or hosted CI proof.
+
+## Verified rollout and HTTP checkpoint
+
+The user supplied a successful caa Booking rollout. New pods
+booking-67b7966d6c-npkcg and booking-67b7966d6c-tmw88 were Ready1/1 with zero
+restarts on different apps nodes. One ca9 pod was still Terminating in the
+snapshot; this is not evidence of node-failure resilience.
+
+BOOKING_HTTP_OK confirmed alive/ready, the expected API and customer-scoped
+missing-reservation404. The same forwarded process reported four pool borrows,
+zero new connection attempts, sampled size1/max4 and successful readiness after
+the lookup rollback. No inventory writes occurred. This bounded check supports
+one serving process's reuse, not both-replica sustained-load behaviour.
+Monitoring configuration, actual stored Booking metric series and the new
+Grafana dashboard are still pending live verification.
 
 ## Measurements and limits
 

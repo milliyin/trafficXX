@@ -236,7 +236,8 @@ Next:
    and fresh error-free workers. These are bounded functional checks.
    [Booking pool monitoring](docs/booking-pool-monitoring.md)
    is prepared in source with separate per-pod series and an eight-panel dashboard;
-   image build caa passed; rollout, live samples and browser checks are pending. Workers still
+   image build caa, rollout and HTTP reuse checks passed; live samples and
+   browser checks are pending. Workers still
    connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.

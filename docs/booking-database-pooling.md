@@ -6,7 +6,8 @@ Post-pooling reservation flow, duplicate concurrency and seat contention passed.
 Post-test demo inventory and Operations health checks also passed. These are
 bounded functional checkpoints, not a sustained-load or token-renewal result.
 The subsequent [Booking metrics/dashboard stage](booking-pool-monitoring.md)
-passed image build caa; its rollout and live monitoring evidence remain pending.
+passed image build caa, rollout and HTTP reuse checks; live stored samples and
+dashboard evidence remain pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -162,7 +163,8 @@ bash scripts/check-booking-pool.sh
 
 Deployment validates account/context/digest and substitutes only Booking's
 image using kubectl's local JSON patch transformation. The committed manifest
-also pins reviewed ca9; the helper still requires the validated build reference.
+now pins reviewed monitoring build caa; the helper still requires the validated
+build reference. The functional results above were first verified on ca9.
 The two Booking replicas roll out with BOOKING_DB_POOL_MAX=4. No Browse/Grafana/
 Prometheus/worker or renewal-Job rollout occurs.
 
