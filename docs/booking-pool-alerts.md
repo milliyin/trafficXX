@@ -45,8 +45,8 @@ in the five-minute window even after requests recover. Waiting samples can miss
 short queues between scrapes. High pool occupancy alone does not fire a rule.
 
 These rules evaluate in Prometheus. External email/phone/chat delivery is not
-configured. The existing eight-panel Booking Grafana dashboard remains the
-pool-metrics view; this change does not add Booking alert panels. An independent
+configured. A dashboard follow-up adds alert counts and history below; its
+live deployment and browser rendering remain pending. An independent
 monitor is needed to detect Prometheus itself being unavailable.
 
 ## Deploy from browser Cloud Shell
@@ -89,3 +89,46 @@ actionlint and diff checks passed. CI now runs both scenario files; hosted CI
 has not been checked. Docker stayed stopped. Synthetic firing/recovery does
 not establish a real outage or notification delivery test. No local Azure
 login, cluster operation or credential read was performed.
+
+## Show pending and firing alerts in Grafana
+
+The Booking dashboard now has ten panels in source. Panels 9 and 10 add current
+pending/firing alert-instance counts and alert-state history, filtered to
+component booking-pool and job trafficxx-booking-pool. Counts describe alert
+instances, not distinct rules. History shows value 1 while an instance is
+pending or firing. No history is normal when no alerts occurred in the selected
+interval; zero counts alone cannot prove rules are loaded or evaluating.
+
+Deploy this dashboard-only update from Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/deploy-booking-dashboard.sh &&
+bash scripts/check-grafana-dashboard.sh --booking-pool
+```
+
+The helper updates only the dashboard ConfigMap, preserving all three dashboard
+files. Grafana refreshes the projected files/provider without a restart; allow
+a few minutes. No image build or Prometheus restart is needed. The checker
+requires all ten Booking panels, exact alert queries, five fresh healthy inactive
+Booking rules, zero active counts and actual stored pool samples through the
+datasource. Existing Operations/Browse dashboard and Browse rule checks remain
+required, along with denied unauthenticated access. This is a healthy-baseline
+check; active warning conditions deliberately prevent a pass.
+
+If the existing grafana-booking-pool-check Job still exists, preserve its logs
+and wait for its ten-minute completion TTL before rerunning the same name.
+Do not recreate the unrelated token-renewal Job. After GRAFANA_BOOKING_POOL_OK,
+refresh trafficXX | Booking database pool and scroll to the two bottom panels.
+Browser rendering still needs separate confirmation.
+
+All 410 offline methods passed, including missing-rule/zero-count rejection and
+wrong/missing/duplicate panels, active counts and active-rule rejection. A
+temporary hidden local Prometheus instance with no scrape targets produced a
+real pending Booking unavailable-target alert: the new count queries returned
+pending 1 and firing 0, and its history query found the pending series. All 16
+Booking panel queries executed successfully, then the process stopped. This
+was local query validation, not an AKS outage test. Bash syntax, mocked
+dashboard-only/account/context guards and diff checks passed. Docker stayed
+stopped; hosted CI and live deployment of this follow-up remain unverified.

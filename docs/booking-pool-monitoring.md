@@ -9,7 +9,10 @@ Job continues on its original image and run, without restart or source changes.
 The subsequent [Booking pool alert-rule stage](booking-pool-alerts.md) passed
 local tests and live deployment/evaluation: five healthy inactive Booking rules,
 two targets and fresh samples, with existing Browse rules also verified healthy.
-The eight-panel dashboard is unchanged; external notifications remain unconfigured.
+External notifications remain unconfigured. A subsequent
+[dashboard-only update](booking-pool-alerts.md#show-pending-and-firing-alerts-in-grafana)
+adds two alert panels in source (ten total); deployment and browser proof of
+those additions remain pending.
 
 ## Verified image build
 
@@ -156,9 +159,11 @@ forward and stops only that process on exit.
 
 The separate grafana-booking-pool-check Job uses the existing mounted Grafana
 Secret only inside AKS, makes read-only API queries and prints no credentials.
-GRAFANA_BOOKING_POOL_OK requires the provisioned eight-panel Booking dashboard,
+GRAFANA_BOOKING_POOL_OK now requires the provisioned ten-panel Booking dashboard,
 correct datasource/job references, real Booking samples through the datasource,
-and preserved Operations/Browse dashboards plus healthy inactive Browse rules.
+healthy inactive Booking rules and zero pending/firing counts, and preserved
+Operations/Browse dashboards plus healthy inactive Browse rules. The original
+eight-panel checkpoint above predates this alert-panel follow-up.
 Unauthenticated access must be denied. The Job has a360second deadline and
 ten-minute completion TTL; inspect an existing Job or wait for automatic cleanup
 before rerunning the same name. No credential file upload is needed.

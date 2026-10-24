@@ -27,6 +27,10 @@ class BookingMonitoring(unittest.TestCase):
         self.browse.setUp()
         self.booking = fixtures.BrowseMonitoring()
         self.booking.setUp()
+        for row in self.booking.rules:
+            row['name'] = row['name'].replace('Browse', 'Booking')
+            row['query'] = row['query'].replace('browse', 'booking')
+            row['labels']['component'] = 'booking-pool'
         self.booking.instances = ['10.244.3.218:8000', '10.244.2.95:8000']
         self.booking.targets = [
             {'labels': {'job': 'trafficxx-booking-pool', 'instance': instance}, 'health': 'up',
@@ -46,6 +50,10 @@ class BookingMonitoring(unittest.TestCase):
         prefix = '/api/datasources/proxy/uid/' + grafana.SOURCE
         if path.startswith(prefix):
             suffix = path[len(prefix):]
+            if suffix == '/api/v1/rules':
+                return {'status': 'success', 'data': {'groups': [
+                    {'name': 'trafficxx-browse-pool', 'interval': 15, 'rules': self.browse.rules},
+                    {'name': 'trafficxx-booking-pool', 'interval': 15, 'rules': self.booking.rules}]}}
             if 'booking' in suffix:
                 return self.get(suffix)
             if suffix == '/api/v1/targets':
@@ -84,7 +92,9 @@ class BookingMonitoring(unittest.TestCase):
     def test_booking_dashboard_checks_all_three_dashboards_and_live_samples(self):
         result = grafana.verify_booking_pool(self.grafana_get)
         self.assertEqual(result['result'], 'GRAFANA_BOOKING_POOL_OK')
-        self.assertEqual(result['panel_count'], 8)
+        self.assertEqual(result['panel_count'], 10)
+        self.assertEqual(result['alert_counts'], {'pending': 0, 'firing': 0})
+        self.assertEqual(result['healthy_inactive_rule_count'], 5)
         self.assertTrue(result['browse_dashboard_and_rules_verified'])
         self.browse.rules.clear()
         with self.assertRaises(ValueError):
@@ -101,5 +111,27 @@ class BookingMonitoring(unittest.TestCase):
                 self.dashboard['dashboard']['panels'][0]['targets'][0]['expr'] = 'up{job="trafficxx-browse-pool"}'
             else:
                 self.booking.values['up'] = 0
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                grafana.verify_booking_pool(self.grafana_get)
+
+    def test_zero_booking_alerts_do_not_prove_rules_are_loaded(self):
+        self.booking.rules.clear()
+        with self.assertRaises(ValueError):
+            grafana.verify_booking_pool(self.grafana_get)
+
+    def test_booking_alert_panel_queries_and_counts_must_match(self):
+        for fault in ('history-query', 'missing-panel', 'duplicate-id', 'active-count', 'active-rule'):
+            self.setUp()
+            panels = self.dashboard['dashboard']['panels']
+            if fault == 'history-query':
+                panels[9]['targets'][0]['expr'] = 'up{job="trafficxx-booking-pool"}'
+            elif fault == 'missing-panel':
+                panels.pop()
+            elif fault == 'duplicate-id':
+                panels[9]['id'] = 9
+            elif fault == 'active-count':
+                self.booking.alert_count = 1
+            else:
+                self.booking.rules[0]['state'] = 'pending'
             with self.subTest(fault=fault), self.assertRaises(ValueError):
                 grafana.verify_booking_pool(self.grafana_get)
