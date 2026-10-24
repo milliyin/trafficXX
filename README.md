@@ -306,8 +306,8 @@ Next:
    sampled 227.008 MiB against its 256 MiB limit. Recovery checks and review of
    bounded queueing/generator overhead are next; 100 users have not passed.
    Per-exception rejection counters and sampled generator RSS/thread reporting
-   are prepared and locally tested. A new Browse image is required before the
-   separate --warm-pool-comparison --rejection-diagnostics run.
+   are prepared and locally tested. ACR build cac succeeded; deployment and the
+   separate --warm-pool-comparison --rejection-diagnostics run are pending.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

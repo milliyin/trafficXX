@@ -769,3 +769,25 @@ rendered the new Job with unchanged resource/security settings. These are local
 correctness checks, not SQL performance or a live memory verdict. The new image
 build, rollout, stored rejection-series checks and live diagnostic are pending.
 Docker stayed stopped and no local Azure connection was used.
+
+
+### Rejection-diagnostic image build succeeded
+
+The user supplied ACR run cac, successful after 31 seconds, tag
+browse-20261024144301-2030, with IMAGE_BUILD_OK and this immutable reference saved
+to browse-image.txt:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:826c54fdaf77dba533b77779b8e6e127b871c9684a4045be58d29f4c42002fa4
+```
+
+Python base digest remained
+a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704.
+This is build evidence only. Deploy with scripts/deploy-browse.sh, run demo and
+Operations health checks, then allow collection for both newly created pods
+and confirm their CPU/memory entries with kubectl top pods. The explicit
+--users 100 --warm-pool-comparison --rejection-diagnostics mode still checks
+metric completeness and actual warm/counter evidence itself. It uses the new
+fixed Job browse-users-100-rejections and retains earlier failed Jobs.
+No cac rollout, new metric-series proof or live rejection diagnostic result
+has yet been supplied. The original renewal Job remains untouched.
