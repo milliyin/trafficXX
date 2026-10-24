@@ -145,7 +145,7 @@ def experiment(call):
             'note': 'Bounded port-forward experiment; sampled sizes are not a throughput or latency SLO.'}
 
 
-def main():
+def main(*, experiment_function=None, failure_result='BROWSE_CONCURRENCY_FAILED', preflight_check=None):
     processes, logs = [], []
     stage = 'preflight'
     try:
@@ -153,6 +153,8 @@ def main():
                                        text=True, timeout=30, stderr=subprocess.DEVNULL).strip()
                 == '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85', 'Wrong subscription')
         require(kubectl('config', 'current-context').strip() == 'trafficxx-lab-aks', 'Wrong context')
+        if preflight_check:
+            preflight_check()
         deployment = json.loads(kubectl('get', 'deployment', 'browse', '-n', 'trafficxx', '-o', 'json'))
         items = json.loads(kubectl('get', 'pods', '-n', 'trafficxx', '-l',
                                   'app.kubernetes.io/name=trafficxx-browse', '-o', 'json'))['items']
@@ -186,7 +188,7 @@ def main():
                 return json.loads(data)
 
         stage = 'read_only_experiment'
-        result = experiment(call)
+        result = (experiment_function or experiment)(call)
         stage = 'pod_stability'
         for original in pods:
             current = json.loads(kubectl('get', 'pod', original['metadata']['name'], '-n', 'trafficxx', '-o', 'json'))
@@ -200,7 +202,7 @@ def main():
         print(json.dumps(result))
         return 0
     except Exception as error:
-        print(json.dumps({'result': 'BROWSE_CONCURRENCY_FAILED', 'stage': stage,
+        print(json.dumps({'result': failure_result, 'stage': stage,
                           'error_type': type(error).__name__,
                           'check': str(error) if isinstance(error, CheckFailed) else None,
                           'note': 'Read-only test; no inventory cleanup required. Do not reset inventory.'}))

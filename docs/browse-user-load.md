@@ -1167,4 +1167,88 @@ Keep Cloud Shell running for up to eight minutes and retain complete output.
 After completion, run the two health scripts again. If it fails, inspect its
 Job/logs and confirm it is terminal before another load. A final
 BROWSE_USERS_250_OK plus fresh post-run health would establish this bounded
-stage; there is no live 250-user result yet and no production SLO claim.
+stage. The first attempt failed as recorded below; do not rerun this same Job
+or increase limits without reviewing the evidence.
+
+## First 250-user attempt stopped on queue rejection
+
+Run `9d09f6141b6a`, Job `browse-users-250`, passed resource startup gates and
+began with four ready connections and 16 waiting slots in each existing pod.
+It stopped after 1.087 seconds: 60 users had made 60 requests, with 59 HTTP 200
+responses and one HTTP 503 DATABASE_BUSY. The first rejection occurred at
+0.489 seconds on the seated route and returned in 25.135 ms. Peak observed
+HTTP concurrency was 38. This is an early failed ramp, not a completed
+250-user workload, steady throughput measurement or maximum-capacity result.
+
+Pod `browse-5648774c-b45zk` recorded exactly one new request error and one
+queue-full rejection. Its acquisition timeout and closed-pool counters stayed
+unchanged. The other pod recorded no errors. Both retained the same process,
+made zero new connection attempts, and recorded zero new connection errors,
+lost connections or bad returns. After stopping, both snapshots showed all
+four connections available and no queued requests. This confirms a bounded
+queue rejection; it does not identify why requests accumulated or establish
+database saturation.
+
+The parent reported DIAGNOSTIC_JOB_FAILED and requested a stop of its owned
+Job. No serving replicas were changed. Process RSS was sampled only three
+times (maximum 28.324 MiB, sampled threads three); the subsecond failure was
+too short to capture representative thread/resource peaks. Kubernetes CPU
+and memory maxima include startup samples and cannot establish load headroom.
+No inventory writes were generated. Pre-run demo and Operations checks passed;
+fresh post-failure inventory/worker health and native Job terminal status are
+still required. Preserve the failed Job and logs. No larger trial, queue
+increase, database connection increase or replica change has been made.
+
+## Prepared connection and query timing baseline
+
+The next diagnostic adds numeric timers to Browse, with no SQL or capacity
+change. A new Browse image is required because the timers execute inside
+the serving process. Booking's running image is unaffected.
+
+| Phase | Measurement boundary |
+| --- | --- |
+| acquire | Successful pool acquisition, including queueing and checkout checks |
+| body | Code inside the borrowed-connection context, including query/result handling |
+| return | Context exit, including commit/rollback and connection return |
+| event_query | Event SELECT and fetch |
+| units_query | Availability SELECT and fetch |
+
+Each phase exposes a process-lifetime count, total microseconds and maximum
+microseconds on the existing internal statistics and Prometheus endpoints.
+Names are fixed: no query text, customer IDs, event IDs, credentials or exception
+messages are stored. Timers also record completed boundaries on failure and
+preserve exception/rollback behavior. Query times include database network
+round trips and result handling; they are not isolated PostgreSQL execution
+times. Acquisition is not a pure waiting-queue timer. Body contains the two
+query phases, so these values must not all be added together.
+
+First confirm the failed Job is terminal and fresh health is good:
+
+```bash
+kubectl get job browse-users-250 -n trafficxx
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh
+```
+
+Then pull/build the instrumented image using the existing build script. After
+reviewing IMAGE_BUILD_OK, deploy with `bash scripts/deploy-browse.sh`, verify
+demo and Operations health again, and run:
+
+```bash
+python3 scripts/check-browse-timing.py
+```
+
+The probe blocks overlapping active read-load Jobs, verifies instrumentation
+on both ready serving pods before measured traffic, and makes only 12 sequential
+availability reads per pod (24 total, alternating events). It compares count
+and total-time deltas in the same processes, requires no new pool errors,
+and verifies final pod stability. The output includes per-phase mean client
+times and mean port-forward HTTP time; these have different boundaries.
+Background readiness or other traffic can contribute to the pool deltas.
+Its timing snapshots borrow no SQL connections. It cannot establish the
+250-user failure's exact latency profile or database saturation from an idle
+baseline alone; it helps choose a subsequent controlled investigation.
+
+No automatic 250-user retry or queue/connection/replica increase is part of
+this diagnostic. Live instrumented build, rollout and timing results remain
+pending; the original token-renewal Job remains untouched.

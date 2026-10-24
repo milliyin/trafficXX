@@ -1,4 +1,6 @@
 """Credential-free numeric exposition of each API's process-local pool."""
+from trafficxx.pool_timing import PHASES
+
 METRICS = {
     'size': ('gauge', 'pool_size', 'Pool slots, including connections being prepared.'),
     'limit': ('gauge', 'pool_max', 'Configured maximum pool slots per process.'),
@@ -21,7 +23,16 @@ def render(statistics, component='browse'):
     if component not in ('browse', 'booking'):
         raise ValueError('Unsupported API pool metrics component')
     lines = []
-    for suffix, (kind, key, description) in METRICS.items():
+    definitions = dict(METRICS)
+    if component == 'browse':
+        for phase in PHASES:
+            for suffix, key_suffix, kind in (('count_total', 'count', 'counter'),
+                                            ('microseconds_total', 'total_us', 'counter'),
+                                            ('max_microseconds', 'max_us', 'gauge')):
+                definitions['timing_' + phase + '_' + suffix] = (
+                    kind, 'timing_' + phase + '_' + key_suffix,
+                    'Client-observed ' + phase + ' timing since process start; includes network time.')
+    for suffix, (kind, key, description) in definitions.items():
         value = statistics.get(key, 0)
         if type(value) is not int or value < 0:
             raise ValueError('Invalid numeric pool statistic')

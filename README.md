@@ -318,7 +318,9 @@ Next:
    Higher stages are not started automatically.
    The next guarded stage is prepared as `python3 scripts/run-browse-users.py --users 250`;
    it forces the verified client and pool policy, keeps existing budgets and
-   stop conditions, and has no live result yet. See the load guide before running.
+   stop conditions. Its first run stopped early on one confirmed queue-full
+   HTTP 503 after 60 requests; no 250-user pass or capacity verdict. Post-failure
+   recovery checks are next; preserve the failed Job and see the load guide.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
