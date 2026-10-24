@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -28,6 +29,21 @@ runner = load('browse_users_runner', 'scripts/run-browse-users.py')
 
 
 class BrowseUsers(unittest.TestCase):
+    def test_resource_gate_blocks_http_until_same_run_is_ready(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'gate'
+            def ready(seconds):
+                path.write_text(fixtures.config()['run_id'])
+            with redirect_stdout(io.StringIO()):
+                probe.wait_for_resource_gate(fixtures.config(), path, sleep=ready, clock=lambda: 0)
+                path.write_text('another-run')
+                with self.assertRaises(fixtures.probe.CheckFailed):
+                    probe.wait_for_resource_gate(fixtures.config(), path)
+        with patch.object(probe, 'wait_for_resource_gate', side_effect=fixtures.probe.CheckFailed('NOT_READY')), \
+                patch.object(probe, 'run') as workload, self.assertRaises(fixtures.probe.CheckFailed):
+            probe.execute(fixtures.config())
+        workload.assert_not_called()
+
     def test_fifty_paced_users_read_only_the_service_and_keep_inventory(self):
         config, http, urls = fixtures.config(), fixtures.Http(), []
 
@@ -93,8 +109,10 @@ class BrowseUsers(unittest.TestCase):
         expected = {'browse-a': {'container': 'browse', 'cpu': .5, 'memory': 256}}
         now = datetime(2026, 10, 24, 10, 0, 2, tzinfo=timezone.utc).timestamp()
         self.assertEqual(runner.sample(payload, expected, now)['browse-a']['cpu_limit_fraction'], .2)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(runner.MetricSampleError) as caught:
             runner.sample(payload, expected, now + 100)
+        self.assertEqual(caught.exception.details['pod'], 'browse-a')
+        self.assertGreater(caught.exception.details['age_seconds'], 60)
         payload['items'][0]['containers'][0]['name'] = 'foreign'
         with self.assertRaises(ValueError):
             runner.sample(payload, expected, now)
@@ -134,7 +152,8 @@ class BrowseUsers(unittest.TestCase):
 
 class BrowseUsersRunner(unittest.TestCase):
     def scenario(self, fault=None, preflight_only=False):
-        commands, ticks, polls = [], [0], [0]
+        commands, polls = [], [0]
+        generator = runner.JOB + '-pod'
         now = datetime.now(timezone.utc).isoformat()
         config = fixtures.config()
         counts = {}
@@ -146,15 +165,19 @@ class BrowseUsersRunner(unittest.TestCase):
                              for row in config['targets'][api]]}
 
         def resources():
-            return {'items': [{'metadata': {'name': name}, 'timestamp': now,
-                               'containers': [{'name': 'check' if name == 'generator' else 'browse',
+            return {'items': [{'metadata': {'name': name},
+                               'timestamp': '2020-01-01T00:00:00Z'
+                               if fault == 'stale-generator' and polls[0] == 1 and name == generator else now,
+                               'containers': [{'name': 'check' if name == generator else 'browse',
                                                'usage': {'cpu': '10m', 'memory': '32Mi'}}]}
-                              for name in ('browse-0', 'browse-1', 'generator')]}
+                              for name in ('browse-0', 'browse-1', generator)]}
 
         def kube(*args, **kwargs):
             commands.append(args)
             if args == ('config', 'current-context'):
                 return 'trafficxx-lab-aks'
+            if args[:2] == ('auth', 'can-i'):
+                return 'yes'
             if args[:2] == ('get', 'job') and '--ignore-not-found' in args:
                 return 'job/existing' if fault == 'existing' else ''
             if args[:2] == ('get', 'jobs'):
@@ -183,7 +206,7 @@ class BrowseUsersRunner(unittest.TestCase):
                         'foreign' if fault == 'foreign-create' else 'browse-users-abcdef123456-files'}}]}}},
                     'status': {'succeeded': 1} if polls[0] > 2 else {}})
             if args[:2] == ('get', 'pods'):
-                return json.dumps({'items': [{'metadata': {'name': 'generator', 'ownerReferences': [
+                return json.dumps({'items': [{'metadata': {'name': generator, 'ownerReferences': [
                     {'controller': True, 'kind': 'Job', 'uid': 'owned'}]},
                     'status': {'phase': 'Succeeded' if polls[0] > 2 else 'Running',
                                'containerStatuses': [{'restartCount': 0}]}}]})
@@ -213,6 +236,16 @@ class BrowseUsersRunner(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('BROWSE_USERS_50_OK', output)
         self.assertFalse(any(args[0] in ('delete', 'scale') for args in commands))
+
+    def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
+        code, output, commands = self.scenario('stale-generator')
+        self.assertEqual(code, 0)
+        self.assertIn('BROWSE_USERS_METRICS_WARMUP', output)
+        self.assertLess(output.index('BROWSE_USERS_METRICS_WARMUP'),
+                        output.index('BROWSE_USERS_RESOURCE_GATE_RELEASED'))
+        releases = [args for args in commands if args[0] == 'exec']
+        self.assertEqual(len(releases), 1)
+        self.assertIn('pod/' + runner.JOB + '-pod', releases[0])
 
     def test_preflight_or_existing_job_never_creates_load_resources(self):
         for fault, preflight in ((None, True), ('existing', False), ('no-metrics', False),

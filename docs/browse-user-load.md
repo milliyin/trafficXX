@@ -1,6 +1,7 @@
 # First in-cluster user-load stage
 
-Status: source and local validation passed. Live AKS results remain pending.
+Status: source/local validation passed. The first live attempt stopped on
+resource-metric freshness; a complete live workload result remains pending.
 This runs only the first 50-user stage; 100/250/500/1,000 users require separate
 review and preparation after these results. No scaling or new Azure resource
 provisioning is performed.
@@ -14,6 +15,14 @@ capacity. It shares node resources with applications; it is not a dedicated
 load-generator machine. Preflight also rejects an HPA targeting Browse.
 
 ## Workload
+
+The revised generator first waits for a per-run file in a private 1 MiB memory
+volume. The Cloud Shell parent releases it atomically only after both Browse
+pods and the generator have at least two distinct fresh resource samples and
+current CPU/memory below the start limits. Until then, no HTTP requests are sent.
+The parent needs existing pods/exec permission to write the file in this owned
+diagnostic pod; no RBAC or API token is added to the generator. The gate timeout
+is 90 seconds. The workload clock starts after this gate, not during warmup.
 
 One temporary Job runs 50 closed-loop virtual users for 60 seconds. Each user
 alternates GET availability for demo-general and demo-seated through the internal
@@ -53,6 +62,9 @@ both Browse pods and the generator. Browse is expected to retain 500m CPU and
 container limit across 20 seconds, or memory at or above 85% across ten seconds,
 stops the generator. Missing/stale serving metrics stop the run too. A new
 generator gets 40 seconds after it is first seen Running for metrics to appear.
+Stale generator samples during startup are excluded while the HTTP gate stays
+closed. Stale serving samples still fail immediately; stale generator samples
+after the gate opens also fail immediately. The 60-second freshness limit stays.
 At least two distinct fresh source timestamps are required for each pod before
 a final pass; repeated reads of one timestamp are not new samples.
 
@@ -66,7 +78,7 @@ To stop externally, the parent tests this diagnostic Job's UID and shortens
 only its active deadline. Job/Pod logs are retained for inspection. No serving
 Deployment is scaled or deleted. Lost create responses are resolved using the
 unique script ConfigMap reference before a Job can be stopped; a concurrent
-run's Job must not be modified. The Job itself has a 180-second active deadline,
+run's Job must not be modified. The Job itself has a 240-second active deadline,
 zero retries, restartPolicy Never and a one-hour completion TTL. Its script
 ConfigMap is owned by the Job for eventual cleanup. A preparation failure can
 leave the named script ConfigMap for inspection.
@@ -89,7 +101,8 @@ python3 scripts/run-browse-users.py
 No image build is needed. A read-only --preflight-only mode is available to
 check account/context/pod/resource-metric readiness without creating a Job; it
 does not establish inventory or workload success. The runner refuses an existing
-browse-users-50 Job and an active earlier read-load-baseline Job. Concurrent
+browse-users-50-v2 Job and any active earlier browse-users-50/read-load-baseline
+Job. The terminal failed original is preserved. Concurrent
 starts of this same stage use the same fixed Job name, so only one can create
 it. Do not delete an existing diagnostic Job blindly or repeat a failed stage
 to diagnose. Preserve its logs first and inspect desired/current conditions.
@@ -122,3 +135,33 @@ or SQL performance evidence. Native kubectl rendered the Job locally using an
 empty isolated kubeconfig; identity/security/image/ConfigMap/deadline/budget
 settings passed inspection. Docker stayed stopped; hosted CI and live metrics
 API access remain unverified.
+
+
+## First live attempt and revision
+
+Run 2ef4a23fc118 / Job browse-users-50 started on existing apps node
+aks-apps-35966020-vmss000000 using the existing Browse digest. The user supplied
+BROWSE_USERS_FAILED at observe_job_and_resources with POD_METRICS_NOT_FRESH,
+no accepted resource summary and generator_stop_requested true. Subsequent
+Job status confirmed Failed (79 seconds), so it was not left running. No
+complete workload/latency result or 50-user capacity pass was established.
+
+The later metrics check showed Browse sample ages 14.51 and 26.51 seconds,
+both inside the unchanged 60-second limit. The original failure did not retain
+the rejected pod/timestamp/age, so its exact source cannot be reconstructed
+from those later samples. Do not claim Browse was overloaded or the generator
+was definitely the rejected pod.
+
+Code inspection found a startup gap: missing generator metrics got a grace
+period but a stale first sample did not. The revision excludes those startup
+samples while the resource gate is closed, logs safe warmup metadata, and
+reports the rejected pod, source timestamp and age on freshness failure. It
+does not relax the freshness threshold. CPU/memory maxima include this startup
+observation window as well as the workload.
+
+The revised Job is browse-users-50-v2; the failed original is not deleted.
+Allow about three minutes with Cloud Shell open, including metrics warmup and
+the unchanged 60-second load phase. All 447 offline methods passed, including
+gate/run matching, no HTTP before release, stale-generator startup recovery
+and exact freshness diagnostics. The shortened real HTTP smoke and native Job
+render passed again; the local server stopped. The revised live run is pending.

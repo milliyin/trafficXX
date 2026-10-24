@@ -14,6 +14,24 @@ THINK = 2
 MAX_ATTEMPTS = 1500
 
 
+def wait_for_resource_gate(config, path=Path('/state/start'), sleep=time.sleep, clock=time.monotonic):
+    read.targets_from(config)  # Validate before waiting; no HTTP is sent here.
+    print(json.dumps({'result': 'BROWSE_USERS_WAITING_FOR_RESOURCE_SAMPLES',
+                      'run_id': config['run_id'], 'timeout_seconds': 90}), flush=True)
+    deadline = clock() + 90
+    while True:
+        if path.exists():
+            read.require(path.read_text().strip() == config['run_id'], 'RESOURCE_GATE_RUN_MISMATCH')
+            return
+        read.require(clock() < deadline, 'RESOURCE_GATE_TIMEOUT')
+        sleep(1)
+
+
+def execute(config):
+    wait_for_resource_gate(config)
+    return run(config)
+
+
 def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
         think=THINK, users=USERS):
     targets = read.targets_from(config)['browse']
@@ -145,7 +163,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
 
 if __name__ == '__main__':
     try:
-        print(json.dumps(run(json.loads(Path('/checks/targets.json').read_text()))), flush=True)
+        print(json.dumps(execute(json.loads(Path('/checks/targets.json').read_text()))), flush=True)
     except Exception as error:
         print(json.dumps({'result': 'BROWSE_USERS_WORKLOAD_FAILED', 'error_type': type(error).__name__,
                           'check': str(error) if isinstance(error, read.CheckFailed) else None}), flush=True)

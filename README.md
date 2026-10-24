@@ -294,6 +294,9 @@ Next:
    prepared and locally tested: one minute, paced reads, at most 1,500 requests,
    pool/resource stop limits and CPU/memory sampling. Live evidence is pending;
    higher user counts and autoscaling are not enabled automatically.
+   Its first attempt stopped on metric freshness; the failed generator was
+   confirmed stopped. A revised version waits for fresh resource evidence before
+   traffic and records rejected pod/timestamp/age details. Live success is pending.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

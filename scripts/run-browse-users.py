@@ -12,7 +12,13 @@ import time
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-JOB = 'browse-users-50'
+JOB = 'browse-users-50-v2'
+
+
+class MetricSampleError(ValueError):
+    def __init__(self, pod, timestamp, age):
+        super().__init__('POD_METRICS_NOT_FRESH')
+        self.details = {'pod': pod, 'source_timestamp': timestamp, 'age_seconds': round(age, 3)}
 
 
 def load(name):
@@ -52,8 +58,10 @@ def sample(payload, expected, now=None):
         timestamp = row['timestamp'].replace('Z', '+00:00')
         timestamp = re.sub(r'(\.\d{6})\d+(?=[+-]|$)', r'\1', timestamp)
         stamp = datetime.fromisoformat(timestamp)
-        require(stamp.tzinfo is not None and -5 <= now - stamp.timestamp() <= 60,
-                'POD_METRICS_NOT_FRESH')
+        require(stamp.tzinfo is not None, 'POD_METRICS_TIMEZONE_MISSING')
+        age = now - stamp.timestamp()
+        if not -5 <= age <= 60:
+            raise MetricSampleError(name, row['timestamp'], age)
         containers = row['containers']
         require(len(containers) == 1 and containers[0]['name'] == expected[name]['container'],
                 'UNEXPECTED_METRIC_CONTAINERS')
@@ -130,9 +138,17 @@ def stop_owned_job(uid):
         {'op': 'replace', 'path': '/spec/activeDeadlineSeconds', 'value': 1}]))
 
 
+def release_gate(pod, run_id):
+    require(pod.startswith(JOB + '-') and re.fullmatch(r'[0-9a-f]{12}', run_id), 'UNEXPECTED_GATE_TARGET')
+    base.kube('exec', '-n', 'trafficxx', 'pod/' + pod, '-c', 'check', '--', 'python', '-c',
+              "from pathlib import Path; p=Path('/state/start.tmp'); p.write_text("
+              + json.dumps(run_id) + "); p.replace('/state/start')")
+
+
 def execute(*, preflight_only=False):
     stage, job, files_name = 'subscription', None, None
     create_requested = False
+    gate_released = False
     watch = ResourceWatch()
     logs = ''
     try:
@@ -144,7 +160,8 @@ def execute(*, preflight_only=False):
         require(not base.kube('get', 'job', JOB, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
                 'INSPECT_EXISTING_50_USER_JOB')
         other = json.loads(base.kube('get', 'jobs', '-n', 'trafficxx', '-o', 'json'))['items']
-        require(not any(row['metadata']['name'] == 'read-load-baseline'
+        require(not any((row['metadata']['name'] == 'read-load-baseline'
+                         or row['metadata']['name'].startswith('browse-users-50'))
                         and not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
                                     for c in row.get('status', {}).get('conditions', []))
                         for row in other), 'OTHER_READ_LOAD_ACTIVE')
@@ -164,6 +181,9 @@ def execute(*, preflight_only=False):
                 and not node['spec'].get('unschedulable')
                 and any(row['type'] == 'Ready' and row['status'] == 'True'
                         for row in node['status'].get('conditions', [])), 'EXISTING_APPS_NODE_NOT_READY')
+        stage = 'generator_gate_permission'
+        require(base.kube('auth', 'can-i', 'create', 'pods/exec', '-n', 'trafficxx') == 'yes',
+                'GENERATOR_GATE_EXEC_NOT_ALLOWED')
         app = json.loads(base.kube('get', 'deployment', 'browse', '-n', 'trafficxx', '-o', 'json'))
         container = next(row for row in app['spec']['template']['spec']['containers'] if row['name'] == 'browse')
         limits = container['resources']['limits']
@@ -215,7 +235,7 @@ def execute(*, preflight_only=False):
                           'inventory_writes': False,
                           'note': 'Only 50 users; no automatic progression or scaling.'}), flush=True)
         stage = 'observe_job_and_resources'
-        deadline, running_since, generator = time.monotonic() + 210, None, None
+        deadline, running_since, generator = time.monotonic() + 270, None, None
         while True:
             finished = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
             require(finished['metadata']['uid'] == job['metadata']['uid'], 'DIAGNOSTIC_JOB_REPLACED')
@@ -237,18 +257,34 @@ def execute(*, preflight_only=False):
                 require(pods and pods[0]['status']['phase'] == 'Succeeded', 'GENERATOR_COMPLETION_MISSING')
                 break
             require(time.monotonic() < deadline, 'DIAGNOSTIC_DEADLINE')
-            selected = dict(expected)
-            if generator:
-                selected[generator] = {'container': 'check', 'cpu': 1, 'memory': 256}
-            values = sample(metrics(), selected)
+            payload = metrics()
+            values = sample(payload, expected)
             require(set(expected) <= set(values), 'BROWSE_RESOURCE_METRICS_MISSING')
+            if generator:
+                try:
+                    values.update(sample(payload, {generator: {'container': 'check', 'cpu': 1, 'memory': 256}}))
+                except MetricSampleError as problem:
+                    if gate_released or (running_since is not None and time.monotonic() - running_since > 40):
+                        raise
+                    print(json.dumps({'result': 'BROWSE_USERS_METRICS_WARMUP', **problem.details}), flush=True)
             if running_since is not None and time.monotonic() - running_since > 40:
                 require(generator in values, 'GENERATOR_RESOURCE_METRICS_MISSING')
             watch.add(values, time.monotonic())
+            if (not gate_released and generator is not None and generator in values
+                    and running_since is not None
+                    and set(watch.rows) == set(expected) | {generator}
+                    and all(len(row['timestamps']) >= 2 for row in watch.rows.values())
+                    and all(row['cpu_limit_fraction'] < .8 and row['memory_limit_fraction'] < .85
+                            for row in values.values())):
+                release_gate(generator, run_id)
+                gate_released = True
+                print(json.dumps({'result': 'BROWSE_USERS_RESOURCE_GATE_RELEASED', 'run_id': run_id,
+                                  'distinct_fresh_samples_per_pod_minimum': 2}), flush=True)
             time.sleep(5)
         stage = 'validate_measurements'
         require(bool(logs.splitlines()), 'WORKLOAD_LOGS_MISSING')
         outcome = json.loads(logs.splitlines()[-1])
+        require(gate_released, 'RESOURCE_GATE_NOT_RELEASED')
         validate(outcome, run_id)
         require(generator is not None and set(watch.rows) == set(expected) | {generator}
                 and all(len(row['timestamps']) >= 2 for row in watch.rows.values()),
@@ -259,6 +295,7 @@ def execute(*, preflight_only=False):
             print(line, flush=True)
         print(json.dumps({'result': 'BROWSE_USERS_50_OK', 'run_id': run_id, 'job': JOB,
                           'resources': watch.summary(), 'serving_pods_unchanged': True,
+                          'resource_gate_released': True,
                           'inventory_writes': False, 'latency_slo_tested': False,
                           'note': 'Review results before authorizing the 100-user stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
         return 0
@@ -287,7 +324,9 @@ def execute(*, preflight_only=False):
             print(line, flush=True)
         print(json.dumps({'result': 'BROWSE_USERS_FAILED', 'stage': stage,
                           'error_type': type(error).__name__,
-                          'check': str(error) if type(error) is ValueError else None,
+                          'check': str(error) if type(error) is ValueError or isinstance(error, MetricSampleError) else None,
+                          'metric_failure': getattr(error, 'details', None),
+                          'resource_gate_released': gate_released,
                           'command_exit_code': getattr(error, 'returncode', None),
                           'job': JOB if job else None, 'files': files_name,
                           'generator_stop_attempted': stop_attempted, 'generator_stop_requested': stop_requested,

@@ -1,13 +1,13 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: browse-users-50
+  name: browse-users-50-v2
   namespace: trafficxx
   labels:
     app.kubernetes.io/name: trafficxx-browse-users
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 180
+  activeDeadlineSeconds: 240
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
@@ -33,6 +33,10 @@ spec:
         - name: check
           configMap:
             name: read-load-files
+        - name: state
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
       containers:
         - name: check
           image: trafficxxacre8708a85.azurecr.io/trafficxx:build-required
@@ -56,3 +60,5 @@ spec:
             - name: check
               mountPath: /checks
               readOnly: true
+            - name: state
+              mountPath: /state
