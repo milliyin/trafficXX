@@ -90,7 +90,9 @@ def targets_from(config):
     return config['targets']
 
 
-def pool_snapshot(target, customer, http):
+def pool_snapshot(target, customer, http, *, expected_pool_max=4):
+    require(type(expected_pool_max) is int and expected_pool_max in (4, 8)
+            and (expected_pool_max == 4 or target['api'] == 'browse'), 'INVALID_EXPECTED_POOL_SIZE')
     status, row = http(target, '/internal/database-pool', customer)
     require(status == 200 and re.fullmatch(r'[0-9a-f]{32}', row['instance_id']) is not None,
             'POOL_PROCESS_UNAVAILABLE')
@@ -105,9 +107,10 @@ def pool_snapshot(target, customer, http):
     waiting_limit = values.get('pool_waiting_limit', 8)
     require(type(waiting_limit) is int and waiting_limit in ((8, 16) if target['api'] == 'browse' else (8,)),
             'POOL_WAITING_LIMIT_CHANGED')
-    require(values['pool_min'] in ((1, 4) if target['api'] == 'browse' else (1,))
-            and values['pool_max'] == 4
-            and 1 <= values['pool_size'] <= 4 and values['pool_available'] <= values['pool_size']
+    require(values['pool_min'] in ((8,) if expected_pool_max == 8 else
+                                  ((1, 4) if target['api'] == 'browse' else (1,)))
+            and values['pool_max'] == expected_pool_max
+            and 1 <= values['pool_size'] <= expected_pool_max and values['pool_available'] <= values['pool_size']
             and values['requests_waiting'] <= waiting_limit, 'POOL_BOUNDS_CHANGED')
     return row
 

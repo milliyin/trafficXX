@@ -67,13 +67,18 @@ def safe_pool(row):
                            if key in row['statistics']}}
 
 
-def failure_pools(targets, initial, customer, http):
+def snapshot_pool(target, customer, http, pool_size=4):
+    return (read.pool_snapshot(target, customer, http, expected_pool_max=8) if pool_size == 8
+            else read.pool_snapshot(target, customer, http))
+
+
+def failure_pools(targets, initial, customer, http, pool_size=4):
     observations = []
     for target in targets:
         name = target['pod']
         row = {'pod': name, 'before': safe_pool(initial[name])}
         try:
-            after = read.pool_snapshot(target, customer, http)
+            after = snapshot_pool(target, customer, http, pool_size)
             row['after'] = safe_pool(after)
             row['same_process'] = after['instance_id'] == initial[name]['instance_id']
             if row['same_process']:
@@ -115,6 +120,10 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     targets = read.targets_from(config)['browse']
     configured_users = config.get('users', USERS)
     users = configured_users if users is None else users
+    pool_size = config.get('pool_size', 4)
+    read.require(type(pool_size) is int and pool_size in (4, 8)
+                 and (pool_size == 4 or (users == 250 and config.get('single_query_comparison') is True)),
+                 'INVALID_POOL_SIZE_COMPARISON')
     read.require(type(users) is int and users in (50, 100, 250) and users == configured_users
                  and duration > 0 and think > 0, 'INVALID_STAGE')
     if users == 250:
@@ -137,12 +146,12 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         for route in ('general', 'seated'):
             status, body = http(target, '/events/demo-' + route + '/availability', customer)
             read.validate_response('browse', route, status, body)
-    initial = {target['pod']: read.pool_snapshot(target, customer, http) for target in targets}
+    initial = {target['pod']: snapshot_pool(target, customer, http, pool_size) for target in targets}
     if config.get('single_query_comparison'):
         for row in initial.values():
             query_timing_snapshot(row['statistics'])
     if config.get('require_warm_pool'):
-        read.require(all(row['statistics']['pool_min'] == 4 and row['statistics']['pool_size'] == 4
+        read.require(all(row['statistics']['pool_min'] == pool_size and row['statistics']['pool_size'] == pool_size
                          for row in initial.values()), 'WARM_POOL_NOT_READY')
     error_keys = read.ERROR_KEYS
     if config.get('require_rejection_counters'):
@@ -176,7 +185,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                     if stop.is_set():
                         return
                     name = target['pod']
-                    row = read.pool_snapshot(target, customer, http)
+                    row = snapshot_pool(target, customer, http, pool_size)
                     before, values = initial[name], row['statistics']
                     read.require(row['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
                     read.require(all(values[key] == before['statistics'][key] for key in error_keys),
@@ -267,14 +276,14 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     if errors or failures or summary['users_with_requests'] != users:
         diagnostics = {'first_failure': first_failure[0] if first_failure else None,
                        'service_error_codes': dict(Counter(row[5] for row in results if row[5])),
-                       'pool_snapshots_after_workload_stopped': failure_pools(targets, initial, customer, http)}
+                       'pool_snapshots_after_workload_stopped': failure_pools(targets, initial, customer, http, pool_size)}
         print(json.dumps({'result': 'BROWSE_USERS_PHASE_FAILED', 'run_id': config['run_id'],
                           **summary, **diagnostics}), flush=True)
         raise read.CheckFailed('BROWSE_USERS_WORKLOAD_OR_POOL_STOP')
     pools = []
     for target in targets:
         name = target['pod']
-        after = read.pool_snapshot(target, customer, http)
+        after = snapshot_pool(target, customer, http, pool_size)
         before = initial[name]
         read.require(after['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
         read.require(all(after['statistics'][key] == before['statistics'][key] for key in error_keys),
@@ -282,7 +291,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         read.require(after['statistics']['requests_num'] >= before['statistics']['requests_num']
                      and after['statistics']['connections_num'] >= before['statistics']['connections_num'],
                      'POOL_COUNTER_RESET')
-        pools.append({'pod': name, 'pool_max': 4,
+        pools.append({'pod': name, 'pool_max': pool_size,
                       'pool_waiting_limit': before['statistics'].get('pool_waiting_limit', 8),
                       'pool_error_counters_unchanged': True,
                       'sampled_peak_size': max(peaks[name]['size'], after['statistics']['pool_size']),
@@ -303,6 +312,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
             'http_client_policy': getattr(read, 'HTTP_CLIENT_POLICY', None),
             'single_query_verified': bool(config.get('single_query_comparison')),
+            'pool_size_verified': pool_size,
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
 

@@ -71,6 +71,17 @@ class BrowsePool(unittest.TestCase):
         self.pool.wait.assert_called_once_with(timeout=30)
         self.assertIs(database.pool, self.pool)
 
+    def test_reviewed_eight_slot_policy_is_ready_before_serving(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN',
+                                            'BROWSE_DB_POOL_MAX_WAITING')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '8', 'BROWSE_DB_POOL_MIN': '8',
+                                    'BROWSE_DB_POOL_MAX_WAITING': '16'}):
+            database.open()
+        options = self.factory.call_args.kwargs
+        self.assertEqual((options['min_size'], options['max_size'], options['max_waiting']), (8, 8, 16))
+        self.assertEqual(options['timeout'], 3)
+        self.pool.wait.assert_called_once_with(timeout=30)
+
     def test_warm_startup_timeout_closes_pool_without_admitting_requests(self):
         database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN')
         self.pool.wait.side_effect = PoolTimeout('PRIVATE')

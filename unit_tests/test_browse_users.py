@@ -29,6 +29,36 @@ runner = load('browse_users_runner', 'scripts/run-browse-users.py')
 
 
 class BrowseUsers(unittest.TestCase):
+    def test_eight_connections_are_only_accepted_by_explicit_browse_comparison(self):
+        config = dict(fixtures.config(), users=250, pool_size=8, client_memory_comparison=True,
+                      single_query_comparison=True, require_warm_pool=True,
+                      require_rejection_counters=True, required_queue_limit=16)
+        class Eight(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, row = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    stats = row['statistics']
+                    stats.update(pool_min=8, pool_max=8, pool_size=8, pool_available=8, pool_waiting_limit=16,
+                                 rejections_queue_full=0, rejections_timeout=0, rejections_closed=0,
+                                 timing_event_query_count=0, timing_units_query_count=0)
+                    for phase in probe.TIMING_PHASES:
+                        stats['timing_' + phase + '_count'] = stats['requests_num']
+                        stats['timing_' + phase + '_total_us'] = stats['requests_num'] * 1000
+                return status, row
+        http, sequence = Eight(), iter(range(100000))
+        target = config['targets']['browse'][0]
+        with self.assertRaises(fixtures.probe.CheckFailed):
+            fixtures.probe.pool_snapshot(target, 'test', http)
+        with self.assertRaises(fixtures.probe.CheckFailed):
+            fixtures.probe.pool_snapshot(config['targets']['booking'][0], 'test', http, expected_pool_max=8)
+        def service(url, customer):
+            return http(config['targets']['browse'][next(sequence) % 2], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=.8, think=.05)
+        self.assertEqual(result['users_with_requests'], 250)
+        self.assertEqual(result['pool_size_verified'], 8)
+        self.assertTrue(all(row['pool_max'] == 8 for row in result['pools']))
+        self.assertEqual(result['attempts'], result['valid_responses'])
     def test_failure_snapshots_retain_timing_evidence_without_private_fields(self):
         targets = fixtures.config()['targets']['browse']
         stats = dict(pool_min=4, pool_max=4, pool_size=4, pool_available=4,
@@ -406,7 +436,7 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4):
         commands, polls = [], [0]
         if single_query_comparison:
             client_memory_comparison = True
@@ -416,7 +446,8 @@ class BrowseUsersRunner(unittest.TestCase):
             queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = (f'browse-users-{users}-singlequery' if single_query_comparison else
+        job_name = ('browse-users-250-pool8' if pool_size == 8 else
+                    f'browse-users-{users}-singlequery' if single_query_comparison else
                     'browse-users-250' if users == 250 else
                     'browse-users-100-clientmemory' if client_memory_comparison else
                     'browse-users-100-queue16' if queue_comparison else
@@ -464,8 +495,8 @@ class BrowseUsersRunner(unittest.TestCase):
                                    'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}})
             if args[:2] == ('get', 'deployment'):
                 return json.dumps({'spec': {'template': {'spec': {'containers': [
-                    {'name': 'browse', 'env': ([{'name': 'BROWSE_DB_POOL_MIN', 'value': '4'},
-                        {'name': 'BROWSE_DB_POOL_MAX', 'value': '4'},
+                    {'name': 'browse', 'env': ([{'name': 'BROWSE_DB_POOL_MIN', 'value': str(pool_size)},
+                        {'name': 'BROWSE_DB_POOL_MAX', 'value': str(pool_size)},
                         {'name': 'BROWSE_DB_POOL_MAX_WAITING', 'value': '16' if queue_comparison and fault != 'old-queue' else '8'}] if warm_pool and fault != 'cold-policy' else []), 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
             if args[:2] == ('create', 'configmap'):
                 source = next(arg.split('=', 2)[2] for arg in args if arg.startswith('--from-file=targets.json='))
@@ -475,6 +506,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 self.assertEqual(json.loads(Path(source).read_text())['required_queue_limit'], 16 if queue_comparison else 8)
                 self.assertEqual(json.loads(Path(source).read_text())['client_memory_comparison'], client_memory_comparison)
                 self.assertEqual(json.loads(Path(source).read_text())['single_query_comparison'], single_query_comparison)
+                self.assertEqual(json.loads(Path(source).read_text())['pool_size'], pool_size)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -514,7 +546,7 @@ class BrowseUsersRunner(unittest.TestCase):
             result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
                                     rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison,
                                     client_memory_comparison=client_memory_comparison,
-                                    single_query_comparison=single_query_comparison)
+                                    single_query_comparison=single_query_comparison, pool_size=pool_size)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -652,6 +684,18 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.execute(users=250, single_query_comparison=True, diagnostic_retry=True)
 
+    def test_pool8_runner_requires_separate_250_mode_and_scoped_job(self):
+        code, output, commands = self.scenario(users=250, single_query_comparison=True, pool_size=8)
+        self.assertEqual(code, 0, output)
+        self.assertIn('"job": "browse-users-250-pool8"', output)
+        self.assertIn('"pool_size": 8', output)
+        code, output, commands = self.scenario('resource-stop', users=250, single_query_comparison=True, pool_size=8)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2], 'browse-users-250-pool8')
+        for count, single in ((100, True), (250, False)):
+            with self.assertRaisesRegex(ValueError, 'INVALID_POOL_SIZE_COMPARISON'):
+                runner.execute(users=count, single_query_comparison=single, pool_size=8)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -737,6 +781,17 @@ class BrowseUsersRunner(unittest.TestCase):
         single_250 = dict(single, users=250, users_with_requests=250, attempts=7500,
                           valid_responses=7500, status_counts={'200': 7500})
         runner.validate(single_250, 'abcdef123456', 250, True, True, True, True, True)
+        eight = deepcopy(single_250)
+        eight['pool_size_verified'] = 8
+        with self.assertRaisesRegex(ValueError, 'WARM_POOL_NOT_VERIFIED'):
+            runner.validate(eight, 'abcdef123456', 250, True, True, True, True, True, 8)
+        for row in eight['initial_pools'].values():
+            row['statistics'].update(pool_min=8, pool_max=8, pool_size=8)
+        for row in eight['pools']:
+            row['pool_max'] = 8
+        runner.validate(eight, 'abcdef123456', 250, True, True, True, True, True, 8)
+        with self.assertRaises(ValueError):
+            runner.validate(eight, 'abcdef123456', 250, True, True, True, True, True)
         with self.assertRaises(ValueError):
             runner.validate(dict(single_250, attempts=7501), 'abcdef123456', 250, True, True, True, True, True)
         larger = dict(queue, users=250, users_with_requests=250, attempts=7500,

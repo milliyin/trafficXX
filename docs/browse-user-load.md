@@ -1654,3 +1654,8 @@ probe/bounds updates, a distinct Job, resource/latency observation and a
 reviewable rollback before execution. It has not been implemented or run.
 No database SKU/region move, scaling, grants, queue change or new load occurred
 as part of this read-only observation. The original renewal Job remains separate.
+
+The subsequent [pool-size comparison implementation](browse-pool-size-comparison.md)
+is now prepared with explicit eight-slot probe guards, an independent Job,
+a preflight-only mode, a saved recovery journal and restoration to four on
+normal completion or handled failure. Its live output is pending.

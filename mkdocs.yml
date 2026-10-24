@@ -110,6 +110,7 @@ nav:
   - Testing and recovery:
       - Read load baseline: read-load-baseline.md
       - Browse user-load experiments: browse-user-load.md
+      - Browse pool size comparison: browse-pool-size-comparison.md
       - Booking write baseline: booking-write-baseline.md
       - Browse concurrency: browse-concurrency.md
       - Browse pod recovery: browse-recovery.md

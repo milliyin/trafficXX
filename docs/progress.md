@@ -66,7 +66,8 @@ or establish sustained production capacity.
   client reads averaged 33.5-34.0 ms. This supports investigating round-trip
   overhead and bounded pool concurrency; it does not establish saturation
   during the subsecond failures. A controlled four-versus-eight connection
-  comparison is the proposed next experiment and has not been prepared or run.
+  comparison is [prepared with a recovery journal and restoration to four](browse-pool-size-comparison.md).
+  Its live preflight and workload output are pending; no capacity change has run.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification
