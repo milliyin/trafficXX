@@ -2,7 +2,7 @@
 
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.
-Post-pooling reservation flow/concurrency/seat-contention checks are pending.
+Post-pooling reservation flow passed; concurrency/seat-contention checks are pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -49,8 +49,16 @@ trafficxx-lab-booking and TLSv1.3. Physical connection reuse, rollback reuse,
 capacity503 and closed-connection replacement all passed with its own one-slot
 pool. The "discarding closed connection" warning belongs to the deliberate
 diagnostic close. It made no inventory writes and does not prove Booking token
-renewal or serving-pod write correctness. Repeat the behavioural tests below
-before claiming the pooled booking flow and concurrency cases passed.
+renewal or serving-pod write correctness by itself.
+
+The subsequent BOOKING_FLOW_OK verified reservation
+a09bb8b1-289b-4f64-958a-a0bb920e1d53: duplicate requests reused its hold,
+changed-request key reuse was rejected, another customer's lookup was hidden,
+cancellation reached CANCELLED, and replaying the cancelled key returned that
+same outcome. This establishes the sequential pooled API flow for that run.
+Concurrent duplicate and seat-contention checks remain pending. The test retains
+cancelled history/outbox rows; post-test inventory and event processing need
+separate checks.
 
 ## What changes
 
@@ -182,6 +190,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI and post-pooling write-flow/
-concurrency checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI and post-pooling concurrency
+checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.
