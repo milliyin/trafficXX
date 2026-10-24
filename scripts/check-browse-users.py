@@ -1,0 +1,152 @@
+"""In-cluster read-only stage: 50 paced users for 60 seconds, no retries."""
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+import json
+from pathlib import Path
+import threading
+import time
+
+import read_probe as read
+
+USERS = 50
+DURATION = 60
+THINK = 2
+MAX_ATTEMPTS = 1500
+
+
+def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
+        think=THINK, users=USERS):
+    targets = read.targets_from(config)['browse']
+    read.require(users == 50 and duration > 0 and think > 0, 'INVALID_STAGE')
+    customer = 'lab-browse-users-' + config['run_id']
+    for target in targets:
+        for route in ('general', 'seated'):
+            status, body = http(target, '/events/demo-' + route + '/availability', customer)
+            read.validate_response('browse', route, status, body)
+    initial = {target['pod']: read.pool_snapshot(target, customer, http) for target in targets}
+    peaks = {target['pod']: {'size': initial[target['pod']]['statistics']['pool_size'],
+                             'waiting': initial[target['pod']]['statistics']['requests_waiting']}
+             for target in targets}
+    waiting_since = {target['pod']: None for target in targets}
+    results, failures = [], []
+    lock, stop = threading.Lock(), threading.Event()
+    active, peak_active = 0, 0
+    begun = time.monotonic()
+    deadline = begun + duration
+
+    def observe():
+        try:
+            while not stop.is_set():
+                for target in targets:
+                    if stop.is_set():
+                        return
+                    name = target['pod']
+                    row = read.pool_snapshot(target, customer, http)
+                    before, values = initial[name], row['statistics']
+                    read.require(row['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
+                    read.require(all(values[key] == before['statistics'][key] for key in read.ERROR_KEYS),
+                                 'POOL_ERROR_COUNTER_INCREASED')
+                    peaks[name]['size'] = max(peaks[name]['size'], values['pool_size'])
+                    peaks[name]['waiting'] = max(peaks[name]['waiting'], values['requests_waiting'])
+                    now = time.monotonic()
+                    if values['requests_waiting']:
+                        if waiting_since[name] is None:
+                            waiting_since[name] = now
+                        read.require(now - waiting_since[name] < 10, 'SAMPLED_POOL_WAITING_TEN_SECONDS')
+                    else:
+                        waiting_since[name] = None
+                stop.wait(1)
+        except Exception as error:
+            with lock:
+                failures.append(str(error) if isinstance(error, read.CheckFailed) else type(error).__name__)
+            stop.set()
+
+    def user(index):
+        nonlocal active, peak_active
+        # Spread initial requests across one think interval, avoiding a cold burst.
+        if stop.wait(think * index / users):
+            return
+        for iteration in range(min(30, MAX_ATTEMPTS // users)):
+            if stop.is_set() or time.monotonic() >= deadline:
+                return
+            route = ('general', 'seated')[(index + iteration) % 2]
+            start = time.perf_counter()
+            status, error = None, None
+            with lock:
+                active += 1
+                peak_active = max(active, peak_active)
+            try:
+                status, body = service('http://browse.trafficxx.svc.cluster.local/events/demo-'
+                                       + route + '/availability', customer)
+                read.validate_response('browse', route, status, body)
+                read.require(time.perf_counter() - start <= 2, 'REQUEST_OVER_TWO_SECONDS')
+            except Exception as problem:
+                error = str(problem) if isinstance(problem, read.CheckFailed) else type(problem).__name__
+                stop.set()
+            finally:
+                elapsed = time.perf_counter() - start
+                with lock:
+                    active -= 1
+                    results.append((index, elapsed, status, route, error))
+            if error or stop.wait(min(think, max(0, deadline - time.monotonic()))):
+                return
+
+    print(json.dumps({'result': 'BROWSE_USERS_PHASE_STARTED', 'run_id': config['run_id'],
+                      'users': users, 'duration_seconds': duration, 'think_seconds': think,
+                      'max_workload_attempts': MAX_ATTEMPTS}), flush=True)
+    with ThreadPoolExecutor(max_workers=users + 1) as executor:
+        observer = executor.submit(observe)
+        futures = [executor.submit(user, index) for index in range(users)]
+        try:
+            for future in futures:
+                future.result(timeout=duration + 10)
+            stop.wait(max(0, deadline - time.monotonic()))
+        finally:
+            elapsed = time.monotonic() - begun
+            stop.set()
+            observer.result(timeout=15)
+    errors = Counter(row[4] for row in results if row[4])
+    summary = {'users': users, 'users_with_requests': len({row[0] for row in results}),
+               'attempts': len(results), 'valid_responses': len(results) - sum(errors.values()),
+               'errors': dict(errors), 'status_counts': dict(Counter(str(row[2]) for row in results)),
+               'routes': dict(Counter(row[3] for row in results)),
+               'latency_ms': read.percentiles([row[1] for row in results]) if results else None,
+               'elapsed_seconds': round(elapsed, 3),
+               'observed_requests_per_second': round(len(results) / elapsed, 3) if elapsed > 0 else 0,
+               'sampled_peak_workload_http_in_flight': peak_active, 'observer_checks': failures}
+    if errors or failures or summary['users_with_requests'] != users:
+        print(json.dumps({'result': 'BROWSE_USERS_PHASE_FAILED', **summary}), flush=True)
+        raise read.CheckFailed('BROWSE_USERS_WORKLOAD_OR_POOL_STOP')
+    pools = []
+    for target in targets:
+        name = target['pod']
+        after = read.pool_snapshot(target, customer, http)
+        before = initial[name]
+        read.require(after['instance_id'] == before['instance_id'], 'BROWSE_PROCESS_CHANGED')
+        read.require(all(after['statistics'][key] == before['statistics'][key] for key in read.ERROR_KEYS),
+                     'POOL_ERROR_COUNTER_INCREASED')
+        read.require(after['statistics']['requests_num'] >= before['statistics']['requests_num']
+                     and after['statistics']['connections_num'] >= before['statistics']['connections_num'],
+                     'POOL_COUNTER_RESET')
+        pools.append({'pod': name, 'pool_max': 4,
+                      'pool_error_counters_unchanged': True,
+                      'sampled_peak_size': max(peaks[name]['size'], after['statistics']['pool_size']),
+                      'sampled_peak_waiting': max(peaks[name]['waiting'], after['statistics']['requests_waiting']),
+                      'borrows_delta': after['statistics']['requests_num'] - before['statistics']['requests_num'],
+                      'connection_attempts_delta': after['statistics']['connections_num'] - before['statistics']['connections_num']})
+        for route in ('general', 'seated'):
+            status, body = http(target, '/events/demo-' + route + '/availability', customer)
+            read.validate_response('browse', route, status, body)
+    return {'result': 'BROWSE_USERS_WORKLOAD_OK', 'run_id': config['run_id'], **summary,
+            'pools': pools, 'inventory_writes': False, 'availability_before_and_after': 100,
+            'pool_processes_unchanged': True, 'latency_slo_tested': False,
+            'scope': 'In-cluster Browse Service reads; 50 paced users are not 50 requests/s.'}
+
+
+if __name__ == '__main__':
+    try:
+        print(json.dumps(run(json.loads(Path('/checks/targets.json').read_text()))), flush=True)
+    except Exception as error:
+        print(json.dumps({'result': 'BROWSE_USERS_WORKLOAD_FAILED', 'error_type': type(error).__name__,
+                          'check': str(error) if isinstance(error, read.CheckFailed) else None}), flush=True)
+        raise SystemExit(1) from None

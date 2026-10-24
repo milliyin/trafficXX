@@ -290,6 +290,10 @@ Next:
    A subsequent read-only SQL audit verified 72 matching outbox/inbox records,
    36 latest-state projections and zero missing/mismatched/orphaned records.
    Native Service Bus counts also confirmed zero active messages/dead letters.
+   The [first in-cluster 50-user Browse stage](docs/browse-user-load.md) is now
+   prepared and locally tested: one minute, paced reads, at most 1,500 requests,
+   pool/resource stop limits and CPU/memory sampling. Live evidence is pending;
+   higher user counts and autoscaling are not enabled automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
