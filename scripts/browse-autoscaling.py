@@ -102,7 +102,40 @@ def scalar(query, expression):
     return value
 
 
-def owned_hpa():
+def metric_active(hpa):
+    return any(c['type'] == 'ScalingActive' and c['status'] == 'True'
+               for c in hpa.get('status', {}).get('conditions', []))
+
+
+class MetricReadiness:
+    """Bounded observation grace; never substitute zero for an HPA failure."""
+    def __init__(self):
+        self.since, self.gaps, self.total, self.maximum = None, 0, 0.0, 0.0
+
+    def observe(self, hpa, now):
+        if metric_active(hpa):
+            if self.since is not None:
+                elapsed = now - self.since
+                require(elapsed < 60 and self.total + elapsed < 60, 'HPA_METRIC_GAP_TIMEOUT')
+                self.total += elapsed
+                self.maximum = max(self.maximum, elapsed)
+                emit('BROWSE_HPA_METRIC_RECOVERED', gap_seconds=round(elapsed, 3))
+                self.since = None
+            return
+        if self.since is None:
+            self.since = now
+            self.gaps += 1
+            emit('BROWSE_HPA_METRIC_GAP', grace_seconds=60,
+                 note='No zero metric substitution. Resource, HTTP and database checks continue.')
+        require(now - self.since < 60 and self.total + now - self.since < 60, 'HPA_METRIC_GAP_TIMEOUT')
+
+    def summary(self):
+        require(self.since is None, 'HPA_METRIC_GAP_UNRESOLVED')
+        return {'gap_count': self.gaps, 'total_gap_seconds': round(self.total, 3),
+                'maximum_gap_seconds': round(self.maximum, 3)}
+
+
+def owned_hpa(*, require_active=True):
     rows = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
     matches = [r for r in rows if r['spec']['scaleTargetRef'].get('name') == 'browse']
     require(len(matches) == 1 and matches[0]['metadata']['name'] == 'trafficxx-browse', 'EXPECTED_KEDA_HPA')
@@ -114,8 +147,7 @@ def owned_hpa():
                 for r in matches[0]['metadata'].get('ownerReferences', [])), 'FOREIGN_HPA')
     require(matches[0]['spec']['minReplicas'] == 2 and matches[0]['spec']['maxReplicas'] == 4,
             'HPA_BOUNDS_CHANGED')
-    require(any(c['type'] == 'ScalingActive' and c['status'] == 'True'
-                for c in matches[0].get('status', {}).get('conditions', [])), 'HPA_METRIC_NOT_ACTIVE')
+    require(not require_active or metric_active(matches[0]), 'HPA_METRIC_NOT_ACTIVE')
     return matches[0]
 
 
@@ -233,7 +265,7 @@ def wait_until(function, seconds):
             time.sleep(5)
 
 
-def create_job(app, run_id):
+def create_job(app, run_id, job_name=JOB):
     files = 'browse-scaling-' + run_id
     base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
     cm = base.kube('create', 'configmap', files, '-n', 'trafficxx',
@@ -243,7 +275,7 @@ def create_job(app, run_id):
     pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-l',
         'app.kubernetes.io/name=trafficxx-browse', '-o', 'json'))['items']
     node = next(p['spec']['nodeName'] for p in pods if not p['metadata'].get('deletionTimestamp'))
-    patch = [{'op': 'replace', 'path': '/metadata/name', 'value': JOB},
+    patch = [{'op': 'replace', 'path': '/metadata/name', 'value': job_name},
              {'op': 'add', 'path': '/metadata/labels/trafficxx.io~1run-id', 'value': run_id},
              {'op': 'remove', 'path': '/spec/ttlSecondsAfterFinished'},
              {'op': 'replace', 'path': '/spec/activeDeadlineSeconds', 'value': 450},
@@ -258,7 +290,7 @@ def create_job(app, run_id):
         return json.loads(base.kube('create', '-f', '-', '-o', 'json', data=manifest))
     except subprocess.SubprocessError:
         # A lost create response is not proof that no workload was started.
-        candidate = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
+        candidate = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
         require(candidate['metadata'].get('labels', {}).get('trafficxx.io/run-id') == run_id,
                 'AMBIGUOUS_JOB_OWNERSHIP')
         return candidate
@@ -271,10 +303,11 @@ def idle_two(uid, query):
     return check(query)
 
 
-def drill():
+def drill(*, retry_metric_gap=False):
+    job_name = JOB + '-v2' if retry_metric_gap else JOB
     trial.context()
     trial.no_active_load()
-    require(not base.kube('get', 'job', JOB, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
+    require(not base.kube('get', 'job', job_name, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
             'INSPECT_EXISTING_DRILL_JOB')
     trial.health()
     database_pressure()
@@ -282,15 +315,21 @@ def drill():
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
         app = check(query)
+        if retry_metric_gap and app['spec']['replicas'] != 2:
+            emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
+                 timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
+            app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
         require(app['spec']['replicas'] == 2, 'START_WITH_TWO_REPLICAS')
+        start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         original = trial.fingerprint(app['spec']['template'])
         run_id = uuid4().hex[:12]
         peak, released, last_database = 2, False, time.monotonic()
         samples, first_seen, resource_watch = {}, {}, trial.users.ResourceWatch()
         waiting_since = None
+        metric_readiness = MetricReadiness()
         try:
-            job = create_job(app, run_id)
-            emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=JOB, users=250, seconds=180,
+            job = create_job(app, run_id, job_name)
+            emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=job_name, users=250, seconds=180,
                  note='Real Browse GETs; no manual scale commands or inventory writes.')
             deadline = time.monotonic() + 480
             while True:
@@ -300,12 +339,12 @@ def drill():
                 peak = max(peak, ready)
                 emit('BROWSE_SCALING_OBSERVATION', desired=current['spec']['replicas'], ready=ready,
                      resource_gate_released=released)
-                owned_hpa()
-                state = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
+                metric_readiness.observe(owned_hpa(require_active=False), time.monotonic())
+                state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 require(state['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
                 terminal = {r['type'] for r in state.get('status', {}).get('conditions', []) if r['status'] == 'True'}
                 if 'Failed' in terminal:
-                    print(base.kube('logs', '-n', 'trafficxx', 'job/' + JOB, '-c', 'check'), flush=True)
+                    print(base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check'), flush=True)
                 require('Failed' not in terminal, 'LOAD_JOB_FAILED')
                 # Source-timestamp freshness and sustained pressure use the same
                 # limits as earlier trials. New pods have bounded metrics warmup.
@@ -313,14 +352,14 @@ def drill():
                 pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-o', 'json'))['items']
                 observed = [p for p in pods if not p['metadata'].get('deletionTimestamp') and
                             (p['metadata'].get('labels', {}).get('app.kubernetes.io/name') == 'trafficxx-browse'
-                             or p['metadata'].get('labels', {}).get('job-name') == JOB)]
+                             or p['metadata'].get('labels', {}).get('job-name') == job_name)]
                 require(len([p for p in observed if p['metadata'].get('labels', {}).get('app.kubernetes.io/name')
                              == 'trafficxx-browse']) <= 4, 'BROWSE_POD_BUDGET_EXCEEDED')
                 expected = {}
                 generator = None
                 for pod in observed:
                     name = pod['metadata']['name']
-                    is_generator = pod['metadata'].get('labels', {}).get('job-name') == JOB
+                    is_generator = pod['metadata'].get('labels', {}).get('job-name') == job_name
                     if is_generator:
                         generator = name
                     else:
@@ -343,7 +382,7 @@ def drill():
                     else:
                         samples.setdefault(name, set()).add(values[name]['timestamp'])
                 if not released and generator and all(len(samples.get(name, set())) >= 2 for name in expected):
-                    trial.users.release_gate(generator, run_id, JOB)
+                    trial.users.release_gate(generator, run_id, job_name)
                     released = True
                     emit('BROWSE_SCALING_RESOURCE_GATE_RELEASED', run_id=run_id)
                 if released:
@@ -364,7 +403,7 @@ def drill():
                     break
                 require(time.monotonic() < deadline, 'LOAD_JOB_TIMEOUT')
                 time.sleep(5)
-            logs = base.kube('logs', '-n', 'trafficxx', 'job/' + JOB, '-c', 'check')
+            logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
             print(logs, flush=True)
             outcome = json.loads(logs.splitlines()[-1])
             require(outcome.get('result') == 'BROWSE_SCALING_LOAD_OK' and outcome.get('run_id') == run_id,
@@ -374,6 +413,7 @@ def drill():
                     1 <= outcome.get('attempts', 0) <= 22500 and not outcome.get('errors') and
                     outcome.get('status_counts') == {'200': outcome['attempts']}, 'INCOMPLETE_LOAD_EVIDENCE')
             require(peak >= 3, 'NATURAL_SCALE_UP_NOT_OBSERVED')
+            gaps = metric_readiness.summary()
             emit('BROWSE_SCALE_UP_OBSERVED', peak_ready_replicas=peak)
             # No manual replica restoration: success requires the actual controller to downscale.
             wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
@@ -383,24 +423,30 @@ def drill():
             emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, ready_replicas_before=2,
                  peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
                  resources=resource_watch.summary(),
+                 hpa_metric_observations=gaps,
                  latency_slo_tested=False, notification_delivery_configured=False)
         finally:
             if job is not None:
-                state = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
+                state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 if not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
                            for c in state.get('status', {}).get('conditions', [])):
-                    trial.users.stop_owned_job(job['metadata']['uid'], JOB)
+                    trial.users.stop_owned_job(job['metadata']['uid'], job_name)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill'))
-    action = parser.parse_args().action
+    parser.add_argument('--retry-metric-gap', action='store_true',
+                        help='Use a distinct v2 Job, preserving the original stopped drill.')
+    args = parser.parse_args()
+    action = args.action
+    if args.retry_metric_gap and action != 'drill':
+        parser.error('--retry-metric-gap requires drill')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
-            drill()
+            drill(retry_metric_gap=args.retry_metric_gap)
         else:
             trial.context()
             with prometheus() as query:

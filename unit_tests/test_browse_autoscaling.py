@@ -37,6 +37,26 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_metric_gap_requires_recovery_within_a_bounded_total(self):
+        active = {'status': {'conditions': [{'type': 'ScalingActive', 'status': 'True'}]}}
+        inactive = {'status': {'conditions': [{'type': 'ScalingActive', 'status': 'False'}]}}
+        with redirect_stdout(io.StringIO()):
+            watch = scaling.MetricReadiness()
+            watch.observe(inactive, 10)
+            watch.observe(inactive, 25)
+            with self.assertRaisesRegex(ValueError, 'UNRESOLVED'):
+                watch.summary()
+            watch.observe(active, 40)
+            self.assertEqual(watch.summary(), {'gap_count': 1, 'total_gap_seconds': 30,
+                                               'maximum_gap_seconds': 30})
+            watch.observe(inactive, 50)
+            with self.assertRaisesRegex(ValueError, 'TIMEOUT'):
+                watch.observe(inactive, 80)
+            watch = scaling.MetricReadiness()
+            watch.observe(inactive, 0)
+            with self.assertRaisesRegex(ValueError, 'TIMEOUT'):
+                watch.observe(active, 60)
+
     def test_policy_is_bounded_and_missing_data_is_not_zero(self):
         row = scaling.scaled_object()['spec']
         self.assertEqual((row['minReplicaCount'], row['maxReplicaCount']), (2, 4))
@@ -93,6 +113,33 @@ class Scaling(unittest.TestCase):
                 scaling.idle_two('owned', Mock())
             check.assert_not_called()
 
+    def test_retry_waits_for_idle_before_creating_a_distinct_job(self):
+        initial = app()
+        initial['spec']['replicas'] = 4
+        with ExitStack() as stack:
+            for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                (scaling.trial, 'health'), (scaling, 'database_pressure')):
+                stack.enter_context(patch.object(owner, name))
+            stack.enter_context(patch.object(scaling.base, 'kube', return_value=''))
+            stack.enter_context(patch.object(scaling, 'check', return_value=initial))
+            stack.enter_context(patch.object(scaling, 'uuid4', return_value=Mock(hex='a' * 32)))
+            promise = stack.enter_context(patch.object(scaling, 'prometheus'))
+            promise.return_value.__enter__.return_value = Mock()
+            waiting = stack.enter_context(patch.object(scaling, 'wait_until', return_value=app()))
+            def create(initial, run_id, name):
+                waiting.assert_called_once()
+                self.assertEqual(initial['spec']['replicas'], 2)
+                self.assertEqual(name, scaling.JOB + '-v2')
+                raise ValueError('STOP_BEFORE_JOB_CREATION')
+            creating = stack.enter_context(patch.object(scaling, 'create_job', side_effect=create))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            with self.assertRaisesRegex(ValueError, 'START_WITH_TWO'):
+                scaling.drill()
+            creating.assert_not_called()
+            waiting.assert_not_called()
+            with self.assertRaisesRegex(ValueError, 'STOP_BEFORE_JOB_CREATION'):
+                scaling.drill(retry_metric_gap=True)
+
     def test_hpa_must_be_owned_active_and_unpaused(self):
         so = scaling.scaled_object()
         so['metadata']['uid'] = 'so'
@@ -103,9 +150,13 @@ class Scaling(unittest.TestCase):
             return json.dumps({'items': [hpa]} if args[1] == 'hpa' else so)
         with patch.object(scaling.base, 'kube', side_effect=kube):
             self.assertEqual(scaling.owned_hpa(), hpa)
+            hpa['status']['conditions'][0]['status'] = 'False'
+            with self.assertRaisesRegex(ValueError, 'METRIC_NOT_ACTIVE'):
+                scaling.owned_hpa()
+            self.assertEqual(scaling.owned_hpa(require_active=False), hpa)
             hpa['metadata']['ownerReferences'][0]['uid'] = 'other'
             with self.assertRaisesRegex(ValueError, 'FOREIGN_HPA'):
-                scaling.owned_hpa()
+                scaling.owned_hpa(require_active=False)
             hpa['metadata']['ownerReferences'][0]['uid'] = 'so'
             so['metadata']['annotations'] = {'autoscaling.keda.sh/paused-replicas': '2'}
             with self.assertRaisesRegex(ValueError, 'PAUSED'):
@@ -147,11 +198,14 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error in (([3, 3, 3, 2], None), ([2, 2, 2], 'NATURAL_SCALE_UP')):
+        for scales, expected_error, retry in (([3, 3, 3, 2], None, False),
+                ([2, 2, 2], 'NATURAL_SCALE_UP', False), ([3, 3, 3, 2], None, True)):
             initial = app()
-            pod_names = ['browse-a', 'browse-b', scaling.JOB + '-pod']
+            job_name = scaling.JOB + '-v2' if retry else scaling.JOB
+            pod_names = ['browse-a', 'browse-b', job_name + '-pod']
             pods = [{'metadata': {'name': name, 'labels': ({'job-name': scaling.JOB} if i == 2 else
                     {'app.kubernetes.io/name': 'trafficxx-browse'})}} for i, name in enumerate(pod_names)]
+            pods[2]['metadata']['labels']['job-name'] = job_name
             outcome = {'result': 'BROWSE_SCALING_LOAD_OK', 'run_id': 'a' * 12,
                 'users_with_requests': 250, 'attempts': 21000, 'status_counts': {'200': 21000},
                 'errors': {}, 'elapsed_seconds': 180.1}
@@ -186,7 +240,8 @@ class Scaling(unittest.TestCase):
                     (scaling.trial, 'context', {}), (scaling.trial, 'no_active_load', {}),
                     (scaling.trial, 'health', {}), (scaling.trial, 'database_metrics', {'return_value': True}),
                     (scaling, 'database_pressure', {}), (scaling, 'check', {'return_value': initial}),
-                    (scaling, 'owned_hpa', {}),
+                    (scaling, 'owned_hpa', {'return_value': {'status': {'conditions': [
+                        {'type': 'ScalingActive', 'status': 'True'}]}}}),
                     (scaling, 'create_job', {'return_value': {'metadata': {'uid': 'job'}}}),
                     (scaling, 'deployment', {'side_effect': deployments}),
                     (scaling.base, 'kube', {'side_effect': kube}),
@@ -200,10 +255,12 @@ class Scaling(unittest.TestCase):
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
-                        scaling.drill()
+                        scaling.drill(retry_metric_gap=retry)
                 else:
-                    scaling.drill()
+                    scaling.drill(retry_metric_gap=retry)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
+                    if retry:
+                        self.assertIn(job_name, output.getvalue())
 
 
 if __name__ == '__main__':

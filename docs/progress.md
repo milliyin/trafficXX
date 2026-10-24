@@ -44,8 +44,11 @@ or establish sustained production capacity.
   21,133 successful reads, zero errors, p95 167.385 ms; automatic restoration
   to four connections and health checks passed. The [new autoscaling profile](browse-autoscaling.md)
   selects eight connections per pod, two-four pods and a 128-connection lab
-  planning budget. Implementation is prepared; live deployment and natural
-  scale-up/down verification remain pending.
+  planning budget. The addon and profile are deployed: the first drill reached
+  four ready pods, with native HPA resize events verified. It stopped on a
+  scaling-metric gap that later recovered; a bounded observer correction and
+  separate retry are prepared. Full workload and natural scale-down proof
+  remain pending.
 
 - **Client memory comparison completed:** the HTTP-only, per-thread client
   passed its live Linux comparison with substantially lower sampled process

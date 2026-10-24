@@ -131,6 +131,41 @@ or drill result has been supplied yet.
 
 ## Failure or disconnect
 
+The first live drill, run `1ec4a7395615`, installed the managed addon and
+observed two, three, then four ready Browse pods. HPA events independently
+confirmed both resizes. The observer stopped on `HPA_METRIC_NOT_ACTIVE`;
+the failed Job is retained. Subsequent inspection showed an error fetching
+the borrow-rate metric, followed by recovery to `ScalingActive=True`.
+Browse availability remained 100 per event and Operations was healthy.
+At that inspection, four pods were still held by downscale stabilization;
+natural recovery to two and the full workload were not yet verified.
+
+The exact cause and duration of the metric gap are not established by the
+event summary. New-target rate warmup is one possible contributor: the
+reviewed rate query requires enough samples from every discovered target.
+No query, freshness guard, resource limit or scaling bound is changed to
+hide missing measurements.
+
+The observer now allows metric inactivity for less than 60 seconds, both
+per episode and cumulatively during the load. It still verifies HPA ownership,
+bounds and policy immediately, and continues resource, HTTP, pool-error and
+database checks. Recovery is required, and final checks remain strict. Gap
+counts and durations are included in any passing result. A persistent gap
+still stops the Job.
+
+After the original Job is terminal and health is checked, use the distinct
+retry Job, `browse-users-250-autoscaling-v2`:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py drill --retry-metric-gap
+```
+
+This preserves the original failed Job, waits up to ten minutes for natural
+recovery to two ready pods before starting load, and runs the same 250-user
+workload and bounds. No addon reinstall, image build or manual scaling is
+needed. The retry has no live result yet.
+
 Keep the Job and logs. The Job has a 450-second deadline, including resource
 warmup. On a handled failure the observer attempts to stop only its own Job
 using its UID; it does not disable the HPA or force a successful downscale.
