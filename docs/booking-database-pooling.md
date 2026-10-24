@@ -1,8 +1,9 @@
 # Booking database pooling
 
-A subsequent [small write baseline](booking-write-baseline.md) is prepared to
-measure 18 bounded create/cancel pairs through the pooled serving replicas.
-Its live timings remain pending and include Cloud Shell port-forward overhead.
+A subsequent [small write baseline](booking-write-baseline.md) passed 18 bounded
+create/cancel pairs through both pooled serving replicas, with verified cleanup,
+restored demo inventory and unchanged pods. Its timings include Cloud Shell
+port-forward overhead and do not establish a production latency SLO.
 
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.

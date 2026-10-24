@@ -280,10 +280,11 @@ Next:
    restored two ready replicas and five inactive rules. The complete recovery
    result verified stored firing history and the original surviving pod, with
    no inventory writes. HTTP continuity and external notifications were not tested.
-   A [small Booking write baseline](docs/booking-write-baseline.md) is now
-   prepared and locally tested: 18 one-ticket create/cancel pairs, at most four
-   flows, recovery journals and final inventory/pod stability checks. Live results
-   are pending; timings include Cloud Shell port-forward overhead.
+   A [small Booking write baseline](docs/booking-write-baseline.md) passed:
+   18 one-ticket create/cancel pairs, both-replica cancellation readbacks,
+   verified cleanup, inventory restored to 100 for both events and unchanged
+   serving pods. Reserve p50 was 562/675 ms and cancel p50 538/655 ms for one/four
+   workers; timings include Cloud Shell overhead and are not a production SLO.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

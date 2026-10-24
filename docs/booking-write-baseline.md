@@ -1,10 +1,39 @@
 # Small Booking write baseline
 
-Status: source and offline checks passed; the first live attempt failed before
-creating a journal or sending reservation writes. The failing command was not
-identified by the original generic error; live measurements remain pending.
+Status: source, offline checks and the live bounded write baseline passed.
+The first attempt failed before journal creation/writes; its failing command
+remains unknown. The later read-only preflight and complete write run passed.
 This follows the read-only baseline and the completed Booking target-warning
 drill. It requires no new application image or infrastructure deployment.
+
+## Verified live measurements
+
+The user supplied BOOKING_WRITE_WORKLOAD_OK and BOOKING_WRITE_BASELINE_OK for
+journal trafficxx-booking-write-cb92a4efef03.json. All 18 holds were created and
+cancelled, with cancellation readbacks through both Booking replicas and cleanup
+verified. Both demo events returned to 100 available tickets. Serving pods,
+images and process restart counts remained unchanged across the experiment.
+
+| Workers | Completed pairs | Phase seconds | Reserve p50 ms | Reserve p95/max ms | Cancel p50 ms | Cancel p95/max ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 6 | 15.097 | 562.123 | 615.504 | 538.130 | 595.680 |
+| 4 | 12 | 8.466 | 674.846 | 1015.309 | 655.202 | 839.020 |
+
+p99 also equalled the maximum in both small phases. Phase elapsed time includes
+cleanup, both-replica readbacks and pacing; it is not the sum of timed requests
+or a sustained arrival-rate measurement. Observed request times increased in
+the four-worker phase. These samples do not isolate a database bottleneck or
+establish a statistically significant difference. Cloud Shell/port-forward
+overhead prevents direct comparison with the earlier in-cluster read baseline;
+latency_slo_tested was false.
+
+Booking pods were booking-67b7966d6c-l6xv7 and booking-67b7966d6c-npkcg, using
+digest c94884448905a0e94f2e4b8502ed120767f8cf46a2aa2f8747862ad5f6a663f0.
+Browse used digest f09d49ce8044461be8dbde85835888fec67a5ca5a2d848b20ed422da211c1e51.
+The script deliberately performed inventory writes, followed by verified
+cancellation and inventory restoration. Its HTTP result does not establish
+that all newly emitted events have drained through publisher/consumer; inspect
+worker processing separately.
 
 ## Workload and limits
 
