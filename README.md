@@ -287,7 +287,9 @@ Next:
    workers; timings include Cloud Shell overhead and are not a production SLO.
    Post-write Operations monitoring passed: processed total 72, zero pending
    publication/processing work, fresh error-free workers and no active alerts.
-   This is aggregate monitoring rather than a new full-row consistency audit.
+   A subsequent read-only SQL audit verified 72 matching outbox/inbox records,
+   36 latest-state projections and zero missing/mismatched/orphaned records.
+   Native Service Bus counts also confirmed zero active messages/dead letters.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

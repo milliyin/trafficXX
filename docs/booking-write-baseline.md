@@ -39,9 +39,18 @@ Outbox pending/age and processing outstanding/age were all zero; processing
 failures stayed zero, publication failures stayed at the historical total of 4,
 and the historical dead-letter audit count stayed 1. Consumer/publisher
 heartbeats were fresh at 3.317029/0.094423 seconds with no errors or active alerts.
-This is successful aggregate worker monitoring after the write run, not a
-fresh row-by-row inbox/payload/projection audit or native Service Bus queue
-count. native_queue_counts_available and notification delivery remain false.
+That Operations result was aggregate monitoring. A subsequent read-only SQL
+audit supplied CONSUMER_DRAIN_OK: total outbox events 72, inbox records 72,
+pending and missing records 0, payload mismatches 0, expected latest-state
+projections 36, projection mismatches 0 and both orphan counts 0. Failure
+records were 0; the retained historical dead-letter audit count remained 1.
+The consumer heartbeat was present/error-free and aged 4.358743 seconds. The
+trafficxx-lab-migrator observer used verified TLSv1.3 and read_only was true.
+This verifies stored inbox/payload/latest-state projection consistency at that
+snapshot. The user also supplied the separate native Service Bus queue count:
+active 0, dead_letters 0 and total 0. The retained historical SQL dead-letter
+audit count of 1 is distinct from the current empty broker dead-letter queue.
+Operations native_queue_counts_available and notification delivery remain false.
 
 ## Workload and limits
 
