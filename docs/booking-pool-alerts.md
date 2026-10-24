@@ -144,6 +144,6 @@ confirmed browser visibility. External notifications remain unconfigured.
 
 A [controlled target-warning drill](booking-alert-recovery.md) observed actual
 firing after a temporary two-to-one replica reduction and confirmed restoration
-to two ready replicas/five healthy inactive rules. The supplied final recovery
-JSON was truncated; the remaining fields, including its explicit stored-history
-verdict, await complete output. Do not repeat the drill to recover missing text.
+to two ready replicas/five healthy inactive rules. The complete final recovery
+JSON also verified stored firing history and the original surviving pod, with
+no inventory writes. HTTP continuity and external notifications were not tested.

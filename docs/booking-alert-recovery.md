@@ -1,7 +1,7 @@
 # Controlled Booking target-warning drill
 
-Status: local validation and live warning/restoration evidence passed; the
-user's final recovery JSON was truncated, as recorded below. This follows
+Status: local validation and the full live warning/recovery drill passed.
+This follows
 the verified ten-panel Booking dashboard and healthy live Booking/Browse rules.
 
 ## Live checkpoint
@@ -14,13 +14,15 @@ firing series, followed by a 30-second observation window. A browser screenshot
 also showed the preceding pending stage (pending 1, firing 0) and its history.
 
 BOOKING_REPLICAS_RESTORED confirmed desired and ready replicas restored. The
-visible BOOKING_ALERT_RECOVERY_OK JSON showed two targets/five healthy inactive
-rules before and after, with two ready replicas after recovery. That final line
-was cut off inside the surviving pod name. The complete pod name and later
-fields, including the explicit stored-firing-history verdict, have not yet been
-supplied; do not invent their values or repeat the drill to obtain them.
-This checkpoint establishes actual warning appearance and replica/rule recovery,
-not Booking HTTP continuity or external notification delivery.
+complete BOOKING_ALERT_RECOVERY_OK JSON showed two targets/five healthy inactive
+rules before and after, with two ready replicas after recovery. The original
+surviving pod was booking-67b7966d6c-npkcg, and stored_firing_history_verified
+was true. The user supplied the full result after the initially truncated paste;
+no repeat drill was needed. inventory_writes was false,
+booking_http_continuity_tested was false, and notification_delivery_configured
+was false. This establishes actual warning appearance, stored firing history
+and replica/rule recovery. It does not establish Booking HTTP continuity or
+external notification delivery.
 
 ## What it tests
 
@@ -114,4 +116,4 @@ evidence and stable pod ownership/template checks. Native kubectl applied the
 actual scale-down/restoration/marker-removal patches locally using an empty
 isolated kubeconfig. No Azure cluster call was made. Docker stayed stopped;
 hosted CI remains unverified. The live evidence supplied separately by the user
-is recorded above, with its truncation limit.
+is recorded above.

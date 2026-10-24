@@ -277,8 +277,9 @@ Next:
    the user confirmed the additions are visible in the browser.
    A [controlled Booking target-warning drill](docs/booking-alert-recovery.md)
    observed the target warning firing with one healthy scrape target, then
-   restored two ready replicas and five inactive rules. The final recovery JSON
-   was truncated; its remaining fields await the complete output.
+   restored two ready replicas and five inactive rules. The complete recovery
+   result verified stored firing history and the original surviving pod, with
+   no inventory writes. HTTP continuity and external notifications were not tested.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.
