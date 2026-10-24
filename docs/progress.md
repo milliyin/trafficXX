@@ -19,8 +19,9 @@ earlier checkpoints. It is not a live status page.
 | 100-user Browse experiment | 2,734 successful reads in 60.134 seconds; zero errors; p95 313.140 ms with queue limit 16. |
 | 100-user client memory comparison | 2,745 successful reads in 60.156 seconds; zero errors; p95 294.158 ms. Sampled generator peak process RSS 33.250 MiB versus the preceding 241.094 MiB. |
 | 100-user single-query comparison | 2,804 successful reads in 60.100 seconds; zero errors; p95 201.078 ms; sampled generator peak process RSS 33.164 MiB. Fresh post-run health checks passed. |
+| 250-user temporary pool-eight trial | 6,986 successful reads in 60.144 seconds; zero errors; p95 191.658 ms; both pools restored to four and post-trial health verified. |
 
-The fresh health checks after the 100-user pass reported both demo events still
+The fresh health checks after the restored 250-user trial reported both demo events still
 at 100 available tickets, healthy workers, no backlog, and no active alerts.
 Historical publication failures and a retained dead-letter audit are distinct
 from an active incident or current native broker depth.
@@ -44,31 +45,19 @@ or establish sustained production capacity.
   RSS. Fresh post-run demo and Operations checks also passed: availability
   100 per event, healthy workers, no backlog or active alerts. One comparison
   does not establish a causal memory profile or higher-load capacity.
-- **250-user attempt:** stopped early after one confirmed queue-full rejection
-  returned HTTP 503; only 60 users made requests before the stop. Fresh health
-  checks after the subsequent instrumentation rollout passed. See the [diagnostic record](browse-user-load.md#first-250-user-attempt-stopped-on-queue-rejection).
-  There is no 250-user pass or capacity verdict; 500 and 1,000 remain untested.
-  Browse timing instrumentation is deployed and its 24-read sequential
-  diagnostic passed. Repeated database round trips are a hypothesis to
-  investigate; PostgreSQL CPU saturation or 250-user recovery is not established.
-  The single-statement lookup is deployed; its 24-read diagnostic passed.
-  Body means fell from 76-84 ms to 52-59 ms across the observed pods, consistent
-  with one fewer round trip. Placement/sample differences limit comparison.
-  The guarded 100-user single-query comparison also passed with 2,804 valid
-  reads and zero rejections; fresh post-run health checks passed. A separate
-  guarded 250-user single-query comparison then stopped early: 77 participants,
-  75 HTTP 200 and two confirmed queue-full HTTP 503 responses on one pod.
-  The diagnostic Job is confirmed terminal and fresh post-failure health checks
-  passed. There is still no 250-user pass.
-  The read-only capacity observation passed: AKS East US, PostgreSQL Central US;
-  recent minute-level maxima CPU 7.89%, memory 20.99%, connections 20.
-  Cached demo queries executed in 0.147-0.178 ms on the server, while simple
-  client reads averaged 33.5-34.0 ms. This supports investigating round-trip
-  overhead and bounded pool concurrency; it does not establish saturation
-  during the subsecond failures. A controlled four-versus-eight connection
-  comparison is [prepared with a recovery journal and restoration to four](browse-pool-size-comparison.md).
-  Its live preflight passed with both pools still at four and no journal or
-  policy change. The temporary eight-connection trial remains pending.
+- **250-user trial completed:** earlier four-connection attempts stopped on
+  queue-full rejections. The [temporary eight-connection trial](browse-pool-size-comparison.md#live-trial-passed-and-baseline-restored)
+  completed with all 250 users, 6,986 successful reads and no new pool errors.
+  It restored four connections per pod, verified health and retained its
+  recovery journal. The current default remains four; the pass applies to
+  the tested eight-connection configuration. Longer/repeated trials and a
+  decision on retaining eight remain separate work. No 500/1,000-user test ran.
+- **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
+  cached SQL and much longer client calls support investigating round-trip
+  cost with bounded pool concurrency. The passing trial's three minute-level
+  database samples had maxima CPU 5.51%, memory 21.20% and connections 25.
+  Sampling, warmup and placement differences prevent a precise saturation,
+  isolated causal, sustained capacity or production SLO verdict.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

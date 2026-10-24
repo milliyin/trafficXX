@@ -1,6 +1,6 @@
 # Temporary Browse pool size comparison
 
-Status: live preflight passed; no eight-connection rollout or load result yet.
+Status: live 250-user trial passed; four-connection baseline restored and health verified.
 
 The user supplied BROWSE_POOL8_PREFLIGHT_OK with journal_created false and
 pool_policy_changed false. Both serving pods confirmed minimum/maximum four
@@ -15,6 +15,9 @@ client database calls much longer than server execution. Both 250-user attempts
 stopped early on queue-full rejections with four connections per pod. This
 supports a controlled concurrency comparison; it does not prove eight
 connections will fix the workload or establish database capacity.
+
+The later result below confirms this one bounded trial passed with eight
+connections. It does not establish sustained capacity or a permanent setting.
 
 ## Scope
 
@@ -115,3 +118,79 @@ If output says BROWSE_POOL4_RESTORE_FAILED, do not start another test. Inspect
 the stated check and current deployment before retrying restoration. Retain
 the full output, including load result, database metrics and restoration result.
 No inventory reset or SQL write cleanup is needed for this read-only workload.
+
+## Live trial passed and baseline restored
+
+Run `15c72440c1ef`, Job `browse-users-250-pool8`, used the existing caf image
+`sha256:f3242207750d853f9980a1b18d72b618e8b40abea8aef5afd6e820d50be61cac`.
+Baseline health and four-slot policy checks passed; the temporary rollout then
+verified warm minimum/maximum eight with queue 16 in both new processes.
+
+| Measurement | Result |
+| --- | ---: |
+| Participating paced users | 250 of 250 |
+| Successful reads / attempts | 6,986 / 6,986 |
+| HTTP / observer / pool errors | 0 |
+| Measured elapsed | 60.144 seconds |
+| Observed request rate | 116.154 requests/s |
+| Latency p50 / p95 | 141.560 / 191.658 ms |
+| Latency p99 / maximum | 227.932 / 383.112 ms |
+| Observed peak HTTP requests in flight | 31 |
+| Generator sampled peak process RSS | 42.695 MiB |
+| Generator sampled peak threads | 252 |
+
+All responses returned HTTP 200. Routes received 3,492 seated and 3,494 general
+reads. Inventory stayed 100 per event, with no inventory writes. Both serving
+pods/processes stayed unchanged during the load, made zero new connection
+attempts and showed no increase in error/rejection counters. Sampled pool size
+peaked at eight in each pod, with waiting peaks four and six. The workload
+passed the existing resource, latency, waiting, query-policy and identity gates.
+
+| Mean client-observed phase | 55pzs | w7vbf |
+| --- | ---: | ---: |
+| Acquisition | 35.473 ms (3,471 observations) | 38.812 ms (3,527) |
+| Connection body | 54.804 ms (3,471) | 56.127 ms (3,528) |
+| Return | 27.297 ms (3,471) | 28.036 ms (3,528) |
+| Combined query | 54.771 ms (3,465) | 56.110 ms (3,521) |
+
+Phase counts differ because readiness and in-flight work can cross snapshot
+boundaries. Body includes query work, and acquisition includes checkout checks
+and queue waiting. These means are not all additive or per-request percentiles.
+The trial pod instance identifiers were 206ccb818be142feae17f07e8e98d890 and
+2133bb6c31d84e3daae8f2f9cdd0d148.
+
+The generator recorded 62 RSS samples, starting at 26.371 MiB and ending at
+35.008 MiB. Kubernetes sampled generator maxima were 0.077509 CPU cores and
+40.191 MiB across three distinct samples. App sampled CPU maxima were
+0.091875/0.083609 cores and memory 64.879/65.086 MiB, across six/four samples.
+CPU is windowed and memory/queue maxima are sampled, not precise peaks.
+
+The database metric window was 2026-10-24 17:37:36-17:40:59 UTC, including
+generator warmup. Each metric had three observations: CPU maximum 5.514583%,
+memory maximum 21.195366% and connections maximum 25 (including idle).
+All metrics had samples, but their cadence and publication lag still limit
+interpretation of brief pressure.
+
+Both BROWSE_USERS_WORKLOAD_OK and BROWSE_USERS_250_OK were followed by verified
+restoration. New baseline pods `browse-6449545789-pw6wp` and
+`browse-6449545789-z7r5q` confirmed minimum/maximum four and queue limit 16.
+Post-restoration demo health was alive/ready with availability 100 per event.
+Operations confirmed processed 72, no backlog or processing failures, no active
+alerts and healthy heartbeats (consumer 1.283536s, publisher 1.197073s).
+Historical publication failures four and dead-letter audit one were unchanged.
+Native broker depth was not measured by these HTTP checks.
+
+Final results were BROWSE_POOL4_RESTORED (health_verified true) and
+BROWSE_POOL8_COMPARISON_OK (load_passed, baseline_pool_restored and
+database_metric_samples_available all true). The journal remains at
+`/home/jeremy/trafficxx-browse-pool8-journal.json`. No manual restore is required
+for this completed run; retain the journal and logs for evidence.
+
+**The current setting is four connections per pod.** The 250-user pass applies
+to the temporary eight-connection configuration. This supports the bounded-pool
+concurrency hypothesis, while changes in pod placement, generator node (000000
+in this trial versus 000001 previously), timing and a single short observation
+prevent isolating every causal factor. It is not 250 simultaneous requests,
+a reservation-write test, a maximum-capacity measurement or a production SLO.
+Longer/repeated trials and a decision on retaining eight should precede claims
+about sustained operation or higher user counts. No 500-user stage ran.

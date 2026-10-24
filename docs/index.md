@@ -24,15 +24,15 @@ results behind a system that holds tickets, moves events, and recovers from faul
 
 <div class="tx-milestone" markdown>
 
-**100 paced users. 2,804 successful reads. Zero errors.**
+**250 paced users. 6,986 successful reads. Zero errors.**
 
-A one-minute in-cluster Browse test passed with four ready database connections
-and 16 waiting slots per pod. The single-query version recorded p95 latency
-of 201.078 ms, compared with 294.158 ms in the preceding client-memory trial.
-The generator sampled a 33.164 MiB peak process RSS. These short trials differ
-in image and pod placement and do not establish a production SLO.
+A one-minute Browse trial passed with eight ready database connections and
+16 waiting slots per pod: 116.154 requests/s and p95 latency 191.658 ms.
+Restoration to four connections per pod and healthy operation were verified
+afterwards. This is a temporary trial result, not the current default capacity
+or a production SLO.
 
-[Read the experiment and its limits](browse-user-load.md#live-100-user-single-query-comparison-passed)
+[Read the experiment and its limits](browse-pool-size-comparison.md#live-trial-passed-and-baseline-restored)
 
 </div>
 

@@ -316,15 +316,17 @@ Next:
    was required. This is one bounded comparison, not higher-load capacity proof;
    fresh post-comparison health checks also passed with no backlog or alerts.
    Higher stages are not started automatically.
-   The next guarded stage is prepared as `python3 scripts/run-browse-users.py --users 250`;
-   it forces the verified client and pool policy, keeps existing budgets and
-   stop conditions. Its first run stopped early on one confirmed queue-full
-   HTTP 503 after 60 requests; no 250-user pass or capacity verdict. Post-failure
+   The first 250-user run stopped early on one confirmed queue-full
+   HTTP 503 after 60 requests. Post-failure
    recovery checks after instrumentation rollout passed. Preserve the failed
    Job and see the load guide. The later single-query 100-user comparison passed
    2,804 reads in 60.100s, zero errors, p95 201.078 ms and peak generator RSS
-   33.164 MiB. Fresh health checks after that load are next before reviewing
-   any new 250-user attempt.
+   33.164 MiB, with post-run health verified. Four connections still rejected
+   the next 250-user attempt. A subsequent temporary eight-connection trial
+   passed all 6,986 reads over 60.144s, with zero errors and p95 191.658 ms.
+   It restored four connections per pod and verified health/inventory 100/100.
+   This is a bounded trial result, not a permanent eight-connection setting
+   or production capacity/SLO claim. See [pool comparison evidence](docs/browse-pool-size-comparison.md).
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
