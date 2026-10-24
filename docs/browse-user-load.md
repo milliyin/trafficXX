@@ -236,3 +236,14 @@ in-cluster Browse read result, not a reservation-write, public-ingress,
 sustained-capacity or production latency SLO result. Review a fresh Browse demo
 and Operations health check before preparing a separate 100-user stage. No
 higher stage has been started. The original token-renewal Job is untouched.
+
+
+The subsequent user-supplied BROWSE_DEMO_HTTP_OK confirmed alive/ready and
+100 available tickets for each of the two demo events. OPERATIONS_HTTP_OK
+confirmed zero outbox pending, zero processing outstanding, zero processing
+failures and no active alerts. Processed total remained 72; historical publish
+failures remained four and the retained dead-letter audit count remained one.
+Consumer/publisher heartbeats were present without errors, aged 4.213274 and
+1.234180 seconds. Native broker queue counts were not measured by this check.
+This completes the post-50-user application-health checkpoint. A separately
+reviewed 100-user test is the next candidate; it has not been started.
