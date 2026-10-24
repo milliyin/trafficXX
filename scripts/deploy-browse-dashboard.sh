@@ -12,5 +12,6 @@ kubectl rollout status deployment/grafana -n trafficxx-monitoring --timeout=120s
 kubectl create configmap grafana-dashboards -n trafficxx-monitoring \
   --from-file=trafficxx-operations.json=monitoring/grafana/trafficxx-operations.json \
   --from-file=trafficxx-browse-pool.json=monitoring/grafana/trafficxx-browse-pool.json \
+  --from-file=trafficxx-booking-pool.json=monitoring/grafana/trafficxx-booking-pool.json \
   --dry-run=client -o yaml | kubectl apply -f -
 echo 'BROWSE_DASHBOARD_UPDATED; allow projected-file/provider refresh, then verify --browse-pool.'

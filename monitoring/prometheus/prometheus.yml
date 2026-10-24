@@ -25,3 +25,10 @@ scrape_configs:
         type: A
         port: 8000
         refresh_interval: 30s
+  - job_name: trafficxx-booking-pool
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: [booking-metrics.trafficxx.svc.cluster.local]
+        type: A
+        port: 8000
+        refresh_interval: 30s

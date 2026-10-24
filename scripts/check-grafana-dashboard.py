@@ -13,6 +13,7 @@ BASE = 'http://grafana.trafficxx-monitoring.svc.cluster.local:3000'
 UID = 'trafficxx-operations'
 SOURCE = 'trafficxx-prometheus'
 POOL_UID = 'trafficxx-browse-pool'
+BOOKING_POOL_UID = 'trafficxx-booking-pool'
 ALERT_FILTER = 'component="browse-pool",job="trafficxx-browse-pool"'
 ALERT_QUERIES = {
     state: 'count(ALERTS{' + ALERT_FILTER + ',alertstate="' + state + '"}) or vector(0)'
@@ -95,11 +96,43 @@ def verify_pool(get):
             'operations_dashboard_verified': True, 'notification_delivery_configured': False}
 
 
+def verify_booking_pool(get):
+    verify_pool(get)  # Preserve Operations, Browse samples and Browse rule health.
+    payload = get('/api/dashboards/uid/' + BOOKING_POOL_UID)
+    dashboard = payload['dashboard']
+    panels = dashboard.get('panels', [])
+    if (dashboard.get('uid') != BOOKING_POOL_UID
+            or dashboard.get('title') != 'trafficXX | Booking database pool'
+            or payload.get('meta', {}).get('provisioned') is not True
+            or len(panels) != 8 or len({row.get('id') for row in panels}) != 8):
+        raise ValueError('Unexpected Booking pool dashboard')
+    for panel in panels:
+        if panel.get('datasource', {}).get('uid') != SOURCE or not panel.get('targets'):
+            raise ValueError('Missing Booking dashboard datasource/queries')
+        for target in panel['targets']:
+            if (target.get('datasource', {}).get('uid') != SOURCE
+                    or 'job="trafficxx-booking-pool"' not in target.get('expr', '')
+                    or 'browse' in target['expr']):
+                raise ValueError('Booking panel references unexpected metrics')
+    spec = importlib.util.spec_from_file_location(
+        'pool_monitoring', Path(__file__).with_name('check-browse-monitoring.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    prefix = '/api/datasources/proxy/uid/' + SOURCE
+    stored = module.verify(lambda path: get(prefix + path), component='booking')
+    return {'result': 'GRAFANA_BOOKING_POOL_OK', 'dashboard_uid': BOOKING_POOL_UID,
+            'panel_count': 8, 'datasource_uid': SOURCE, 'target_count': stored['target_count'],
+            'stored_samples_per_target_minimum': 2,
+            'operations_dashboard_verified': True, 'browse_dashboard_and_rules_verified': True,
+            'notification_delivery_configured': False}
+
+
 def main():
     try:
-        if sys.argv[1:] not in ([], ['--browse-pool']):
+        if sys.argv[1:] not in ([], ['--browse-pool'], ['--booking-pool']):
             raise ValueError('Unsupported dashboard check option')
-        pool_mode = sys.argv[1:] == ['--browse-pool']
+        pool_mode = bool(sys.argv[1:])
+        booking_mode = sys.argv[1:] == ['--booking-pool']
         user = Path('/credentials/admin-user').read_text().strip()
         password = Path('/credentials/admin-password').read_text().strip()
         if user != 'admin' or len(password) < 32:
@@ -112,7 +145,8 @@ def main():
             with opener.open(request, timeout=15) as response:
                 return json.load(response)
         try:
-            get('/api/dashboards/uid/' + (POOL_UID if pool_mode else UID), authenticated=False)
+            target_uid = BOOKING_POOL_UID if booking_mode else POOL_UID if pool_mode else UID
+            get('/api/dashboards/uid/' + target_uid, authenticated=False)
         except urllib.error.HTTPError as error:
             if error.code != 401:
                 raise
@@ -120,7 +154,8 @@ def main():
             raise ValueError('Dashboard unexpectedly accessible without login')
         for attempt in range(48 if pool_mode else 12):
             try:
-                result = verify_pool(get) if pool_mode else verify(get)
+                result = (verify_booking_pool(get) if booking_mode else
+                          verify_pool(get) if pool_mode else verify(get))
                 result['unauthenticated_dashboard_denied'] = True
                 print(json.dumps(result))
                 return 0

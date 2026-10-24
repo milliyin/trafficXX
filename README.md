@@ -233,7 +233,10 @@ Next:
    passed. A same-seat race through both replicas also passed: one201, one409
    SEAT_UNAVAILABLE, winning reservation cancelled. Post-test demo inventory was
    restored to100each; Operations reported36processed, no backlog/active warnings,
-   and fresh error-free workers. These are bounded functional checks. Workers still
+   and fresh error-free workers. These are bounded functional checks.
+   [Booking pool monitoring](docs/booking-pool-monitoring.md)
+   is prepared in source with separate per-pod series and an eight-panel dashboard;
+   its new image, live samples and browser checks are pending. Workers still
    connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.
@@ -283,7 +286,7 @@ python3 -m unittest discover -s unit_tests -q
 ```
 
 Run experiment scripts from this repository root. Local validation currently
-passes 387 offline tests; SDK/database responses and the expiry clock are mocked
+passes 393 offline tests; SDK/database responses and the expiry clock are mocked
 there. The Azure results above come from separate user-run real experiments.
 Future pushes trigger hosted CI; their result must be checked separately.
 

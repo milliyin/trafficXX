@@ -3,10 +3,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import FastAPI, Header, Response
+from fastapi.responses import PlainTextResponse
 
 from trafficxx.health import register
 from trafficxx.booking_db import BookingDatabase
 from trafficxx.models import ReservationRequest
+from trafficxx.pool_metrics import render
 from trafficxx.service import reservation, reserve
 
 database = BookingDatabase()
@@ -30,6 +32,12 @@ Key = Annotated[str, Header(alias='Idempotency-Key', min_length=1, max_length=20
 @app.get('/internal/database-pool', include_in_schema=False)
 def database_pool():
     return database.statistics()
+
+
+@app.get('/metrics', include_in_schema=False, response_class=PlainTextResponse)
+def metrics():
+    return PlainTextResponse(render(database.statistics()['statistics'], component='booking'),
+                             media_type='text/plain; version=0.0.4')
 
 
 @app.post('/reservations', status_code=201)

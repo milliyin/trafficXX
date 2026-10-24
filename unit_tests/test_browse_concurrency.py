@@ -98,6 +98,15 @@ class BrowseConcurrency(unittest.TestCase):
         with self.assertRaises(ValueError):
             flow.select_pods(deployment, pods, replica_set)
 
+    def test_booking_preflight_requires_the_requested_deployment_name(self):
+        deployment, pods, replica_set = self.fixtures()
+        with self.assertRaises(ValueError):
+            flow.select_pods(deployment, pods, replica_set, name='booking')
+        deployment['metadata']['name'] = 'booking'
+        self.assertEqual(len(flow.select_pods(deployment, pods, replica_set, name='booking')), 2)
+        with self.assertRaises(ValueError):
+            flow.select_pods(deployment, pods, replica_set)
+
     def test_owned_forwards_are_stopped_on_experiment_failure(self):
         deployment, pods, replica_set = self.fixtures()
         process = MagicMock()

@@ -3,8 +3,8 @@
 set +x
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --browse-pool ) ]]; then
-  echo 'Usage: check-grafana-dashboard.sh [--browse-pool]' >&2; exit 2;
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --browse-pool && "$1" != --booking-pool ) ]]; then
+  echo 'Usage: check-grafana-dashboard.sh [--browse-pool|--booking-pool]' >&2; exit 2;
 fi
 [[ "$(kubectl config current-context)" == trafficxx-lab-aks ]] || {
   echo 'Select the trafficxx-lab-aks context first.' >&2; exit 1;
@@ -14,11 +14,16 @@ kubectl create configmap grafana-dashboard-check-files -n trafficxx-monitoring \
   --from-file=check-browse-monitoring.py=scripts/check-browse-monitoring.py \
   --from-file=check-browse-alerts.py=scripts/check-browse-alerts.py \
   --dry-run=client -o yaml | kubectl apply -f -
-if [[ "${1:-}" == --browse-pool ]]; then
+if [[ -n "${1:-}" ]]; then
+  if [[ "$1" == --booking-pool ]]; then
+    job_name=grafana-booking-pool-check
+  else
+    job_name=grafana-browse-pool-check
+  fi
+  patch='[{"op":"replace","path":"/metadata/name","value":"'"$job_name"'"},{"op":"replace","path":"/spec/activeDeadlineSeconds","value":360},{"op":"add","path":"/spec/template/spec/containers/0/args","value":["'"$1"'"]}]'
   kubectl patch --local -f kubernetes/checks/grafana-dashboard.yaml --type=json \
-    -p '[{"op":"replace","path":"/metadata/name","value":"grafana-browse-pool-check"},{"op":"replace","path":"/spec/activeDeadlineSeconds","value":360},{"op":"add","path":"/spec/template/spec/containers/0/args","value":["--browse-pool"]}]' \
+    -p "$patch" \
     -o yaml | kubectl create -f -
-  job_name=grafana-browse-pool-check
 else
   kubectl apply -f kubernetes/checks/grafana-dashboard.yaml
   job_name=grafana-dashboard-check

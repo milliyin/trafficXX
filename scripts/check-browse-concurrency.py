@@ -22,22 +22,23 @@ def kubectl(*args):
                                    text=True, timeout=30, stderr=subprocess.DEVNULL)
 
 
-def select_pods(deployment, items, replica_set):
-    require(deployment['metadata']['name'] == 'browse'
+def select_pods(deployment, items, replica_set, *, name='browse'):
+    require(name in ('browse', 'booking'), 'Unexpected API name')
+    require(deployment['metadata']['name'] == name
             and deployment['metadata']['namespace'] == 'trafficxx', 'Unexpected deployment')
     require(deployment['spec']['replicas'] == 2
             and deployment['status'].get('observedGeneration', 0) >= deployment['metadata']['generation']
             and deployment['status'].get('updatedReplicas') == 2
-            and deployment['status'].get('readyReplicas') == 2, 'Browse must have two ready updated replicas')
+            and deployment['status'].get('readyReplicas') == 2, 'API must have two ready updated replicas')
     require(any(o.get('controller') and o['kind'] == 'Deployment'
                 and o['uid'] == deployment['metadata']['uid']
                 for o in replica_set['metadata']['ownerReferences']), 'ReplicaSet owner mismatch')
-    require(len(items) == 2, 'Expected exactly two stable Browse pods')
+    require(len(items) == 2, 'Expected exactly two stable API pods')
     for pod in items:
         require(not pod['metadata'].get('deletionTimestamp')
                 and pod['status']['phase'] == 'Running'
                 and any(c['type'] == 'Ready' and c['status'] == 'True'
-                        for c in pod['status'].get('conditions', [])), 'Browse pod not ready')
+                        for c in pod['status'].get('conditions', [])), 'API pod not ready')
         require(any(o.get('controller') and o['kind'] == 'ReplicaSet'
                     and o['uid'] == replica_set['metadata']['uid']
                     for o in pod['metadata']['ownerReferences']), 'Pod owner mismatch')

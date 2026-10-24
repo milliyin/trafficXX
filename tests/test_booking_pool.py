@@ -147,6 +147,11 @@ def test_http_requests_and_readiness_share_booking_pool(monkeypatch):
         assert before['instance_id'] == after['instance_id']
         assert after['statistics']['requests_num'] == before['statistics']['requests_num'] + 5
         assert after['statistics']['pool_max'] == 1
+        metrics = client.get('/metrics')
+        assert metrics.status_code == 200
+        assert '# TYPE trafficxx_booking_pool_borrows_total counter' in metrics.text
+        assert 'trafficxx_browse_pool_' not in metrics.text
+        assert client.get('/internal/database-pool').json()['statistics']['requests_num'] == after['statistics']['requests_num']
         # No pool slot is available; an HTTP request must receive a bounded 503.
         with database.connection():
             rejected = client.get(path, headers=headers)

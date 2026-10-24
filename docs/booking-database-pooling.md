@@ -5,6 +5,8 @@ read-only serving-pod reuse check and isolated SQL pool probe passed.
 Post-pooling reservation flow, duplicate concurrency and seat contention passed.
 Post-test demo inventory and Operations health checks also passed. These are
 bounded functional checkpoints, not a sustained-load or token-renewal result.
+The subsequent [Booking metrics/dashboard stage](booking-pool-monitoring.md)
+is prepared in source; its new image and live monitoring evidence remain pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
