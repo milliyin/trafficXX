@@ -120,7 +120,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         read.require(getattr(read, 'HTTP_CLIENT_POLICY', None) ==
                      'thread-local-http-only-fresh-connections-v1', 'UPDATE_READ_CLIENT_FIRST')
     if config.get('single_query_comparison'):
-        read.require(users == 100 and config.get('client_memory_comparison') is True
+        read.require(users in (100, 250) and config.get('client_memory_comparison') is True
                      and config.get('require_warm_pool') is True
                      and config.get('require_rejection_counters') is True
                      and config.get('required_queue_limit') == 16, 'INVALID_SINGLE_QUERY_COMPARISON')

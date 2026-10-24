@@ -158,7 +158,7 @@ def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=F
                 for value in values) and values == sorted(values), 'INVALID_LATENCY_SUMMARY')
     pools = outcome.get('pools', [])
     if single_query_comparison:
-        require(users == 100 and client_memory_comparison and outcome.get('single_query_verified') is True,
+        require(users in (100, 250) and client_memory_comparison and outcome.get('single_query_verified') is True,
                 'SINGLE_QUERY_NOT_VERIFIED')
         for row in pools:
             timings = row.get('timings', {})
@@ -193,7 +193,7 @@ def release_gate(pod, run_id, job_name=JOB):
 def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False):
     require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
     if single_query_comparison:
-        require(users == 100 and not diagnostic_retry, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_USERS')
+        require(users in (100, 250) and not diagnostic_retry, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_OR_250_USERS')
         client_memory_comparison = True
     if users == 250:
         require(not diagnostic_retry, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
@@ -207,7 +207,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
     require(not warm_pool or users in (100, 250), 'WARM_POOL_REQUIRES_100_USERS')
     require(not (warm_pool and diagnostic_retry), 'SELECT_ONE_COMPARISON')
     require(not rejection_diagnostics or warm_pool, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON')
-    job_name = ('browse-users-100-singlequery' if single_query_comparison else
+    job_name = (f'browse-users-{users}-singlequery' if single_query_comparison else
                 'browse-users-250' if users == 250 else
                 'browse-users-100-clientmemory' if client_memory_comparison else
                 'browse-users-100-queue16' if queue_comparison else
@@ -439,22 +439,22 @@ if __name__ == '__main__':
     parser.add_argument('--client-memory-comparison', action='store_true',
                         help='Separate 100-user queue-16 run using the HTTP-only per-thread client.')
     parser.add_argument('--single-query-comparison', action='store_true',
-                        help='Separate guarded 100-user Job requiring combined-query timing evidence.')
+                        help='Separate guarded 100- or 250-user Job requiring combined-query timing evidence.')
     args = parser.parse_args()
     if args.single_query_comparison:
-        if args.users != 100 or args.diagnostic_retry:
-            parser.error('--single-query-comparison requires --users 100 and excludes --diagnostic-retry')
+        if args.users not in (100, 250) or args.diagnostic_retry:
+            parser.error('--single-query-comparison requires --users 100 or 250 and excludes --diagnostic-retry')
         args.client_memory_comparison = True
     if args.client_memory_comparison:
         args.queue_comparison = True
     if args.queue_comparison:
-        if args.users != 100 or args.diagnostic_retry:
-            parser.error('--queue-comparison requires --users 100 and excludes --diagnostic-retry')
+        if args.users not in (100, 250) or args.diagnostic_retry:
+            parser.error('--queue-comparison requires --users 100 or 250 and excludes --diagnostic-retry')
         args.warm_pool_comparison = args.rejection_diagnostics = True
     if args.rejection_diagnostics and not args.warm_pool_comparison:
         parser.error('--rejection-diagnostics requires --warm-pool-comparison')
-    if args.warm_pool_comparison and (args.users != 100 or args.diagnostic_retry):
-        parser.error('--warm-pool-comparison requires --users 100 and excludes --diagnostic-retry')
+    if args.warm_pool_comparison and (args.users not in (100, 250) or args.diagnostic_retry):
+        parser.error('--warm-pool-comparison requires --users 100 or 250 and excludes --diagnostic-retry')
     if args.diagnostic_retry and args.users != 100:
         parser.error('--diagnostic-retry requires --users 100')
     raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users,

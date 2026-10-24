@@ -60,6 +60,13 @@ class BrowseUsers(unittest.TestCase):
         self.assertEqual(result['attempts'], result['valid_responses'])
         for pool in result['pools']:
             self.assertEqual(pool['timings']['availability_query']['mean_ms'], 1)
+        config['users'] = 250
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=.7, think=.05)
+        self.assertTrue(result['single_query_verified'])
+        self.assertEqual(result['users_with_requests'], 250)
+        self.assertTrue(250 <= result['attempts'] <= 7500)
+        self.assertEqual(result['attempts'], result['valid_responses'])
         before = http(config['targets']['browse'][0], '/internal/database-pool', 'test')[1]['statistics']
         changed = dict(before, timing_event_query_count=1)
         with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'LEGACY_QUERY_COUNTER_INCREASED'):
@@ -387,7 +394,7 @@ class BrowseUsersRunner(unittest.TestCase):
             queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = ('browse-users-100-singlequery' if single_query_comparison else
+        job_name = (f'browse-users-{users}-singlequery' if single_query_comparison else
                     'browse-users-250' if users == 250 else
                     'browse-users-100-clientmemory' if client_memory_comparison else
                     'browse-users-100-queue16' if queue_comparison else
@@ -603,9 +610,25 @@ class BrowseUsersRunner(unittest.TestCase):
         for fault in ('active-earlier-stage', 'old-queue', 'cold-policy'):
             code, output, commands = self.scenario(fault, users=100, single_query_comparison=True)
             self.assertEqual(code, 1, output)
-        for count in (50, 250):
-            with self.assertRaisesRegex(ValueError, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_USERS'):
+        for count in (50,):
+            with self.assertRaisesRegex(ValueError, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_OR_250_USERS'):
                 runner.execute(users=count, single_query_comparison=True)
+
+    def test_250_single_query_stage_keeps_failed_stage_separate_and_stop_scoped(self):
+        code, output, commands = self.scenario(users=250, single_query_comparison=True)
+        self.assertEqual(code, 0, output)
+        self.assertIn('"job": "browse-users-250-singlequery"', output)
+        self.assertIn('"max_workload_attempts": 7500', output)
+        self.assertIn('BROWSE_USERS_250_OK', output)
+        self.assertFalse(any(args[0] in ('delete', 'scale') for args in commands))
+        for fault in ('resource-stop', 'active-earlier-stage', 'old-queue', 'cold-policy', 'existing'):
+            code, output, commands = self.scenario(fault, users=250, single_query_comparison=True)
+            self.assertEqual(code, 1, output)
+            for args in commands:
+                if args[:2] == ('patch', 'job'):
+                    self.assertEqual(args[2], 'browse-users-250-singlequery')
+        with self.assertRaises(ValueError):
+            runner.execute(users=250, single_query_comparison=True, diagnostic_retry=True)
 
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
@@ -689,6 +712,11 @@ class BrowseUsersRunner(unittest.TestCase):
             row['timings'] = {phase: {'observations': 100, 'total_us': 100000, 'mean_ms': 1}
                               for phase in probe.TIMING_PHASES}
         runner.validate(single, 'abcdef123456', 100, True, True, True, True, True)
+        single_250 = dict(single, users=250, users_with_requests=250, attempts=7500,
+                          valid_responses=7500, status_counts={'200': 7500})
+        runner.validate(single_250, 'abcdef123456', 250, True, True, True, True, True)
+        with self.assertRaises(ValueError):
+            runner.validate(dict(single_250, attempts=7501), 'abcdef123456', 250, True, True, True, True, True)
         larger = dict(queue, users=250, users_with_requests=250, attempts=7500,
                       valid_responses=7500, status_counts={'200': 7500})
         runner.validate(larger, 'abcdef123456', 250, True, True, True, True)

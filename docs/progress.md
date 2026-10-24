@@ -18,7 +18,7 @@ earlier checkpoints. It is not a live status page.
 | 50-user Browse experiment | 1,382 successful reads in 60.133 seconds; zero errors; p95 209.486 ms. |
 | 100-user Browse experiment | 2,734 successful reads in 60.134 seconds; zero errors; p95 313.140 ms with queue limit 16. |
 | 100-user client memory comparison | 2,745 successful reads in 60.156 seconds; zero errors; p95 294.158 ms. Sampled generator peak process RSS 33.250 MiB versus the preceding 241.094 MiB. |
-| 100-user single-query comparison | 2,804 successful reads in 60.100 seconds; zero errors; p95 201.078 ms; sampled generator peak process RSS 33.164 MiB. Post-run health checks pending. |
+| 100-user single-query comparison | 2,804 successful reads in 60.100 seconds; zero errors; p95 201.078 ms; sampled generator peak process RSS 33.164 MiB. Fresh post-run health checks passed. |
 
 The fresh health checks after the 100-user pass reported both demo events still
 at 100 available tickets, healthy workers, no backlog, and no active alerts.
@@ -55,8 +55,8 @@ or establish sustained production capacity.
   Body means fell from 76-84 ms to 52-59 ms across the observed pods, consistent
   with one fewer round trip. Placement/sample differences limit comparison;
   The guarded 100-user single-query comparison also passed with 2,804 valid
-  reads and zero rejections; fresh post-run health checks are next before
-  reviewing a separate 250-user attempt.
+  reads and zero rejections; fresh post-run health checks passed. A separate
+  guarded 250-user single-query comparison is prepared, with no live result yet.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

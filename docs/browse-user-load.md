@@ -1466,4 +1466,41 @@ image, pod/node placement and sample differences prevent an isolated causal
 performance claim. It establishes no sustained capacity, latency SLO or
 250-user pass. Pre-run demo/Operations health passed (processed 72, no backlog
 or active alerts; historical publication failures four and audit count one).
-Fresh post-run health checks remain next before a separate larger-stage review.
+Fresh post-run health checks subsequently passed: demo alive/ready and 100
+available per event; Operations processed 72 with zero backlog, processing
+failures or active alerts. Historical publication failures four and audit
+count one were unchanged, with healthy worker heartbeats (consumer 1.742964s,
+publisher 1.147792s). Native broker depth was not queried by these checks.
+
+## Prepared 250-user single-query comparison
+
+With the single-query 100-user pass and fresh post-run health confirmed,
+the next reviewed command is:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 250 --single-query-comparison
+```
+
+It creates only `browse-users-250-singlequery`, preserving the earlier failed
+`browse-users-250` Job. No image rebuild or application rollout is required:
+it uses the deployed caf image and mounted diagnostic scripts. It verifies
+combined-query timers on both pods and unchanged legacy query counters, and
+reports the same per-pod timing deltas as the 100-user comparison.
+
+This retains the earlier 250-user workload: 60 seconds, two-second pauses,
+at most 7,500 GETs, zero-error stopping, existing CPU/memory/latency/waiting
+guards, one CPU/256 MiB generator bound to an existing node, four ready/max
+connections and 16 waiting slots per pod. Overlap/existing-Job refusal,
+UID-scoped stop, final pod/process stability, and inventory checks remain.
+No queue, connection, replica, query or resource-policy change is made by
+this diagnostic. It does not automatically retry or advance to 500 users.
+
+Keep Cloud Shell running for up to eight minutes and retain complete output.
+On pass or failure, obtain fresh demo/Operations health again; on failure
+also confirm the diagnostic Job is terminal before any new load. There is
+no live result for this mode yet. The smaller-stage improvement does not
+guarantee this stage will pass or define the system's maximum capacity.
