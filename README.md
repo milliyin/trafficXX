@@ -304,7 +304,10 @@ Next:
    Recovery checks passed; the failing replica recorded one pool request error.
    A separate diagnostic retry captures allowlisted error codes and pool deltas:
    python3 scripts/run-browse-users.py --users 100 --diagnostic-retry.
-   Its live result is pending. Higher stages are not started automatically.
+   The diagnostic retry stopped on two DATABASE_BUSY responses while both pools
+   grew from one to four connections; startup queue pressure is the leading
+   hypothesis. A warm-pool comparison is proposed; 100 users have not passed.
+   Higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

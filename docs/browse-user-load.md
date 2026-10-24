@@ -451,3 +451,45 @@ retry Job gate/UID-scoped stop/overlap guards. Shortened real loopback HTTP
 smokes again exercised all 50 and 100 users (75 and 148 valid reads respectively)
 and stopped the server. Native isolated Job renders retained identical security
 and resource settings. The live diagnostic retry remains pending.
+
+
+## Diagnostic retry result: pool rejection during growth
+
+Run 05ba94b69327 / Job browse-users-100-diagnostic passed startup metric gating
+and stopped after 1.051 seconds. Thirty-one users issued 31 requests: 29 HTTP
+200s and two HTTP 503s, both carrying the allowlisted DATABASE_BUSY code.
+Peak sampled workload concurrency was 22. The first rejection was general
+availability, 43.141 ms latency, at phase time 0.610 seconds. This is a partial
+failed workload; no 100-user pass was established.
+
+Both pools began with size/available one and zero waiting. After in-flight
+requests finished, both had size/available four and zero waiting. Same process
+IDs were retained. g649w counter deltas were requests 18, connection attempts
+three and request errors two; k6fdk deltas were requests 13, connection attempts
+three and request errors zero (its historical request-error count remained one).
+Both replicas had zero new connection errors, losses or bad returns. Thus the
+diagnostic retry's errors occurred on g649w, unlike the first attempt's k6fdk.
+
+DATABASE_BUSY confirms the application's pool rejection path. The quick 43 ms
+response, compared with a configured three-second acquisition timeout, together
+with pools growing one to four, strongly suggests the eight-place waiting queue
+filled during growth. This is an inference: the service code groups queue-full,
+timeout and closed-pool exceptions. The sequential post-stop snapshots are not
+peak queue measurements and cannot prove saturation exactly at rejection time.
+The coarse resource samples mostly cover startup and do not characterize the
+subsecond request burst. Do not infer a PostgreSQL or sustained capacity ceiling.
+
+The configured pool minimum one and max_idle 60 seconds allow unused capacity
+to shrink before a later burst. The next proposed comparison is keeping four
+connections ready per Browse pod, retaining the existing maximum four and wait
+limit eight, then repeating the same paced 100-user workload under a separate
+reviewed Job. This would raise the idle connection floor to eight across two
+Browse pods, within their existing steady maximum; startup/rolling surge and
+other workloads still need their own budget. No such pool-policy change or new
+load run has been performed yet.
+
+The runner requested a UID-scoped stop and retained files
+browse-users-05ba94b69327-files. Confirm terminal diagnostic Job status and fresh
+demo/Operations health before a deployment or new experiment. Pre-run checks
+were healthy (inventory 100 each, processed total 72, no backlog/alerts); fresh
+post-retry health has not yet been supplied. The renewal Job is unchanged.
