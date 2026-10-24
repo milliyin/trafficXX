@@ -32,8 +32,16 @@ digest c94884448905a0e94f2e4b8502ed120767f8cf46a2aa2f8747862ad5f6a663f0.
 Browse used digest f09d49ce8044461be8dbde85835888fec67a5ca5a2d848b20ed422da211c1e51.
 The script deliberately performed inventory writes, followed by verified
 cancellation and inventory restoration. Its HTTP result does not establish
-that all newly emitted events have drained through publisher/consumer; inspect
-worker processing separately.
+that all newly emitted events have drained through publisher/consumer. The
+subsequent user-supplied OPERATIONS_HTTP_OK reported processed_total 72, up
+from the prior checkpoint of 36 and matching the expected 36 new logical events.
+Outbox pending/age and processing outstanding/age were all zero; processing
+failures stayed zero, publication failures stayed at the historical total of 4,
+and the historical dead-letter audit count stayed 1. Consumer/publisher
+heartbeats were fresh at 3.317029/0.094423 seconds with no errors or active alerts.
+This is successful aggregate worker monitoring after the write run, not a
+fresh row-by-row inbox/payload/projection audit or native Service Bus queue
+count. native_queue_counts_available and notification delivery remain false.
 
 ## Workload and limits
 

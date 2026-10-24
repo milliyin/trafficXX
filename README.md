@@ -285,6 +285,9 @@ Next:
    verified cleanup, inventory restored to 100 for both events and unchanged
    serving pods. Reserve p50 was 562/675 ms and cancel p50 538/655 ms for one/four
    workers; timings include Cloud Shell overhead and are not a production SLO.
+   Post-write Operations monitoring passed: processed total 72, zero pending
+   publication/processing work, fresh error-free workers and no active alerts.
+   This is aggregate monitoring rather than a new full-row consistency audit.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
