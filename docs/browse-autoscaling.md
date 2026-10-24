@@ -166,6 +166,15 @@ recovery to two ready pods before starting load, and runs the same 250-user
 workload and bounds. No addon reinstall, image build or manual scaling is
 needed. The retry has no live result yet.
 
+The first retry invocation stopped at `DISCOVERY_NOT_CONVERGED` before a new
+Job was created. Fresh demo and Operations checks passed; the database's
+five-minute observations reached CPU 8.38%, memory 22.00% and 43 connections.
+The checker now waits up to 180 seconds for readiness, target discovery and
+active metrics to agree before the unchanged strict validation succeeds.
+Policy, ownership and replica-budget errors still fail immediately. This
+bounded read-only wait does not substitute missing targets or zero metrics.
+The same retry command can be used because that invocation created no Job.
+
 Keep the Job and logs. The Job has a 450-second deadline, including resource
 warmup. On a handled failure the observer attempts to stop only its own Job
 using its UID; it does not disable the HPA or force a successful downscale.

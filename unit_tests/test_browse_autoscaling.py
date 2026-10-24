@@ -37,6 +37,26 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_preflight_waits_for_discovery_but_requires_the_same_strict_check(self):
+        ready = app()
+        checking = Mock(side_effect=[ValueError('DISCOVERY_NOT_CONVERGED'),
+                                     ValueError('HPA_METRIC_NOT_ACTIVE'), ready])
+        sleeping = Mock()
+        with patch.object(scaling, 'check', checking), redirect_stdout(io.StringIO()):
+            self.assertEqual(scaling.wait_baseline(Mock(), clock=lambda: 0, sleep=sleeping), ready)
+        self.assertEqual(checking.call_count, 3)
+        self.assertEqual(sleeping.call_count, 2)
+
+    def test_preflight_convergence_is_bounded_and_policy_errors_are_immediate(self):
+        with patch.object(scaling, 'check', side_effect=ValueError('DISCOVERY_NOT_CONVERGED')), \
+                redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, 'CONVERGENCE_TIMEOUT'):
+            scaling.wait_baseline(Mock(), clock=Mock(side_effect=[0, 180]), sleep=Mock())
+        for reason in ('FOREIGN_HPA', 'POOL_POLICY_CHANGED', 'REPLICA_BUDGET_EXCEEDED', 'AUTOSCALING_PAUSED'):
+            sleeping = Mock()
+            with patch.object(scaling, 'check', side_effect=ValueError(reason)), self.assertRaisesRegex(ValueError, reason):
+                scaling.wait_baseline(Mock(), clock=lambda: 0, sleep=sleeping)
+            sleeping.assert_not_called()
+
     def test_metric_gap_requires_recovery_within_a_bounded_total(self):
         active = {'status': {'conditions': [{'type': 'ScalingActive', 'status': 'True'}]}}
         inactive = {'status': {'conditions': [{'type': 'ScalingActive', 'status': 'False'}]}}

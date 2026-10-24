@@ -204,6 +204,26 @@ def check(query):
     return app
 
 
+def wait_baseline(query, seconds=180, *, clock=time.monotonic, sleep=time.sleep):
+    """Wait for asynchronous readiness/discovery without relaxing final evidence."""
+    transient = {'DISCOVERY_NOT_CONVERGED', 'BROWSE_NOT_READY',
+                 'SCALING_METRIC_MISSING', 'HPA_METRIC_NOT_ACTIVE'}
+    deadline, previous = clock() + seconds, None
+    while True:
+        try:
+            return check(query)
+        except ValueError as error:
+            reason = str(error)
+            if reason not in transient:
+                raise
+            require(clock() < deadline, 'BROWSE_BASELINE_CONVERGENCE_TIMEOUT')
+            if reason != previous:
+                emit('BROWSE_WAITING_FOR_METRIC_BASELINE', check=reason, timeout_seconds=seconds,
+                     note='Read-only wait; this check creates no load Job.')
+                previous = reason
+            sleep(5)
+
+
 def deploy():
     trial.context()
     trial.no_active_load()
@@ -314,7 +334,7 @@ def drill(*, retry_metric_gap=False):
     job = None
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
-        app = check(query)
+        app = wait_baseline(query)
         if retry_metric_gap and app['spec']['replicas'] != 2:
             emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
@@ -450,7 +470,7 @@ def main():
         else:
             trial.context()
             with prometheus() as query:
-                check(query)
+                wait_baseline(query)
         return 0
     except (Exception, KeyboardInterrupt) as error:
         emit('BROWSE_AUTOSCALING_FAILED', action=action, error_type=type(error).__name__,
