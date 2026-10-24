@@ -1129,3 +1129,42 @@ and dead-letter audit one stayed unchanged. Native broker counts were not
 measured by these checks. This completes the post-run health checkpoint;
 higher stages still require separate review. The original token-renewal Job
 remains a separate pending verdict.
+
+## Prepared 250-user stage
+
+After the passing 100-user client comparison and fresh post-run health checks,
+the next explicitly selected stage is prepared:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 250
+```
+
+This creates only `browse-users-250`. It automatically requires the verified
+HTTP-only per-thread client, warm minimum/maximum four connections, rejection
+counters and exactly 16 waiting slots in each Browse pod. It reuses the
+deployed immutable runtime image with mounted scripts; no image rebuild or
+application rollout is needed.
+
+The workload is 250 paced users for 60 seconds, with two-second pauses and at
+most 7,500 availability GETs. This is not 250 requests per second. The generator
+still has one CPU and 256 MiB, binds to an existing ready apps node, and does
+not change serving replicas, database limits or inventory. Earlier Jobs are
+preserved; an existing same-name Job or another active read-load Job blocks it.
+
+Existing gates remain: two fresh distinct resource samples before workload,
+resource supervision, any HTTP/pool error, a request exceeding two seconds,
+sampled pool waiting for ten seconds, process/pod replacement or restarts.
+Supervision stops at sampled CPU >=80% for 20 seconds or memory >=85% for
+10 seconds; metric cadence limits the observations. No automatic retry or
+progression to 500/1,000 users occurs. A 250-user failure is a measurement to
+inspect, not a reason to bypass a guard.
+
+Keep Cloud Shell running for up to eight minutes and retain complete output.
+After completion, run the two health scripts again. If it fails, inspect its
+Job/logs and confirm it is terminal before another load. A final
+BROWSE_USERS_250_OK plus fresh post-run health would establish this bounded
+stage; there is no live 250-user result yet and no production SLO claim.

@@ -1,4 +1,4 @@
-"""In-cluster read-only stage: 50 or 100 paced users for 60 seconds, no retries."""
+"""In-cluster read-only stage: 50, 100 or 250 paced users for 60 seconds, no retries."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -84,8 +84,14 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     targets = read.targets_from(config)['browse']
     configured_users = config.get('users', USERS)
     users = configured_users if users is None else users
-    read.require(type(users) is int and users in (50, 100) and users == configured_users
+    read.require(type(users) is int and users in (50, 100, 250) and users == configured_users
                  and duration > 0 and think > 0, 'INVALID_STAGE')
+    if users == 250:
+        read.require(config.get('require_warm_pool') is True
+                     and config.get('require_rejection_counters') is True
+                     and config.get('required_queue_limit') == 16
+                     and config.get('client_memory_comparison') is True,
+                     'LARGER_STAGE_REQUIRES_ALL_GUARDS')
     if config.get('client_memory_comparison'):
         read.require(getattr(read, 'HTTP_CLIENT_POLICY', None) ==
                      'thread-local-http-only-fresh-connections-v1', 'UPDATE_READ_CLIENT_FIRST')

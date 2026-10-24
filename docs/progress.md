@@ -45,6 +45,8 @@ or establish sustained production capacity.
   does not establish a causal memory profile or higher-load capacity.
 - **Higher user counts:** 250, 500, and 1,000 users have not been tested. Each
   requires a separately reviewed workload and adequate generator headroom.
+  The guarded 250-user command is now prepared in the
+  [load guide](browse-user-load.md#prepared-250-user-stage); no live result yet.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

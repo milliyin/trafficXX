@@ -98,6 +98,38 @@ class BrowseUsers(unittest.TestCase):
             result = probe.run(config, http, service, duration=.4, think=.02)
         self.assertTrue(result['warm_pool_verified'])
         self.assertEqual(result['users_with_requests'], 100)
+
+    def test_250_probe_requires_policy_before_traffic_and_bounds_attempts(self):
+        config = dict(fixtures.config(), users=250, require_warm_pool=True,
+                      require_rejection_counters=True, required_queue_limit=16,
+                      client_memory_comparison=True)
+        service = Mock()
+        for key in ('require_warm_pool', 'require_rejection_counters',
+                    'required_queue_limit', 'client_memory_comparison'):
+            changed = dict(config)
+            changed.pop(key)
+            with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'LARGER_STAGE_REQUIRES_ALL_GUARDS'):
+                probe.run(changed, Mock(), service)
+        service.assert_not_called()
+
+        class Warm(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, body = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    body['statistics'].update(pool_min=4, pool_size=4, pool_available=4,
+                        pool_waiting_limit=16, rejections_queue_full=0,
+                        rejections_timeout=0, rejections_closed=0)
+                return status, body
+        http = Warm()
+        def service(url, customer):
+            return http(config['targets']['browse'][0], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=1, think=.05)
+        self.assertEqual(result['users_with_requests'], 250)
+        self.assertTrue(250 <= result['attempts'] <= 7500)
+        self.assertEqual(result['attempts'], result['valid_responses'])
+        self.assertFalse(result['inventory_writes'])
+        self.assertEqual(result['verified_queue_limit'], 16)
         self.assertEqual(len(result['initial_pools']), 2)
 
     def test_unexpected_http_response_stops_without_printing_response_body(self):
@@ -311,11 +343,14 @@ class BrowseUsers(unittest.TestCase):
 class BrowseUsersRunner(unittest.TestCase):
     def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
         commands, polls = [], [0]
+        if users == 250:
+            client_memory_comparison = True
         if client_memory_comparison:
             queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = ('browse-users-100-clientmemory' if client_memory_comparison else
+        job_name = ('browse-users-250' if users == 250 else
+                    'browse-users-100-clientmemory' if client_memory_comparison else
                     'browse-users-100-queue16' if queue_comparison else
                     'browse-users-100-rejections' if rejection_diagnostics else
                     'browse-users-100-warm' if warm_pool else
@@ -499,6 +534,22 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'QUEUE_COMPARISON_REQUIRES_100_USERS'):
             runner.execute(users=50, client_memory_comparison=True)
 
+    def test_250_stage_forces_guards_and_stops_only_its_own_job(self):
+        code, output, commands = self.scenario(users=250)
+        self.assertEqual(code, 0, output)
+        self.assertIn('BROWSE_USERS_250_OK', output)
+        self.assertIn('"max_workload_attempts": 7500', output)
+        self.assertIn('"job": "browse-users-250"', output)
+        code, output, commands = self.scenario('resource-stop', users=250)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2], 'browse-users-250')
+        for fault in ('old-queue', 'cold-policy', 'active-earlier-stage'):
+            code, output, commands = self.scenario(fault, users=250)
+            self.assertEqual(code, 1, output)
+            self.assertNotIn('BROWSE_USERS_250_OK', output)
+        with self.assertRaises(ValueError):
+            runner.execute(users=250, diagnostic_retry=True)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -571,6 +622,13 @@ class BrowseUsersRunner(unittest.TestCase):
         queue['generator_memory'] = {'source': '/proc/self/status', 'samples': 3,
                                      'sampled_max_rss_mib': 50, 'sampled_max_threads': 102}
         runner.validate(queue, 'abcdef123456', 100, True, True, True, True)
+        larger = dict(queue, users=250, users_with_requests=250, attempts=7500,
+                      valid_responses=7500, status_counts={'200': 7500})
+        runner.validate(larger, 'abcdef123456', 250, True, True, True, True)
+        with self.assertRaisesRegex(ValueError, 'LARGER_STAGE_REQUIRES_ALL_GUARDS'):
+            runner.validate(larger, 'abcdef123456', 250)
+        with self.assertRaises(ValueError):
+            runner.validate(dict(larger, attempts=7501), 'abcdef123456', 250, True, True, True, True)
         with self.assertRaises(ValueError):
             runner.validate(queue, 'abcdef123456', 100, True, True)
         queue['verified_queue_limit'] = 8

@@ -316,6 +316,9 @@ Next:
    was required. This is one bounded comparison, not higher-load capacity proof;
    fresh post-comparison health checks also passed with no backlog or alerts.
    Higher stages are not started automatically.
+   The next guarded stage is prepared as `python3 scripts/run-browse-users.py --users 250`;
+   it forces the verified client and pool policy, keeps existing budgets and
+   stop conditions, and has no live result yet. See the load guide before running.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

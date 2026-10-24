@@ -1,4 +1,4 @@
-"""Cloud Shell: run one explicitly selected 50- or 100-user stage, observing Kubernetes resource usage."""
+"""Cloud Shell: run one selected 50-, 100- or 250-user stage with resource supervision."""
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -109,7 +109,10 @@ def metrics():
 
 
 def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
-    require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
+    require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
+    if users == 250:
+        require(warm_pool and rejection_diagnostics and queue_comparison and client_memory_comparison,
+                'LARGER_STAGE_REQUIRES_ALL_GUARDS')
     require(outcome.get('result') == 'BROWSE_USERS_WORKLOAD_OK' and outcome.get('run_id') == run_id
             and outcome.get('users') == users and outcome.get('users_with_requests') == users
             and type(outcome.get('attempts')) is int and users <= outcome['attempts'] <= users * 30
@@ -138,7 +141,7 @@ def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=F
                 ('rejections_queue_full', 'rejections_timeout', 'rejections_closed'))
                 for row in initial.values()), 'REJECTION_COUNTERS_NOT_VERIFIED')
     if queue_comparison:
-        require(users == 100 and warm_pool and rejection_diagnostics, 'INVALID_QUEUE_COMPARISON_MODE')
+        require(users in (100, 250) and warm_pool and rejection_diagnostics, 'INVALID_QUEUE_COMPARISON_MODE')
         require(outcome.get('verified_queue_limit') == 16, 'QUEUE_LIMIT_NOT_VERIFIED')
         require(all(row['statistics'].get('pool_waiting_limit') == 16
                     for row in outcome.get('initial_pools', {}).values()), 'QUEUE_LIMIT_NOT_VERIFIED')
@@ -179,17 +182,21 @@ def release_gate(pod, run_id, job_name=JOB):
 
 
 def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
-    require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
+    require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
+    if users == 250:
+        require(not diagnostic_retry, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
+        client_memory_comparison = True
     if client_memory_comparison:
         queue_comparison = True
     if queue_comparison:
-        require(users == 100, 'QUEUE_COMPARISON_REQUIRES_100_USERS')
+        require(users in (100, 250), 'QUEUE_COMPARISON_REQUIRES_100_USERS')
         warm_pool = rejection_diagnostics = True
     require(not diagnostic_retry or users == 100, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
-    require(not warm_pool or users == 100, 'WARM_POOL_REQUIRES_100_USERS')
+    require(not warm_pool or users in (100, 250), 'WARM_POOL_REQUIRES_100_USERS')
     require(not (warm_pool and diagnostic_retry), 'SELECT_ONE_COMPARISON')
     require(not rejection_diagnostics or warm_pool, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON')
-    job_name = ('browse-users-100-clientmemory' if client_memory_comparison else
+    job_name = ('browse-users-250' if users == 250 else
+                'browse-users-100-clientmemory' if client_memory_comparison else
                 'browse-users-100-queue16' if queue_comparison else
                 'browse-users-100-rejections' if rejection_diagnostics else
                 'browse-users-100-warm' if warm_pool else
@@ -402,7 +409,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight-only', action='store_true')
-    parser.add_argument('--users', type=int, choices=(50, 100), default=50)
+    parser.add_argument('--users', type=int, choices=(50, 100, 250), default=50,
+                        help='250 automatically requires the verified HTTP client, warm pool, counters and queue 16.')
     parser.add_argument('--diagnostic-retry', action='store_true',
                         help='Use the separate 100-user diagnostic Job; no automatic retries.')
     parser.add_argument('--warm-pool-comparison', action='store_true',
