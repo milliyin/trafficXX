@@ -350,3 +350,24 @@ stop. Confirm native Job/pod termination and fresh Browse/Operations health;
 inspect both Browse replicas' recent logs and pool counters before choosing any
 change. Do not increase pool size, scale replicas or proceed to 250 users from
 this result. The 100-user stage has not passed.
+
+
+### Post-failure recovery and replica evidence
+
+The user supplied native Job status Failed (3m55s), confirming the diagnostic
+Job is terminal. A fresh BROWSE_DEMO_HTTP_OK reported alive/ready and both demo
+availabilities still 100. OPERATIONS_HTTP_OK reported zero pending/outstanding
+work, no active alerts or processing failures, processed total 72 and unchanged
+historical publication failures four/dead-letter audit count one. Both worker
+heartbeats were present without errors (consumer 5.910125s, publisher 0.727597s).
+These checks do not independently measure native broker counts.
+
+The supplied access logs identify browse-6775788b9b-k6fdk returning the 503 for
+GET /events/demo-general/availability from diagnostic client 10.244.3.222.
+The same pod subsequently returned successful readiness/liveness/metrics
+responses; the other serving replica's supplied availability requests were
+successful. The access log does not include the error body or pool exception.
+No cause is proved by that line alone. Read both existing replicas' numeric
+/internal/database-pool counters next; this endpoint does not borrow SQL
+connections. Lifetime counters can corroborate pool pressure but cannot by
+themselves isolate a single request or establish the precise exception.
