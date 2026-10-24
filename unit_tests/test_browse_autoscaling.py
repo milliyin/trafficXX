@@ -133,6 +133,24 @@ class Scaling(unittest.TestCase):
                 scaling.idle_two('owned', Mock())
             check.assert_not_called()
 
+    def test_recovery_only_waits_for_natural_idle_and_never_creates_load(self):
+        initial = app()
+        initial['spec']['replicas'] = 3
+        with ExitStack() as stack:
+            for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                (scaling.trial, 'health'), (scaling, 'database_pressure')):
+                stack.enter_context(patch.object(owner, name))
+            stack.enter_context(patch.object(scaling, 'wait_baseline', return_value=initial))
+            stack.enter_context(patch.object(scaling, 'prometheus'))
+            idle = stack.enter_context(patch.object(scaling, 'idle_two', return_value=app()))
+            waiting = stack.enter_context(patch.object(scaling, 'wait_until', side_effect=lambda fn, _: fn()))
+            creating = stack.enter_context(patch.object(scaling, 'create_job'))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            scaling.wait_idle()
+            creating.assert_not_called()
+            idle.assert_called_once()
+            self.assertEqual(waiting.call_args.args[1], 600)
+
     def test_retry_waits_for_idle_before_creating_a_distinct_job(self):
         initial = app()
         initial['spec']['replicas'] = 4
@@ -281,6 +299,11 @@ class Scaling(unittest.TestCase):
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
                     if retry:
                         self.assertIn(job_name, output.getvalue())
+                    # The third poll is already Job Complete. Live generator
+                    # metrics must not be read after that terminal evidence.
+                    with self.assertRaises(StopIteration):
+                        next(states)
+                    self.assertIsNotNone(next(dates))
 
 
 if __name__ == '__main__':

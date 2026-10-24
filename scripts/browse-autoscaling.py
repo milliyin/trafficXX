@@ -323,6 +323,28 @@ def idle_two(uid, query):
     return check(query)
 
 
+def check_pool_errors(query):
+    for field in ('borrow_errors_total', 'connection_errors_total', 'queue_full_total',
+                  'acquire_timeouts_total', 'closed_rejections_total', 'bad_returns_total'):
+        require(scalar(query, 'sum(increase(' + M + field + F + '[1m]))') == 0,
+                'POOL_ERROR_COUNTER_INCREASE')
+
+
+def wait_idle():
+    """Observe recovery only; never create a Job or change replica counts."""
+    trial.context()
+    trial.no_active_load()
+    with prometheus() as query:
+        app = wait_baseline(query)
+        emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
+             timeout_seconds=600, note='Read-only recovery check; no new load or manual scaling.')
+        wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
+    trial.health()
+    database_pressure()
+    emit('BROWSE_AUTOSCALING_RECOVERY_OK', ready_replicas=2, pool_per_pod=8, inventory_writes=False,
+         note='Post-run recovery only; not a replacement for the original continuous resource audit.')
+
+
 def drill(*, retry_metric_gap=False):
     job_name = JOB + '-v2' if retry_metric_gap else JOB
     trial.context()
@@ -366,6 +388,11 @@ def drill(*, retry_metric_gap=False):
                 if 'Failed' in terminal:
                     print(base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check'), flush=True)
                 require('Failed' not in terminal, 'LOAD_JOB_FAILED')
+                # A completed generator no longer has live container usage.
+                # Validate its final workload evidence below, rather than
+                # interpreting disappearing completed-pod metrics as a fault.
+                if 'Complete' in terminal:
+                    break
                 # Source-timestamp freshness and sustained pressure use the same
                 # limits as earlier trials. New pods have bounded metrics warmup.
                 payload = trial.users.metrics()
@@ -381,6 +408,10 @@ def drill(*, retry_metric_gap=False):
                     name = pod['metadata']['name']
                     is_generator = pod['metadata'].get('labels', {}).get('job-name') == job_name
                     if is_generator:
+                        require(pod.get('status', {}).get('phase') != 'Failed', 'GENERATOR_FAILED')
+                        if pod.get('status', {}).get('phase') == 'Succeeded':
+                            # Pod phase can precede the Job Complete condition.
+                            continue
                         generator = name
                     else:
                         require(all(s.get('restartCount', 0) == 0 for s in pod.get('status', {}).get('containerStatuses', [])),
@@ -398,6 +429,9 @@ def drill(*, retry_metric_gap=False):
                 resource_watch.add(values, time.monotonic())
                 for name in expected:
                     if name not in values:
+                        if time.monotonic() - first_seen[name] >= 210:
+                            emit('BROWSE_RESOURCE_METRIC_MISSING', pod=name,
+                                 note='Expected a live container sample; completed generators are excluded.')
                         require(time.monotonic() - first_seen[name] < 210, 'RESOURCE_METRICS_MISSING')
                     else:
                         samples.setdefault(name, set()).add(values[name]['timestamp'])
@@ -412,15 +446,10 @@ def drill(*, retry_metric_gap=False):
                         require(time.monotonic() - waiting_since < 10, 'SUSTAINED_POOL_WAITING')
                     else:
                         waiting_since = None
-                    for field in ('borrow_errors_total', 'connection_errors_total', 'queue_full_total',
-                                  'acquire_timeouts_total', 'closed_rejections_total', 'bad_returns_total'):
-                        require(scalar(query, 'sum(increase(' + M + field + F + '[1m]))') == 0,
-                                'POOL_ERROR_COUNTER_INCREASE')
+                    check_pool_errors(query)
                 if time.monotonic() - last_database >= 60:
                     database_pressure()
                     last_database = time.monotonic()
-                if 'Complete' in terminal:
-                    break
                 require(time.monotonic() < deadline, 'LOAD_JOB_TIMEOUT')
                 time.sleep(5)
             logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
@@ -433,6 +462,7 @@ def drill(*, retry_metric_gap=False):
                     1 <= outcome.get('attempts', 0) <= 22500 and not outcome.get('errors') and
                     outcome.get('status_counts') == {'200': outcome['attempts']}, 'INCOMPLETE_LOAD_EVIDENCE')
             require(peak >= 3, 'NATURAL_SCALE_UP_NOT_OBSERVED')
+            check_pool_errors(query)
             gaps = metric_readiness.summary()
             emit('BROWSE_SCALE_UP_OBSERVED', peak_ready_replicas=peak)
             # No manual replica restoration: success requires the actual controller to downscale.
@@ -455,7 +485,7 @@ def drill(*, retry_metric_gap=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('deploy', 'check', 'drill'))
+    parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle'))
     parser.add_argument('--retry-metric-gap', action='store_true',
                         help='Use a distinct v2 Job, preserving the original stopped drill.')
     args = parser.parse_args()
@@ -467,6 +497,8 @@ def main():
             deploy()
         elif action == 'drill':
             drill(retry_metric_gap=args.retry_metric_gap)
+        elif action == 'wait-idle':
+            wait_idle()
         else:
             trial.context()
             with prometheus() as query:

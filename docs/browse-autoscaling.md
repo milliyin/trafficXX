@@ -164,7 +164,7 @@ python3 scripts/browse-autoscaling.py drill --retry-metric-gap
 This preserves the original failed Job, waits up to ten minutes for natural
 recovery to two ready pods before starting load, and runs the same 250-user
 workload and bounds. No addon reinstall, image build or manual scaling is
-needed. The retry has no live result yet.
+needed. Its live result is recorded below.
 
 The first retry invocation stopped at `DISCOVERY_NOT_CONVERGED` before a new
 Job was created. Fresh demo and Operations checks passed; the database's
@@ -174,6 +174,41 @@ active metrics to agree before the unchanged strict validation succeeds.
 Policy, ownership and replica-budget errors still fail immediately. This
 bounded read-only wait does not substitute missing targets or zero metrics.
 The same retry command can be used because that invocation created no Job.
+
+### Live v2 workload completed; recovery check remains
+
+The subsequent v2 run `a7565c1fef4e` completed 1/1. All 250 users produced
+**21,086 HTTP 200 responses**, zero errors, in **182.162 seconds**. Latency
+was p50 134.081 ms, p95 167.385 ms, p99 187.999 ms and maximum 371.069 ms.
+The observer recorded two to three ready pods. Subsequent inspection showed
+three Running, ready pods with zero restarts, availability 100 per event,
+and healthy Operations with no backlog or active alerts.
+
+The observer reported `RESOURCE_METRICS_MISSING` near completion. Code review
+found a race: it checked live container resource metrics before handling the
+Job's Complete condition. A completed generator can disappear from the metrics
+API, and Pod Succeeded can also precede the Job condition. Both terminal cases
+are now handled before expecting live generator usage. Live-pod missing or
+stale samples still fail, and final workload and pool-error validation remain
+required. This fixes an observer race; the original error did not identify
+which pod's sample was absent, so that attribution cannot be proven from it.
+
+The workload pass and observed scale-up are valid evidence. The original
+continuous resource audit did not finish, and natural scale-down had not yet
+been supplied. Do not replay the load or delete either Job. Finish with this
+read-only recovery check:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+It refuses active load Jobs, waits up to ten minutes for the HPA to return to
+two ready pods, requires matching fresh targets and active metrics, then
+checks application health and sampled database pressure. It creates no Job,
+changes no replicas and emits `BROWSE_AUTOSCALING_RECOVERY_OK` only on success.
+That result verifies post-run recovery; it does not retroactively complete
+the original continuous resource audit or claim a latency SLO.
 
 Keep the Job and logs. The Job has a 450-second deadline, including resource
 warmup. On a handled failure the observer attempts to stop only its own Job
