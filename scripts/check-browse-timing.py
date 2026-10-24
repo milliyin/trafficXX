@@ -11,6 +11,11 @@ spec.loader.exec_module(flow)
 PHASES = ('acquire', 'body', 'return', 'event_query', 'units_query')
 
 
+def phases(stats):
+    return (('acquire', 'body', 'return', 'availability_query')
+            if 'timing_availability_query_count' in stats else PHASES)
+
+
 def no_active_load():
     jobs = json.loads(flow.kubectl('get', 'jobs', '-n', 'trafficxx', '-o', 'json'))['items']
     for row in jobs:
@@ -28,7 +33,7 @@ def snapshot(call, index):
                  and stats.get('pool_waiting_limit') == 16, 'Expected unchanged warm pool policy')
     flow.require(all(type(stats.get('timing_' + phase + '_' + suffix)) is int
                      and stats['timing_' + phase + '_' + suffix] >= 0
-                     for phase in PHASES for suffix in ('count', 'total_us', 'max_us')),
+                     for phase in phases(stats) for suffix in ('count', 'total_us', 'max_us')),
                  'Deploy Browse timing instrumentation first')
     return row
 
@@ -36,6 +41,8 @@ def snapshot(call, index):
 def experiment(call):
     # Verify both have instrumentation before generating the measured reads.
     initial = [snapshot(call, index) for index in range(2)]
+    flow.require(phases(initial[0]['statistics']) == phases(initial[1]['statistics']),
+                 'Browse replicas have different query timing policies')
     results = []
     for index in range(2):
         before = initial[index]
@@ -55,7 +62,8 @@ def experiment(call):
                     'rejections_queue_full', 'rejections_timeout', 'rejections_closed'):
             flow.require(type(stats.get(key)) is int and final.get(key) == stats[key], 'Pool error changed')
         timings = {}
-        for phase in PHASES:
+        flow.require(phases(final) == phases(stats), 'Query timing policy changed')
+        for phase in phases(stats):
             prefix = 'timing_' + phase + '_'
             count = final[prefix + 'count'] - stats[prefix + 'count']
             micros = final[prefix + 'total_us'] - stats[prefix + 'total_us']
@@ -64,6 +72,7 @@ def experiment(call):
         results.append({'reads': 12, 'timings': timings,
                         'mean_port_forward_http_ms': round(sum(wall) / len(wall), 3)})
     return {'result': 'BROWSE_TIMING_BASELINE_OK', 'per_pod': results,
+            'query_mode': 'single-query' if 'availability_query' in phases(initial[0]['statistics']) else 'two-query',
             'inventory_writes': False, 'concurrent_workload_requests': 1,
             'note': 'Timing deltas may include background readiness/other traffic. Acquisition includes checkout checks; '
                     'body includes queries and response construction; return includes commit/rollback and pool return. '

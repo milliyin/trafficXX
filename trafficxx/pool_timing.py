@@ -4,7 +4,7 @@ from threading import Lock
 from time import perf_counter
 
 
-PHASES = ('acquire', 'body', 'return', 'event_query', 'units_query')
+PHASES = ('acquire', 'body', 'return', 'event_query', 'units_query', 'availability_query')
 
 
 class PoolTimings:

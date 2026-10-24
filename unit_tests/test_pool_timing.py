@@ -100,11 +100,28 @@ class Timings(unittest.TestCase):
             return {'instance_id': 'a' * 32, 'statistics': stats}
         report = module.experiment(call)
         self.assertEqual(counts, [12, 12])
+        self.assertEqual(report['per_pod'][0]['timings']['availability_query']['mean_ms'], 1)
+        self.assertEqual(report['query_mode'], 'single-query')
+
+        def legacy(index, path):
+            row = call(index, path)
+            if path == '/internal/database-pool':
+                for suffix in ('count', 'total_us', 'max_us'):
+                    row['statistics'].pop('timing_availability_query_' + suffix)
+            return row
+        report = module.experiment(legacy)
+        self.assertEqual(report['query_mode'], 'two-query')
         self.assertEqual(report['per_pod'][0]['timings']['event_query']['mean_ms'], 1)
+        before_mixed = list(counts)
+        def mixed(index, path):
+            return legacy(index, path) if index == 0 else call(index, path)
+        with self.assertRaisesRegex(module.flow.CheckFailed, 'different query timing policies'):
+            module.experiment(mixed)
+        self.assertEqual(counts, before_mixed)
         def missing(index, path):
             row = call(index, path)
             row['statistics'].pop('timing_acquire_count')
             return row
         with self.assertRaises(module.flow.CheckFailed):
             module.experiment(missing)
-        self.assertEqual(counts, [12, 12])
+        self.assertEqual(counts, before_mixed)

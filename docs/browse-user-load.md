@@ -1300,3 +1300,38 @@ Next review how to reduce Browse read-path round trips, preserving its response,
 expiry semantics, permissions and error handling. No autocommit, query merge,
 checkout-check removal, pool resize, replica change or new load run has been
 performed at this checkpoint. The 250-user queue rejection remains unresolved.
+
+## Prepared single-statement availability comparison
+
+The next Browse change merges the event and available-unit lookups into one
+parameterized SELECT. A correlated ARRAY subquery keeps unit-number ordering
+and returns an empty array when no units are available; a missing event still
+returns no row and the API still responds with EVENT_NOT_FOUND/404. General
+inventory still reports seats as null. The existing expired-HELD predicate is
+unchanged and no reservation/inventory writes are added.
+
+This removes one application SQL execute/fetch round trip per availability
+request. Transactions, checkout health checks, permissions, queue 16, pool
+minimum/maximum four and two serving replicas stay unchanged. The statement
+uses a single database snapshot for the event and unit reads, rather than the
+previous two statements. It does not remove transaction begin/commit traffic,
+prove a speedup or establish a 250-user pass.
+
+A combined `availability_query` timer records execute/fetch time. Legacy event
+and units timers remain available as lifetime fields but receive no new
+availability-query observations in this version. The 24-read timing probe
+detects the policy from the combined timer, rejects mixed policies across
+replicas, and reports `query_mode: single-query` with the new phase. Historical
+two-query images remain readable by the probe. Compare the combined query
+against the earlier event-plus-units observations cautiously: background
+readiness and image/pod placement can differ between runs.
+
+Offline response/parameter tests pass. Dedicated PostgreSQL CI tests cover
+full general/seated inventory, numeric seat ordering, empty/missing events,
+expired versus active holds, retained assignments and the HTTP 404/timer
+contract. Live build, rollout and timing comparison remain pending.
+
+After CI correctness checks, pull and build a new Browse image. Once the build
+is reviewed, deploy with the existing script, verify demo/Operations health,
+then run `python3 scripts/check-browse-timing.py`. No load-test command or
+automatic retry is part of this comparison. Keep the failed 250-user evidence.

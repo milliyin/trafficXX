@@ -50,6 +50,8 @@ or establish sustained production capacity.
   Browse timing instrumentation is deployed and its 24-read sequential
   diagnostic passed. Repeated database round trips are a hypothesis to
   investigate; PostgreSQL CPU saturation or 250-user recovery is not established.
+  A single-statement availability lookup is prepared to remove one SQL round
+  trip; its live image rollout and timing comparison are pending.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification
