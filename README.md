@@ -240,7 +240,9 @@ Next:
    User screenshots confirm all eight panels render with live data; a further
    bounded read test passed on ca8. Sustained-load and token-renewal tests remain.
    A [background token-renewal check](docs/database-token-renewal.md) is prepared
-   using the existing image and real SDK expiry metadata. Live startup passed;
+   using the existing image and real SDK expiry metadata. At17hours, the same
+   run had209successful SQL checks and zero pod restarts; observed token expiry
+   had advanced. This supports ongoing refresh but is not the final verdict;
    earliest final check is2026-10-24T16:01:40Z. Expiry-boundary proof remains
    pending; short requests do not establish renewal.
    [Browse pool alert rules](docs/browse-pool-alerts.md) are prepared and tested

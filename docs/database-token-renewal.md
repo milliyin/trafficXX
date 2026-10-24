@@ -1,6 +1,6 @@
 # Real database token renewal across expiry
 
-Status: live Job startup and initial SQL/SDK-expiry observation passed; final
+Status: live Job startup and 209 successful SQL probes are observed; final
 expiry-boundary renewal result remains pending. No image build or serving
 deployment update is needed. The helper uses the current immutable Browse image
 and mounts the reviewed diagnostic source from a ConfigMap.
@@ -15,6 +15,18 @@ wait was86428seconds, with probes every300seconds. This records initial SQL
 success and scheduling only, not renewal success. Retain this run_id when
 checking progress/final output; actual completion and no-restart status remain
 to be verified after the expiry boundary.
+
+On October24 the user supplied the same run_id after17hours: Job Running0/1,
+pod browse-token-renewal-check-z8zdd Running1/1 with zero restarts. Progress
+records207..209 ended with successful SQL check209 at09:22:34.451656UTC.
+The observed SDK token expiry had advanced to2026-10-25T04:02:08Z, later than
+the initial expiry. This is evidence of a later-expiring token being available
+within the ongoing process, consistent with proactive SDK refresh. The progress
+output does not contain the final token-value comparison or boundary verdict.
+The last reported23946remaining seconds still refer to the original final-check
+boundary, not the newer token expiry. Keep the Job running until the original
+October24at16:01:40UTC /21:01:40Pakistan boundary and require the final success
+record plus completed same-run/no-restart evidence. No renewal pass is recorded yet.
 
 ## What this proves
 
