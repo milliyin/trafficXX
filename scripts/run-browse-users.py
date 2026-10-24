@@ -108,7 +108,7 @@ def metrics():
     return json.loads(base.kube('get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'))
 
 
-def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
+def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False):
     require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
     if users == 250:
         require(warm_pool and rejection_diagnostics and queue_comparison and client_memory_comparison,
@@ -157,6 +157,15 @@ def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=F
     require(all(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
                 for value in values) and values == sorted(values), 'INVALID_LATENCY_SUMMARY')
     pools = outcome.get('pools', [])
+    if single_query_comparison:
+        require(users == 100 and client_memory_comparison and outcome.get('single_query_verified') is True,
+                'SINGLE_QUERY_NOT_VERIFIED')
+        for row in pools:
+            timings = row.get('timings', {})
+            require(set(timings) == {'acquire', 'body', 'return', 'availability_query'}
+                    and all(type(values.get('observations')) is int and values['observations'] > 0
+                            and type(values.get('total_us')) is int and values['total_us'] >= 0
+                            for values in timings.values()), 'SINGLE_QUERY_TIMINGS_INCOMPLETE')
     require(len(pools) == 2 and len({row.get('pod') for row in pools}) == 2
             and all(row.get('pool_max') == 4 and row.get('pool_error_counters_unchanged') is True
                     and 1 <= row.get('sampled_peak_size', 0) <= 4
@@ -181,8 +190,11 @@ def release_gate(pod, run_id, job_name=JOB):
               + json.dumps(run_id) + "); p.replace('/state/start')")
 
 
-def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
+def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False):
     require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
+    if single_query_comparison:
+        require(users == 100 and not diagnostic_retry, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_USERS')
+        client_memory_comparison = True
     if users == 250:
         require(not diagnostic_retry, 'DIAGNOSTIC_RETRY_REQUIRES_100_USERS')
         client_memory_comparison = True
@@ -195,7 +207,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
     require(not warm_pool or users in (100, 250), 'WARM_POOL_REQUIRES_100_USERS')
     require(not (warm_pool and diagnostic_retry), 'SELECT_ONE_COMPARISON')
     require(not rejection_diagnostics or warm_pool, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON')
-    job_name = ('browse-users-250' if users == 250 else
+    job_name = ('browse-users-100-singlequery' if single_query_comparison else
+                'browse-users-250' if users == 250 else
                 'browse-users-100-clientmemory' if client_memory_comparison else
                 'browse-users-100-queue16' if queue_comparison else
                 'browse-users-100-rejections' if rejection_diagnostics else
@@ -274,7 +287,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
             path.write_text(json.dumps({'run_id': run_id, 'users': users, 'require_warm_pool': warm_pool,
                 'require_rejection_counters': rejection_diagnostics,
                 'required_queue_limit': 16 if queue_comparison else 8,
-                'client_memory_comparison': client_memory_comparison, 'targets': {
+                'client_memory_comparison': client_memory_comparison,
+                'single_query_comparison': single_query_comparison, 'targets': {
                 api: row['pods'] for api, row in before.items()}}))
             manifest = base.kube('create', 'configmap', files_name, '-n', 'trafficxx',
                                  '--from-file=probe.py=' + str(ROOT / 'scripts/check-browse-users.py'),
@@ -299,6 +313,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
                           'max_workload_attempts': users * 30, 'runtime_image': reference,
                           'generator_node': generator_node,
                           'diagnostic_retry': diagnostic_retry, 'warm_pool_comparison': warm_pool, 'rejection_diagnostics': rejection_diagnostics, 'queue_comparison': queue_comparison, 'client_memory_comparison': client_memory_comparison,
+                          'single_query_comparison': single_query_comparison,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'generator_metrics_warmup_seconds': GENERATOR_METRICS_WARMUP,
                           'inventory_writes': False,
@@ -354,7 +369,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
         require(bool(logs.splitlines()), 'WORKLOAD_LOGS_MISSING')
         outcome = json.loads(logs.splitlines()[-1])
         require(gate_released, 'RESOURCE_GATE_NOT_RELEASED')
-        validate(outcome, run_id, users, warm_pool, rejection_diagnostics, queue_comparison, client_memory_comparison)
+        validate(outcome, run_id, users, warm_pool, rejection_diagnostics, queue_comparison, client_memory_comparison,
+                 single_query_comparison)
         require(generator is not None and set(watch.rows) == set(expected) | {generator}
                 and all(len(row['timestamps']) >= 2 for row in watch.rows.values()),
                 'INSUFFICIENT_DISTINCT_RESOURCE_SAMPLES')
@@ -366,6 +382,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
                           'resources': watch.summary(), 'serving_pods_unchanged': True,
                           'resource_gate_released': True,
                           'warm_pool_comparison': warm_pool, 'rejection_diagnostics': rejection_diagnostics, 'queue_comparison': queue_comparison, 'client_memory_comparison': client_memory_comparison,
+                          'single_query_comparison': single_query_comparison,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'inventory_writes': False, 'latency_slo_tested': False,
                           'note': 'Review results before preparing any higher stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
@@ -421,7 +438,13 @@ if __name__ == '__main__':
                         help='Separate warm 100-user diagnostic with exactly 16 waiting slots.')
     parser.add_argument('--client-memory-comparison', action='store_true',
                         help='Separate 100-user queue-16 run using the HTTP-only per-thread client.')
+    parser.add_argument('--single-query-comparison', action='store_true',
+                        help='Separate guarded 100-user Job requiring combined-query timing evidence.')
     args = parser.parse_args()
+    if args.single_query_comparison:
+        if args.users != 100 or args.diagnostic_retry:
+            parser.error('--single-query-comparison requires --users 100 and excludes --diagnostic-retry')
+        args.client_memory_comparison = True
     if args.client_memory_comparison:
         args.queue_comparison = True
     if args.queue_comparison:
@@ -437,4 +460,5 @@ if __name__ == '__main__':
     raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users,
                              diagnostic_retry=args.diagnostic_retry, warm_pool=args.warm_pool_comparison,
                              rejection_diagnostics=args.rejection_diagnostics, queue_comparison=args.queue_comparison,
-                             client_memory_comparison=args.client_memory_comparison))
+                             client_memory_comparison=args.client_memory_comparison,
+                             single_query_comparison=args.single_query_comparison))

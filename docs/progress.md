@@ -53,7 +53,8 @@ or establish sustained production capacity.
   The single-statement lookup is deployed; its 24-read diagnostic passed.
   Body means fell from 76-84 ms to 52-59 ms across the observed pods, consistent
   with one fewer round trip. Placement/sample differences limit comparison;
-  a controlled load comparison remains next.
+  a separate guarded 100-user single-query load comparison is prepared and
+  awaits live output.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

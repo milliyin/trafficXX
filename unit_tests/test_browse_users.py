@@ -29,6 +29,42 @@ runner = load('browse_users_runner', 'scripts/run-browse-users.py')
 
 
 class BrowseUsers(unittest.TestCase):
+    def test_single_query_probe_requires_timers_and_reports_interval_deltas(self):
+        config = dict(fixtures.config(), users=100, client_memory_comparison=True,
+                      single_query_comparison=True, require_warm_pool=True,
+                      require_rejection_counters=True, required_queue_limit=16)
+        service = Mock()
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'DEPLOY_SINGLE_QUERY_TIMERS_FIRST'):
+            probe.run(config, fixtures.Http(), service)
+        service.assert_not_called()
+
+        class Timed(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, row = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    stats = row['statistics']
+                    stats.update(pool_min=4, pool_size=4, pool_available=4, pool_waiting_limit=16,
+                                 rejections_queue_full=0, rejections_timeout=0, rejections_closed=0,
+                                 timing_event_query_count=0, timing_units_query_count=0)
+                    for phase in probe.TIMING_PHASES:
+                        stats['timing_' + phase + '_count'] = stats['requests_num']
+                        stats['timing_' + phase + '_total_us'] = stats['requests_num'] * 1000
+                return status, row
+        http, sequence = Timed(), iter(range(100000))
+        def service(url, customer):
+            return http(config['targets']['browse'][next(sequence) % 2], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=.5, think=.05)
+        self.assertTrue(result['single_query_verified'])
+        self.assertEqual(result['users_with_requests'], 100)
+        self.assertEqual(result['attempts'], result['valid_responses'])
+        for pool in result['pools']:
+            self.assertEqual(pool['timings']['availability_query']['mean_ms'], 1)
+        before = http(config['targets']['browse'][0], '/internal/database-pool', 'test')[1]['statistics']
+        changed = dict(before, timing_event_query_count=1)
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'LEGACY_QUERY_COUNTER_INCREASED'):
+            probe.query_timing_deltas(before, changed)
+
     def test_resource_gate_blocks_http_until_same_run_is_ready(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'gate'
@@ -341,15 +377,18 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False):
         commands, polls = [], [0]
+        if single_query_comparison:
+            client_memory_comparison = True
         if users == 250:
             client_memory_comparison = True
         if client_memory_comparison:
             queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = ('browse-users-250' if users == 250 else
+        job_name = ('browse-users-100-singlequery' if single_query_comparison else
+                    'browse-users-250' if users == 250 else
                     'browse-users-100-clientmemory' if client_memory_comparison else
                     'browse-users-100-queue16' if queue_comparison else
                     'browse-users-100-rejections' if rejection_diagnostics else
@@ -406,6 +445,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 self.assertEqual(json.loads(Path(source).read_text())['require_rejection_counters'], rejection_diagnostics)
                 self.assertEqual(json.loads(Path(source).read_text())['required_queue_limit'], 16 if queue_comparison else 8)
                 self.assertEqual(json.loads(Path(source).read_text())['client_memory_comparison'], client_memory_comparison)
+                self.assertEqual(json.loads(Path(source).read_text())['single_query_comparison'], single_query_comparison)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -444,7 +484,8 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
             result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
                                     rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison,
-                                    client_memory_comparison=client_memory_comparison)
+                                    client_memory_comparison=client_memory_comparison,
+                                    single_query_comparison=single_query_comparison)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -550,6 +591,22 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.execute(users=250, diagnostic_retry=True)
 
+    def test_single_query_stage_owns_job_and_preserves_existing_guards(self):
+        code, output, commands = self.scenario(users=100, single_query_comparison=True)
+        self.assertEqual(code, 0, output)
+        self.assertIn('"job": "browse-users-100-singlequery"', output)
+        self.assertIn('"max_workload_attempts": 3000', output)
+        code, output, commands = self.scenario('resource-stop', users=100, single_query_comparison=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2],
+                         'browse-users-100-singlequery')
+        for fault in ('active-earlier-stage', 'old-queue', 'cold-policy'):
+            code, output, commands = self.scenario(fault, users=100, single_query_comparison=True)
+            self.assertEqual(code, 1, output)
+        for count in (50, 250):
+            with self.assertRaisesRegex(ValueError, 'SINGLE_QUERY_COMPARISON_REQUIRES_100_USERS'):
+                runner.execute(users=count, single_query_comparison=True)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -622,6 +679,16 @@ class BrowseUsersRunner(unittest.TestCase):
         queue['generator_memory'] = {'source': '/proc/self/status', 'samples': 3,
                                      'sampled_max_rss_mib': 50, 'sampled_max_threads': 102}
         runner.validate(queue, 'abcdef123456', 100, True, True, True, True)
+        with self.assertRaisesRegex(ValueError, 'SINGLE_QUERY_NOT_VERIFIED'):
+            runner.validate(queue, 'abcdef123456', 100, True, True, True, True, True)
+        single = deepcopy(queue)
+        single['single_query_verified'] = True
+        with self.assertRaisesRegex(ValueError, 'SINGLE_QUERY_TIMINGS_INCOMPLETE'):
+            runner.validate(single, 'abcdef123456', 100, True, True, True, True, True)
+        for row in single['pools']:
+            row['timings'] = {phase: {'observations': 100, 'total_us': 100000, 'mean_ms': 1}
+                              for phase in probe.TIMING_PHASES}
+        runner.validate(single, 'abcdef123456', 100, True, True, True, True, True)
         larger = dict(queue, users=250, users_with_requests=250, attempts=7500,
                       valid_responses=7500, status_counts={'200': 7500})
         runner.validate(larger, 'abcdef123456', 250, True, True, True, True)

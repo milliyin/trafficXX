@@ -34,6 +34,30 @@ def execute(config):
 SERVICE_ERROR_CODES = frozenset(('DATABASE_BUSY', 'DATABASE_UNAVAILABLE'))
 POOL_KEYS = ('pool_waiting_limit', 'pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
              'requests_num', 'connections_num', *read.ERROR_KEYS)
+TIMING_PHASES = ('acquire', 'body', 'return', 'availability_query')
+
+
+def query_timing_snapshot(stats):
+    keys = tuple('timing_' + phase + '_' + suffix for phase in TIMING_PHASES
+                 for suffix in ('count', 'total_us')) + ('timing_event_query_count', 'timing_units_query_count')
+    read.require(all(type(stats.get(key)) is int and stats[key] >= 0 for key in keys),
+                 'DEPLOY_SINGLE_QUERY_TIMERS_FIRST')
+    read.require(stats['timing_availability_query_count'] >= 2, 'SINGLE_QUERY_PREFLIGHT_NOT_OBSERVED')
+
+
+def query_timing_deltas(before, after):
+    query_timing_snapshot(after)
+    read.require(all(after['timing_' + phase + '_count'] == before['timing_' + phase + '_count']
+                     for phase in ('event_query', 'units_query')), 'LEGACY_QUERY_COUNTER_INCREASED')
+    result = {}
+    for phase in TIMING_PHASES:
+        prefix = 'timing_' + phase + '_'
+        count = after[prefix + 'count'] - before[prefix + 'count']
+        total = after[prefix + 'total_us'] - before[prefix + 'total_us']
+        read.require(count > 0 and total >= 0, 'SINGLE_QUERY_TIMINGS_INCOMPLETE')
+        result[phase] = {'observations': count, 'total_us': total,
+                         'mean_ms': round(total / count / 1000, 3)}
+    return result
 
 
 def safe_pool(row):
@@ -95,6 +119,11 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     if config.get('client_memory_comparison'):
         read.require(getattr(read, 'HTTP_CLIENT_POLICY', None) ==
                      'thread-local-http-only-fresh-connections-v1', 'UPDATE_READ_CLIENT_FIRST')
+    if config.get('single_query_comparison'):
+        read.require(users == 100 and config.get('client_memory_comparison') is True
+                     and config.get('require_warm_pool') is True
+                     and config.get('require_rejection_counters') is True
+                     and config.get('required_queue_limit') == 16, 'INVALID_SINGLE_QUERY_COMPARISON')
     max_attempts = users * 30
     customer = 'lab-browse-users-' + config['run_id']
     for target in targets:
@@ -102,6 +131,9 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             status, body = http(target, '/events/demo-' + route + '/availability', customer)
             read.validate_response('browse', route, status, body)
     initial = {target['pod']: read.pool_snapshot(target, customer, http) for target in targets}
+    if config.get('single_query_comparison'):
+        for row in initial.values():
+            query_timing_snapshot(row['statistics'])
     if config.get('require_warm_pool'):
         read.require(all(row['statistics']['pool_min'] == 4 and row['statistics']['pool_size'] == 4
                          for row in initial.values()), 'WARM_POOL_NOT_READY')
@@ -250,6 +282,8 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                       'sampled_peak_waiting': max(peaks[name]['waiting'], after['statistics']['requests_waiting']),
                       'borrows_delta': after['statistics']['requests_num'] - before['statistics']['requests_num'],
                       'connection_attempts_delta': after['statistics']['connections_num'] - before['statistics']['connections_num']})
+        if config.get('single_query_comparison'):
+            pools[-1]['timings'] = query_timing_deltas(before['statistics'], after['statistics'])
         for route in ('general', 'seated'):
             status, body = http(target, '/events/demo-' + route + '/availability', customer)
             read.validate_response('browse', route, status, body)
@@ -261,6 +295,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             'verified_queue_limit': required_queue,
             'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
             'http_client_policy': getattr(read, 'HTTP_CLIENT_POLICY', None),
+            'single_query_verified': bool(config.get('single_query_comparison')),
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
 

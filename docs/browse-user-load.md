@@ -1376,3 +1376,42 @@ Next prepare a separate guarded 100-user regression comparison before reviewing
 a new 250-user attempt. The original failed 250-user Job remains evidence;
 no new load, queue/connection increase or replica scaling occurred here. The
 original token-renewal Job still requires its separate final verdict.
+
+## Prepared 100-user single-query load comparison
+
+Use the separate comparison after reviewing the successful sequential timing
+result and application health:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 100 --single-query-comparison
+```
+
+This creates only `browse-users-100-singlequery` and preserves earlier Jobs.
+It uses the currently deployed immutable Browse runtime image with mounted
+diagnostic scripts; no rebuild or application rollout is required. It implies
+the verified HTTP-only client, warm pool four, rejection counters, and queue
+16 guards. Both serving pods must expose numeric combined-query timers and
+have recorded the preflight availability reads before user workload starts.
+
+The workload remains 100 users, 60 seconds, two-second pauses and at most
+3,000 GETs. Generator one CPU/256 MiB, existing-node binding, fresh-resource
+gate, CPU/memory/HTTP-error/latency/waiting stop conditions, overlap refusal,
+owned-Job stop and final pod/process checks are unchanged. It does not retry
+the failed 250-user test or automatically move to another stage.
+
+Successful evidence includes `single_query_verified: true` and per-pod
+`timings` containing observation counts, total microseconds and derived mean
+milliseconds for acquisition, body, return and availability query. Counts
+must advance in both unchanged serving processes, while legacy event/units
+query counts must not advance. Pool timing intervals can include readiness
+or other traffic; averages are not per-request percentiles. Compare latency,
+error/rejection deltas, queue pressure and generator memory with the earlier
+100-user client-memory result, retaining placement and sampling caveats.
+
+Keep Cloud Shell open for up to eight minutes. Retain complete output and run
+the demo/Operations health scripts afterwards, on success or failure. There
+is no live result for this mode yet and no guarantee that 250 users will pass.
