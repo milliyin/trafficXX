@@ -69,6 +69,9 @@ enabled; earlier Booking history was not collected by this job. This completes
 the bounded Booking collection/datasource/browser milestone, not a load SLO,
 Booking alert-rule test, external notification or token-renewal result.
 
+The next [read-only load baseline](read-load-baseline.md) uses both dashboards
+to accompany a bounded in-cluster latency measurement; live results are pending.
+
 ## Measurements and limits
 
 Booking now exposes /metrics from its own pool statistics, using the same
