@@ -791,3 +791,53 @@ metric completeness and actual warm/counter evidence itself. It uses the new
 fixed Job browse-users-100-rejections and retains earlier failed Jobs.
 No cac rollout, new metric-series proof or live rejection diagnostic result
 has yet been supplied. The original renewal Job remains untouched.
+
+
+## Live rejection diagnostic: queue-full confirmed
+
+The user supplied run 34c3537847e8 / Job browse-users-100-rejections on image
+826c54fdaf77dba533b77779b8e6e127b871c9684a4045be58d29f4c42002fa4.
+Warm and counter guards passed on the new serving pods
+browse-545765768f-8gvvl and browse-545765768f-ntfhl. This confirms the diagnostic
+image was serving with the required numeric fields; separate new-series
+Prometheus storage proof was not supplied.
+
+All 100 users issued requests: 913 attempts, 911 HTTP 200s and two HTTP 503s
+carrying DATABASE_BUSY. The run stopped at 20.592 seconds, with achieved partial
+rate 44.337 requests/s and sampled peak HTTP concurrency 22. Mixed latency was
+p50 212.362 ms, p95 364.239 ms, p99 409.523 ms, maximum 456.424 ms. The first
+failure was seated availability at 20.217 seconds, taking 30.361 ms.
+
+Both pools started and ended at size/available four, no waiters, and the same
+process IDs. No physical connections were created during the workload.
+8gvvl deltas were 464 borrows and zero rejection/connection-error counters.
+ntfhl deltas were 453 borrows, two request errors, two rejections_queue_full,
+zero rejections_timeout and zero rejections_closed. Neither pod recorded new
+connection errors, losses or bad returns. The exact caught rejection type is
+therefore now confirmed as TooManyRequests / queue-full, rather than merely
+inferred from DATABASE_BUSY latency. Counters do not reveal the precise lifetime
+of each queue peak or attribute every borrow to a workload rather than readiness
+request. The queue limit remains eight per pod; connection maximum remains four.
+
+Generator /proc/self/status sampled process RSS started at 28.609 MiB with one
+thread, peaked at 209.008 MiB/102 threads across 22 samples, and ended at
+206.301 MiB with one thread. Significant resident memory remained after worker
+shutdown, but these observations alone cannot distinguish retained allocator
+memory from a leak or attribute bytes to Python/native objects or thread stacks.
+Do not equate process RSS with the 256 MiB cgroup limit or claim a memory fix.
+The coarse Kubernetes resource maxima in this short run mostly cover startup
+and substantially underrepresent the in-process workload memory observation.
+Existing resource limits/stop conditions have not been changed.
+
+The Job failed and its parent requested a UID-scoped stop, retaining files
+browse-users-34c3537847e8-files. Native terminal status and fresh demo/Operations
+checks are the next checkpoint; no post-run inventory/stability verdict or
+BROWSE_USERS_100_OK was produced.
+
+The next proposed controlled tuning comparison is a waiting limit of 16 rather
+than eight, retaining four ready/max connections per Browse pod, the same paced
+100-user workload and the two-second request stop. A larger bounded queue may
+absorb brief contention but can increase latency; it is not more database
+execution capacity and does not promise a successful run. The generator still
+needs its current resource supervision. No queue change or new load has been
+implemented or run at this checkpoint. Do not progress to 250 users.

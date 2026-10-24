@@ -306,8 +306,10 @@ Next:
    sampled 227.008 MiB against its 256 MiB limit. Recovery checks and review of
    bounded queueing/generator overhead are next; 100 users have not passed.
    Per-exception rejection counters and sampled generator RSS/thread reporting
-   are prepared and locally tested. ACR build cac succeeded; deployment and the
-   separate --warm-pool-comparison --rejection-diagnostics run are pending.
+   were deployed in ACR image cac. The live diagnostic confirmed two queue-full
+   rejections with zero timeout/closed-pool rejections; 911 of 913 reads succeeded
+   before it stopped. Generator process RSS peaked at 209 MiB. Post-run recovery
+   checks and a bounded waiting-queue comparison are next; 100 users remain unpassed.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
