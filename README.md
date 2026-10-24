@@ -284,6 +284,8 @@ Next:
    prepared and locally tested: 18 one-ticket create/cancel pairs, at most four
    flows, recovery journals and final inventory/pod stability checks. Live results
    are pending; timings include Cloud Shell port-forward overhead.
+   The first attempt failed before journal creation/writes; a read-only
+   --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

@@ -1,6 +1,8 @@
 # Small Booking write baseline
 
-Status: source and offline checks passed; live measurements remain pending.
+Status: source and offline checks passed; the first live attempt failed before
+creating a journal or sending reservation writes. The failing command was not
+identified by the original generic error; live measurements remain pending.
 This follows the read-only baseline and the completed Booking target-warning
 drill. It requires no new application image or infrastructure deployment.
 
@@ -60,6 +62,22 @@ outside the existing lab event-processing pipeline.
 
 ## Cleanup and uncertain outcomes
 
+To diagnose a preflight failure without starting writes:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/check-booking-write-baseline.py --preflight-only
+```
+
+This mode checks the subscription, context, both API pod snapshots and initial
+demo inventory. It never loads the write client, creates a journal or starts
+reservation flows. Errors now include the exact stage and command exit code,
+without printing raw command output. Share that JSON before rerunning writes.
+BOOKING_WRITE_PREFLIGHT_OK establishes read-only readiness only, not write-test
+success. Possible stages distinguish account/context, individual API pod checks,
+inventory before/after, workload and final pod stability checks.
+
 Before any writes, a new owner-private JSON journal is created in the Cloud
 Shell home directory: trafficxx-booking-write-<run>.json. It contains only
 simulated customer IDs, request keys, reservation IDs, attempted/cleanup flags
@@ -86,7 +104,7 @@ intents. Do not repeat the whole write experiment to recover missing output.
 
 ## Local validation
 
-All 432 offline methods passed. Ten new methods cover 18 unique bounded
+All 434 offline methods passed. The original ten new methods cover 18 unique bounded
 intents/90 normal HTTP calls, opposite-replica cancellation and both-replica
 readbacks, persisted intent-before-POST, lost create/cancel responses with the
 same key, failed cleanup retaining IDs/flags, stopping after partial failure,
@@ -94,3 +112,5 @@ journal overwrite refusal, subscription/inventory guards and post-workload
 pod/inventory evidence. HTTP responses are simulated; no Azure write timings
 or real database load were measured locally. Docker stayed stopped, no local
 Azure access or credential read occurred, and hosted CI remains unchecked.
+Two additional methods verify read-only mode cannot enter the write client or
+journal creation, and command errors report stage/exit code without raw output.

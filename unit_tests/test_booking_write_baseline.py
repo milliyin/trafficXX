@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -198,3 +199,35 @@ class BookingWriteBaseline(unittest.TestCase):
             self.assertEqual(result, 1 if changed else 0)
             self.assertEqual(availability.call_count, 2)
             self.assertEqual('BOOKING_WRITE_BASELINE_OK' in output.getvalue(), not changed)
+
+    def test_preflight_only_never_loads_or_starts_write_client(self):
+        runner = SimpleNamespace(kube=lambda *args: 'trafficxx-lab-aks', snapshot=lambda *args: {})
+
+        def load(name):
+            self.assertNotEqual(name, 'check-booking-concurrency')
+            return runner if name == 'run-read-load' else object()
+        with patch.object(module.subprocess, 'check_output', return_value='35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'), \
+                patch.object(module, 'load', side_effect=load), \
+                patch.object(module, 'availability', return_value={'demo-general': 100, 'demo-seated': 100}), \
+                patch.object(module, 'experiment') as writes, \
+                patch.object(module, 'Journal') as journal, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(module.main(preflight_only=True), 0)
+        writes.assert_not_called()
+        journal.assert_not_called()
+        self.assertFalse(json.loads(output.getvalue())['inventory_writes'])
+
+    def test_command_failure_reports_stage_and_exit_code_without_command_output(self):
+        runner = SimpleNamespace(kube=lambda *args: 'trafficxx-lab-aks', snapshot=lambda *args: {})
+        failure = subprocess.CalledProcessError(1, ['bash', 'probe'], output='PRIVATE', stderr='PRIVATE')
+        with patch.object(module.subprocess, 'check_output', return_value='35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'), \
+                patch.object(module, 'load', return_value=runner), \
+                patch.object(module, 'availability', side_effect=failure), \
+                patch.object(module, 'experiment') as writes, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(module.main(preflight_only=True), 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload['stage'], 'inventory_before')
+        self.assertEqual(payload['command_exit_code'], 1)
+        self.assertIsNone(payload['journal'])
+        self.assertNotIn('PRIVATE', output.getvalue())
+        writes.assert_not_called()

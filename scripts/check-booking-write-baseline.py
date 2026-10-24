@@ -1,5 +1,6 @@
 """Cloud Shell write experiment: 18 create/cancel pairs, at most four flows."""
 from concurrent.futures import ThreadPoolExecutor
+import argparse
 import importlib.util
 import json
 import os
@@ -165,17 +166,28 @@ def availability():
     return result['demo_availability']
 
 
-def main():
+def main(*, preflight_only=False):
     journal_path = Path.home() / ('trafficxx-booking-write-' + uuid4().hex[:12] + '.json')
+    stage = 'subscription'
     try:
         sub = subprocess.check_output(['az', 'account', 'show', '--query', 'id', '-o', 'tsv'],
                                       text=True, timeout=30, stderr=subprocess.DEVNULL).strip()
         require(sub == '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85', 'WRONG_SUBSCRIPTION')
         runner = load('run-read-load')
         guard = load('check-browse-concurrency')
+        stage = 'kubernetes_context'
         require(runner.kube('config', 'current-context') == 'trafficxx-lab-aks', 'WRONG_CONTEXT')
-        before = {api: runner.snapshot(guard, api) for api in ('browse', 'booking')}
+        before = {}
+        for api in ('browse', 'booking'):
+            stage = 'baseline_' + api + '_pods'
+            before[api] = runner.snapshot(guard, api)
+        stage = 'inventory_before'
         require(availability() == {'demo-general': 100, 'demo-seated': 100}, 'INVENTORY_BASELINE_FAILED')
+        if preflight_only:
+            print(json.dumps({'result': 'BOOKING_WRITE_PREFLIGHT_OK',
+                              'inventory_writes': False, 'journal_created': False,
+                              'note': 'Read-only guards passed. The write experiment was not started.'}))
+            return 0
         workload = []
 
         def execute(call, customer, key):
@@ -183,11 +195,17 @@ def main():
             workload.append(result)
             return result
         base = load('check-booking-concurrency')
+        stage = 'booking_workload'
         code = base.main(experiment_fn=execute, failure_result='BOOKING_WRITE_FAILED',
                          recovery_note='Inspect the write journal; do not retry using new keys. No SLO claim.')
         require(code == 0 and len(workload) == 1, 'WRITE_WORKLOAD_FAILED')
+        stage = 'inventory_after'
         after_inventory = availability()
-        after = {api: runner.snapshot(guard, api) for api in ('browse', 'booking')}
+        after = {}
+        for api in ('browse', 'booking'):
+            stage = 'final_' + api + '_pods'
+            after[api] = runner.snapshot(guard, api)
+        stage = 'serving_pod_stability'
         require(before == after, 'SERVING_PODS_CHANGED')
         print(json.dumps({'result': 'BOOKING_WRITE_BASELINE_OK', 'created_and_cancelled': 18,
                           'availability_after': after_inventory, 'serving_pods_unchanged': True,
@@ -197,7 +215,9 @@ def main():
                           'note': 'Use preceding workload timings; not an in-cluster capacity or latency SLO test.'}))
         return 0
     except (Exception, KeyboardInterrupt) as error:
-        print(json.dumps({'result': 'BOOKING_WRITE_BASELINE_FAILED', 'error_type': type(error).__name__,
+        print(json.dumps({'result': 'BOOKING_WRITE_PREFLIGHT_FAILED' if preflight_only else 'BOOKING_WRITE_BASELINE_FAILED',
+                          'stage': stage, 'error_type': type(error).__name__,
+                          'command_exit_code': getattr(error, 'returncode', None),
                           'check': str(error) if isinstance(error, CheckFailed) else None,
                           'journal': str(journal_path) if journal_path.exists() else None,
                           'note': 'Keep any journal and inspect attempted entries whose cleanup_verified is false. '
@@ -207,4 +227,7 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--preflight-only', action='store_true',
+                        help='Run read-only guards; never create a journal or reservation.')
+    raise SystemExit(main(preflight_only=parser.parse_args().preflight_only))
