@@ -40,6 +40,13 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
+- **Three-minute pool-eight stability trial passed:** all 250 users completed
+  21,133 successful reads, zero errors, p95 167.385 ms; automatic restoration
+  to four connections and health checks passed. The [new autoscaling profile](browse-autoscaling.md)
+  selects eight connections per pod, two-four pods and a 128-connection lab
+  planning budget. Implementation is prepared; live deployment and natural
+  scale-up/down verification remain pending.
+
 - **Client memory comparison completed:** the HTTP-only, per-thread client
   passed its live Linux comparison with substantially lower sampled process
   RSS. Fresh post-run demo and Operations checks also passed: availability
@@ -51,9 +58,9 @@ or establish sustained production capacity.
   It restored four connections per pod, verified health and retained its
   recovery journal. The current default remains four; the pass applies to
   the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
-  passed live preflight without changing pool policy; its workload is pending.
-  A decision on retaining eight and
-  pod autoscaling remain later work. No 500/1,000-user test ran.
+  also passed, with its baseline restoration verified. Eight connections are
+  selected for the new autoscaling profile; its rollout is pending.
+  No 500/1,000-user test ran.
 - **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
   cached SQL and much longer client calls support investigating round-trip
   cost with bounded pool concurrency. The passing trial's three minute-level

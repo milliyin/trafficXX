@@ -94,3 +94,8 @@ variable "grafana_dns_label" {
     error_message = "Use 3-63 lowercase letters/digits/hyphens, starting with a letter and ending with a letter or digit."
   }
 }
+variable "enable_browse_keda" {
+  description = "Keep true after enabling the managed KEDA addon for the Browse autoscaling profile."
+  type        = bool
+  default     = false
+}

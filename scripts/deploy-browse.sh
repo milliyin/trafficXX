@@ -8,6 +8,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 [[ "$(kubectl config current-context)" == trafficxx-lab-aks ]] || {
   echo 'Select the trafficxx-lab-aks context first.' >&2; exit 1;
 }
+[[ -z "$(kubectl get hpa -n trafficxx -o jsonpath='{range .items[?(@.spec.scaleTargetRef.name=="browse")]}{.metadata.name}{end}')" ]] || {
+  echo 'Browse is autoscaled. Use its reviewed deployment workflow; this fixed-two-pod helper would overwrite pool/replica policy.' >&2; exit 1;
+}
 [[ -r browse-image.txt ]] || { echo 'Run the image build first.' >&2; exit 1; }
 reference=$(cat browse-image.txt)
 [[ "$reference" =~ ^trafficxxacre8708a85\.azurecr\.io/trafficxx@sha256:[0-9a-f]{64}$ ]] || {

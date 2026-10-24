@@ -2,8 +2,8 @@
 
 Status: live 250-user trial passed; four-connection baseline restored and health verified.
 
-A separate three-minute stability mode is now prepared, with no live result
-yet. Its commands and recovery journal are described at the end of this guide.
+A separate three-minute stability mode has also passed. Its result, commands
+and recovery journal are described at the end of this guide.
 
 The user supplied BROWSE_POOL8_PREFLIGHT_OK with journal_created false and
 pool_policy_changed false. Both serving pods confirmed minimum/maximum four
@@ -257,5 +257,11 @@ single-query configuration; it is not a general arbitrary-duration load tool.
 The live three-minute preflight passed: both Browse pods remained at minimum
 and maximum four connections, queue limit 16, with healthy demo and Operations
 checks. No journal was created or pool policy changed. Source CI also passed.
-The temporary rollout and three-minute workload remain pending. The original
-token-renewal Job remains a separate pending verification.
+The subsequent live trial passed: run `5707b72eb33d` completed 21,133 successful
+reads from all 250 users in 180.132 seconds, zero errors, p95 167.385 ms,
+p99 188.764 ms, and maximum 267.868 ms. Both pools remained at eight without
+new connection attempts or pool errors. Six minute-level database observations
+reached CPU 8.64%, memory 21.36%, and 28 connections. The wrapper then restored
+four connections per pod and verified health. See the [new autoscaling profile](browse-autoscaling.md)
+for the selected eight-connection policy and bounded next experiment.
+The original token-renewal Job remains a separate pending verification.

@@ -1,0 +1,277 @@
+{
+  "rule_files": [],
+  "evaluation_interval": "15s",
+  "tests": [
+    {
+      "name": "healthy",
+      "interval": "15s",
+      "input_series": [
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "2x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "2x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0+600x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0+600x12"
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "sum(clamp_min(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"} - trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}, 0) + trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8)",
+          "eval_time": "2m",
+          "exp_samples": [
+            {
+              "labels": "{}",
+              "value": 12
+            }
+          ]
+        },
+        {
+          "expr": "sum(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8) and on() (count(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) == count(up{job=\"trafficxx-browse-pool\"}))",
+          "eval_time": "2m",
+          "exp_samples": [
+            {
+              "labels": "{}",
+              "value": 80
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "interval": "15s",
+      "input_series": [
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "2x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0+600x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0+600x12"
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "sum(clamp_min(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"} - trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}, 0) + trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8)",
+          "eval_time": "2m",
+          "exp_samples": []
+        },
+        {
+          "expr": "sum(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8) and on() (count(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) == count(up{job=\"trafficxx-browse-pool\"}))",
+          "eval_time": "2m",
+          "exp_samples": []
+        }
+      ]
+    },
+    {
+      "name": "down",
+      "interval": "15s",
+      "input_series": [
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "2x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "2x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0+600x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0+600x12"
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "sum(clamp_min(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"} - trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}, 0) + trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8)",
+          "eval_time": "2m",
+          "exp_samples": []
+        },
+        {
+          "expr": "sum(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8) and on() (count(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) == count(up{job=\"trafficxx-browse-pool\"}))",
+          "eval_time": "2m",
+          "exp_samples": []
+        }
+      ]
+    },
+    {
+      "name": "stale",
+      "interval": "15s",
+      "input_series": [
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "up{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "1x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "2 2 2"
+        },
+        {
+          "series": "trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "2 2 2"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "8x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"a\"}",
+          "values": "0+600x12"
+        },
+        {
+          "series": "trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\",instance=\"b\"}",
+          "values": "0+600x12"
+        }
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "sum(clamp_min(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"} - trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}, 0) + trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8)",
+          "eval_time": "2m",
+          "exp_samples": []
+        },
+        {
+          "expr": "sum(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) and on() (min(up{job=\"trafficxx-browse-pool\"}) == 1) and on() (count(up{job=\"trafficxx-browse-pool\"}) >= 2) and on() (count(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_size{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_available{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (count(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == count(up{job=\"trafficxx-browse-pool\"})) and on() (min(timestamp(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"})) > time() - 45) and on() (min(trafficxx_browse_pool_limit{job=\"trafficxx-browse-pool\"}) == 8) and on() (count(rate(trafficxx_browse_pool_borrows_total{job=\"trafficxx-browse-pool\"}[1m])) == count(up{job=\"trafficxx-browse-pool\"}))",
+          "eval_time": "2m",
+          "exp_samples": []
+        }
+      ]
+    }
+  ],
+  "fuzzy_compare": true
+}

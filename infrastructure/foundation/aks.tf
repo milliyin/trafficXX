@@ -53,6 +53,10 @@ resource "azurerm_kubernetes_cluster" "lab" {
   private_cluster_enabled           = false
   tags                              = local.tags
 
+  workload_autoscaler_profile {
+    keda_enabled = var.enable_browse_keda
+  }
+
   # Terraform owns pool definitions; AKS's cluster autoscaler adjusts app capacity.
   node_provisioning_profile {
     mode = "Manual"

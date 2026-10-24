@@ -1,0 +1,21 @@
+{
+  "apiVersion": "keda.sh/v1alpha1",
+  "kind": "ScaledObject",
+  "metadata": {"name": "browse", "namespace": "trafficxx", "labels": {"app.kubernetes.io/part-of": "trafficxx"}},
+  "spec": {
+    "scaleTargetRef": {"name": "browse"},
+    "pollingInterval": 15,
+    "minReplicaCount": 2,
+    "maxReplicaCount": 4,
+    "advanced": {
+      "horizontalPodAutoscalerConfig": {
+        "name": "trafficxx-browse",
+        "behavior": {
+          "scaleUp": {"stabilizationWindowSeconds": 0, "selectPolicy": "Min", "policies": [{"type": "Pods", "value": 1, "periodSeconds": 60}]},
+          "scaleDown": {"stabilizationWindowSeconds": 300, "selectPolicy": "Min", "policies": [{"type": "Pods", "value": 1, "periodSeconds": 60}]}
+        }
+      }
+    },
+    "triggers": []
+  }
+}
