@@ -311,7 +311,8 @@ Next:
    before it stopped. Generator process RSS peaked at 209 MiB. Post-run recovery
    checks passed. A bounded queue comparison is prepared: 16 waiting slots per
    Browse pod, four ready/max connections, unchanged latency/resource stops.
-   It needs a new Browse build/rollout before --users 100 --queue-comparison.
+   ACR image build cad passed; rollout is pending before
+   --users 100 --queue-comparison.
    The live result is pending; 100 users remain unpassed.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only

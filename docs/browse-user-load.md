@@ -924,3 +924,23 @@ server stopped afterward. Native isolated Job renders preserved resource and
 security settings and validated the deployment environment. These establish
 local correctness, not Azure SQL capacity or a latency SLO. Docker stayed
 stopped and no local Azure connection was used.
+
+
+### Queue-comparison image build succeeded
+
+The user supplied ACR run cad, successful after 31 seconds, tag
+browse-20261024145900-12748, with IMAGE_BUILD_OK. The build helper saved this
+immutable reference to browse-image.txt:
+
+```text
+trafficxxacre8708a85.azurecr.io/trafficxx@sha256:d383adee4fef71364a5bc3fe579a900ff02de14a36d44795176b2040dc56f640
+```
+
+Python base digest stayed
+a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704.
+Build success does not establish deployment, actual serving queue limit or
+100-user performance. Next deploy using the saved reference, run fresh demo
+and Operations checks, wait for resource metrics on both replacement pods,
+then run --users 100 --queue-comparison. The new fixed Job will be
+browse-users-100-queue16, with actual queue-limit, warm-pool and rejection-counter
+guards active. The cad rollout and live comparison are still pending.
