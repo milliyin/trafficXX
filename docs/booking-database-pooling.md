@@ -6,8 +6,8 @@ Post-pooling reservation flow, duplicate concurrency and seat contention passed.
 Post-test demo inventory and Operations health checks also passed. These are
 bounded functional checkpoints, not a sustained-load or token-renewal result.
 The subsequent [Booking metrics/dashboard stage](booking-pool-monitoring.md)
-passed image build caa, rollout and HTTP reuse checks; live stored samples and
-dashboard evidence remain pending.
+passed image build caa, rollout, HTTP reuse, live stored samples and Grafana API
+checks. Browser rendering of the new dashboard remains unconfirmed.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 

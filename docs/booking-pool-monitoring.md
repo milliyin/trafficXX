@@ -1,8 +1,8 @@
 # Booking pool metrics and Grafana
 
-Status: source/local validation, Booking image build caa, rollout and HTTP pool
-check passed. The live Prometheus stored-sample check, Grafana API check and browser
-rendering remain pending. The preceding ca9 pool/functional milestone passed;
+Status: source/local validation, Booking image build caa, rollout, HTTP pool,
+live Prometheus stored-sample and Grafana API checks passed. Browser rendering
+remains unconfirmed. The preceding ca9 pool/functional milestone passed;
 see [Booking pooling](booking-database-pooling.md). The existing Browse renewal
 Job continues on its original image and run, without restart or source changes.
 
@@ -31,8 +31,31 @@ missing-reservation404. The same forwarded process reported four pool borrows,
 zero new connection attempts, sampled size1/max4 and successful readiness after
 the lookup rollback. No inventory writes occurred. This bounded check supports
 one serving process's reuse, not both-replica sustained-load behaviour.
-Monitoring configuration, actual stored Booking metric series and the new
-Grafana dashboard are still pending live verification.
+Monitoring configuration and live datasource verification subsequently passed
+as recorded below.
+
+## Verified monitoring checkpoint
+
+The user supplied a successful Prometheus rollout, BOOKING_MONITORING_CONFIGURED,
+BOOKING_PROMETHEUS_OK and GRAFANA_BOOKING_POOL_OK. The two healthy targets matched
+the new Booking pods and exposed fresh stored samples:
+
+| Target | Stored scrapes | Freshness seconds | Size / limit | Available | Waiting | Borrows / attempts |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10.244.2.66:8000 | 2 | 7.515 | 1 / 4 | 1 | 0 | 13 / 1 |
+| 10.244.3.138:8000 | 3 | 2.989 | 1 / 4 | 1 | 0 | 10 / 1 |
+
+Both current processes reported zero borrow errors, connection errors, lost
+connections and bad returns. These are sampled process-local observations,
+not a sustained-load result or durable totals. Readiness contributes borrows.
+
+The Grafana Job verified the provisioned Booking dashboard UID, eight panels,
+the trafficxx-prometheus datasource and real stored samples for two targets.
+Operations and the Browse dashboard/rules also passed, and unauthenticated
+dashboard access was denied. This confirms API/data-source integration; browser
+rendering of the new dashboard is still unconfirmed. Booking-specific alert
+rules and external notification delivery remain unconfigured. The independent
+Browse token-renewal run has no new final result in this checkpoint.
 
 ## Measurements and limits
 
@@ -141,5 +164,6 @@ local server with no Azure targets, then the process was stopped. Bash syntax,
 manifest structure and mocked config-only/account-guard deployment checks passed.
 The disposable real-database HTTP test now includes the no-borrow assertion;
 it was not executed locally because Docker remains stopped. Hosted CI and all
-new live Azure results remain unverified. No notification delivery or renewal
+new browser rendering remain unverified. The live Prometheus/Grafana API results
+above were supplied separately by the user. No notification delivery or renewal
 pass is claimed.
