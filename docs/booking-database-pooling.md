@@ -2,7 +2,8 @@
 
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.
-Post-pooling reservation flow passed; concurrency/seat-contention checks are pending.
+Post-pooling reservation flow and duplicate concurrency passed; seat contention
+and post-test inventory/processing checks are pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -56,9 +57,17 @@ a09bb8b1-289b-4f64-958a-a0bb920e1d53: duplicate requests reused its hold,
 changed-request key reuse was rejected, another customer's lookup was hidden,
 cancellation reached CANCELLED, and replaying the cancelled key returned that
 same outcome. This establishes the sequential pooled API flow for that run.
-Concurrent duplicate and seat-contention checks remain pending. The test retains
+The test retains
 cancelled history/outbox rows; post-test inventory and event processing need
 separate checks.
+
+BOOKING_CONCURRENCY_OK then verified reservation
+44edc74e-7184-4715-b037-eef6e36234f4 through both new Booking pods
+(booking-76c99c6fbb-dwtxs and booking-76c99c6fbb-tzq9r). Concurrent submissions
+returned HTTP200/201 with the same reservation and expiry. Both-replica reads
+passed and the final status was CANCELLED. This supports duplicate handling
+across the pooled replicas for that pair; it is not a load benchmark or proof
+of all possible races. Different-customer seat contention remains pending.
 
 ## What changes
 
@@ -190,6 +199,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI and post-pooling concurrency
-checks remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI and post-pooling seat
+contention remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.

@@ -228,7 +228,9 @@ Next:
    ACR build ca9, two-pod rollout, read-only serving reuse (four borrows/no new
    attempts), and isolated SQL reuse/rollback/capacity/replacement checks passed.
    The sequential pooled booking flow also passed duplicate/key-conflict,
-   customer isolation and cancellation checks. Concurrency checks remain pending. Workers still
+   customer isolation and cancellation checks. Concurrent requests through both
+   new replicas returned one reservation/expiry (HTTP200/201), then cancellation
+   passed. Post-pooling seat contention remains pending. Workers still
    connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.
