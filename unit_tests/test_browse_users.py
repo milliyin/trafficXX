@@ -117,6 +117,19 @@ class BrowseUsers(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.sample(payload, expected, now)
 
+    def test_sixty_second_collector_has_bounded_delay_allowance(self):
+        payload = {'items': [{'metadata': {'name': 'browse-a'},
+                             'timestamp': '2026-10-24T12:44:26Z',
+                             'containers': [{'name': 'browse', 'usage': {'cpu': '10m', 'memory': '59Mi'}}]}]}
+        expected = {'browse-a': {'container': 'browse', 'cpu': .5, 'memory': 256}}
+        stamp = datetime(2026, 10, 24, 12, 44, 26, tzinfo=timezone.utc).timestamp()
+        for age in (62.375, 90):
+            self.assertIn('browse-a', runner.sample(payload, expected, stamp + age))
+        for age in (90.001, -5.001):
+            with self.assertRaises(runner.MetricSampleError) as caught:
+                runner.sample(payload, expected, stamp + age)
+            self.assertEqual(caught.exception.details['max_age_seconds'], 90)
+
     def test_resource_pressure_must_persist_and_duplicate_samples_are_not_new_evidence(self):
         watch = runner.ResourceWatch()
         high = {'pod': {'timestamp': 'same', 'cpu_cores': .45, 'memory_mib': 64,

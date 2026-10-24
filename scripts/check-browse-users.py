@@ -17,8 +17,8 @@ MAX_ATTEMPTS = 1500
 def wait_for_resource_gate(config, path=Path('/state/start'), sleep=time.sleep, clock=time.monotonic):
     read.targets_from(config)  # Validate before waiting; no HTTP is sent here.
     print(json.dumps({'result': 'BROWSE_USERS_WAITING_FOR_RESOURCE_SAMPLES',
-                      'run_id': config['run_id'], 'timeout_seconds': 90}), flush=True)
-    deadline = clock() + 90
+                      'run_id': config['run_id'], 'timeout_seconds': 240}), flush=True)
+    deadline = clock() + 240
     while True:
         if path.exists():
             read.require(path.read_text().strip() == config['run_id'], 'RESOURCE_GATE_RUN_MISMATCH')

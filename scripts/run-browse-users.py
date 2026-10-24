@@ -12,13 +12,17 @@ import time
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-JOB = 'browse-users-50-v2'
+JOB = 'browse-users-50-v3'
+# Reviewed for the reported collector with no metric-resolution override.
+RESOURCE_MAX_AGE = 90
+GENERATOR_METRICS_WARMUP = 210
 
 
 class MetricSampleError(ValueError):
     def __init__(self, pod, timestamp, age):
         super().__init__('POD_METRICS_NOT_FRESH')
-        self.details = {'pod': pod, 'source_timestamp': timestamp, 'age_seconds': round(age, 3)}
+        self.details = {'pod': pod, 'source_timestamp': timestamp, 'age_seconds': round(age, 3),
+                        'max_age_seconds': RESOURCE_MAX_AGE}
 
 
 def load(name):
@@ -60,7 +64,7 @@ def sample(payload, expected, now=None):
         stamp = datetime.fromisoformat(timestamp)
         require(stamp.tzinfo is not None, 'POD_METRICS_TIMEZONE_MISSING')
         age = now - stamp.timestamp()
-        if not -5 <= age <= 60:
+        if not -5 <= age <= RESOURCE_MAX_AGE:
             raise MetricSampleError(name, row['timestamp'], age)
         containers = row['containers']
         require(len(containers) == 1 and containers[0]['name'] == expected[name]['container'],
@@ -232,10 +236,12 @@ def execute(*, preflight_only=False):
                           'users': 50, 'duration_seconds': 60, 'think_seconds': 2,
                           'max_workload_attempts': 1500, 'runtime_image': reference,
                           'generator_node': generator_node,
+                          'resource_max_age_seconds': RESOURCE_MAX_AGE,
+                          'generator_metrics_warmup_seconds': GENERATOR_METRICS_WARMUP,
                           'inventory_writes': False,
                           'note': 'Only 50 users; no automatic progression or scaling.'}), flush=True)
         stage = 'observe_job_and_resources'
-        deadline, running_since, generator = time.monotonic() + 270, None, None
+        deadline, running_since, generator = time.monotonic() + 450, None, None
         while True:
             finished = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
             require(finished['metadata']['uid'] == job['metadata']['uid'], 'DIAGNOSTIC_JOB_REPLACED')
@@ -264,10 +270,10 @@ def execute(*, preflight_only=False):
                 try:
                     values.update(sample(payload, {generator: {'container': 'check', 'cpu': 1, 'memory': 256}}))
                 except MetricSampleError as problem:
-                    if gate_released or (running_since is not None and time.monotonic() - running_since > 40):
+                    if gate_released or (running_since is not None and time.monotonic() - running_since > GENERATOR_METRICS_WARMUP):
                         raise
                     print(json.dumps({'result': 'BROWSE_USERS_METRICS_WARMUP', **problem.details}), flush=True)
-            if running_since is not None and time.monotonic() - running_since > 40:
+            if running_since is not None and time.monotonic() - running_since > GENERATOR_METRICS_WARMUP:
                 require(generator in values, 'GENERATOR_RESOURCE_METRICS_MISSING')
             watch.add(values, time.monotonic())
             if (not gate_released and generator is not None and generator in values
@@ -296,6 +302,7 @@ def execute(*, preflight_only=False):
         print(json.dumps({'result': 'BROWSE_USERS_50_OK', 'run_id': run_id, 'job': JOB,
                           'resources': watch.summary(), 'serving_pods_unchanged': True,
                           'resource_gate_released': True,
+                          'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'inventory_writes': False, 'latency_slo_tested': False,
                           'note': 'Review results before authorizing the 100-user stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
         return 0

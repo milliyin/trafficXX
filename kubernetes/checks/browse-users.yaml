@@ -1,13 +1,13 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: browse-users-50-v2
+  name: browse-users-50-v3
   namespace: trafficxx
   labels:
     app.kubernetes.io/name: trafficxx-browse-users
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 240
+  activeDeadlineSeconds: 420
   ttlSecondsAfterFinished: 3600
   template:
     metadata:

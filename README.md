@@ -294,9 +294,10 @@ Next:
    prepared and locally tested: one minute, paced reads, at most 1,500 requests,
    pool/resource stop limits and CPU/memory sampling. Live evidence is pending;
    higher user counts and autoscaling are not enabled automatically.
-   Its first attempt stopped on metric freshness; the failed generator was
-   confirmed stopped. A revised version waits for fresh resource evidence before
-   traffic and records rejected pod/timestamp/age details. Live success is pending.
+   Both early attempts stopped on metric freshness and are confirmed stopped.
+   The second sent no workload traffic. Version v3 allows a 90-second source age
+   for the reported collector cadence and longer startup for distinct samples,
+   while preserving traffic/resource caps. Live success is pending.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

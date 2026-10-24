@@ -1,6 +1,6 @@
 # First in-cluster user-load stage
 
-Status: source/local validation passed. The first live attempt stopped on
+Status: source/local validation passed. The first two live attempts stopped on
 resource-metric freshness; a complete live workload result remains pending.
 This runs only the first 50-user stage; 100/250/500/1,000 users require separate
 review and preparation after these results. No scaling or new Azure resource
@@ -22,7 +22,7 @@ pods and the generator have at least two distinct fresh resource samples and
 current CPU/memory below the start limits. Until then, no HTTP requests are sent.
 The parent needs existing pods/exec permission to write the file in this owned
 diagnostic pod; no RBAC or API token is added to the generator. The gate timeout
-is 90 seconds. The workload clock starts after this gate, not during warmup.
+is 240 seconds. The workload clock starts after this gate, not during warmup.
 
 One temporary Job runs 50 closed-loop virtual users for 60 seconds. Each user
 alternates GET availability for demo-general and demo-seated through the internal
@@ -61,10 +61,13 @@ both Browse pods and the generator. Browse is expected to retain 500m CPU and
 80% CPU/85% memory. During the run, sampled CPU at or above 80% of the relevant
 container limit across 20 seconds, or memory at or above 85% across ten seconds,
 stops the generator. Missing/stale serving metrics stop the run too. A new
-generator gets 40 seconds after it is first seen Running for metrics to appear.
+generator gets 210 seconds after it is first seen Running for metrics to appear.
 Stale generator samples during startup are excluded while the HTTP gate stays
 closed. Stale serving samples still fail immediately; stale generator samples
-after the gate opens also fail immediately. The 60-second freshness limit stays.
+after the gate opens also fail immediately. The reviewed maximum source age is 90 seconds (60-second upstream collector
+cadence plus 30 seconds for collection/publication delay); future timestamps
+more than five seconds ahead still fail. This is a fixed reviewed budget, not
+a measured guarantee of the Azure vendor binary's cadence.
 At least two distinct fresh source timestamps are required for each pod before
 a final pass; repeated reads of one timestamp are not new samples.
 
@@ -78,7 +81,7 @@ To stop externally, the parent tests this diagnostic Job's UID and shortens
 only its active deadline. Job/Pod logs are retained for inspection. No serving
 Deployment is scaled or deleted. Lost create responses are resolved using the
 unique script ConfigMap reference before a Job can be stopped; a concurrent
-run's Job must not be modified. The Job itself has a 240-second active deadline,
+run's Job must not be modified. The Job itself has a 420-second active deadline,
 zero retries, restartPolicy Never and a one-hour completion TTL. Its script
 ConfigMap is owned by the Job for eventual cleanup. A preparation failure can
 leave the named script ConfigMap for inspection.
@@ -101,8 +104,8 @@ python3 scripts/run-browse-users.py
 No image build is needed. A read-only --preflight-only mode is available to
 check account/context/pod/resource-metric readiness without creating a Job; it
 does not establish inventory or workload success. The runner refuses an existing
-browse-users-50-v2 Job and any active earlier browse-users-50/read-load-baseline
-Job. The terminal failed original is preserved. Concurrent
+browse-users-50-v3 Job and any active earlier browse-users-50/read-load-baseline
+Job. Both terminal failed earlier Jobs are preserved. Concurrent
 starts of this same stage use the same fixed Job name, so only one can create
 it. Do not delete an existing diagnostic Job blindly or repeat a failed stage
 to diagnose. Preserve its logs first and inspect desired/current conditions.
@@ -164,4 +167,36 @@ Allow about three minutes with Cloud Shell open, including metrics warmup and
 the unchanged 60-second load phase. All 447 offline methods passed, including
 gate/run matching, no HTTP before release, stale-generator startup recovery
 and exact freshness diagnostics. The shortened real HTTP smoke and native Job
-render passed again; the local server stopped. The revised live run is pending.
+render passed again; the local server stopped. That revision was subsequently attempted; see the evidence below.
+
+
+## Second attempt and collector cadence correction
+
+Run f42786c77b03 / Job browse-users-50-v2 failed after 119 seconds.
+The HTTP resource gate remained closed: no workload traffic started.
+The exact rejected serving sample was browse-6775788b9b-g649w at
+2026-10-24T12:44:26Z, aged 62.375 seconds against the old 60-second limit.
+One distinct sample per serving pod had been accepted, with sampled CPU around
+0.0014 cores and memory around 59 MiB. This is not an overload diagnosis.
+
+The supplied metrics-server deployment uses the Azure v0.8.0-25 image and has
+no metric-resolution override. The [upstream v0.8.0 binary default is 60 seconds](https://github.com/kubernetes-sigs/metrics-server/blob/v0.8.0/cmd/metrics-server/app/options/options.go).
+A maximum age equal to that cadence left no allowance for collection delay.
+Version v3 therefore uses the fixed 90-second source-age budget above, while
+still stopping on missing serving metrics or samples outside that budget.
+It does not change the managed collector, application resources or traffic caps.
+
+The new generator may need two collection points before its first CPU metric
+and another point for a second distinct timestamp. Startup now allows 210
+seconds for generator metrics, with a 240-second HTTP gate timeout, 420-second
+Job deadline and 450-second parent deadline. After release, missing/stale
+generator metrics fail immediately. Keep Cloud Shell open; allow up to seven
+minutes including startup and the unchanged one-minute workload.
+
+The next Job is browse-users-50-v3; neither failed predecessor is deleted.
+All 448 offline methods passed, including the exact 62.375-second regression,
+the 90-second boundary and rejection of older/future samples. The real loopback
+50-user/75-GET smoke and isolated native Job render passed. Live v3 success is
+still pending. Resource summaries span startup and load; two distinct timestamps
+can come from startup, and a 60-second collector can miss brief pressure during
+a one-minute workload. These observations do not establish sustained capacity.
