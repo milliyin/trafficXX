@@ -2,8 +2,8 @@
 
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.
-Post-pooling reservation flow and duplicate concurrency passed; seat contention
-and post-test inventory/processing checks are pending.
+Post-pooling reservation flow, duplicate concurrency and seat contention passed.
+Post-test inventory and processing checks are pending.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -67,7 +67,15 @@ BOOKING_CONCURRENCY_OK then verified reservation
 returned HTTP200/201 with the same reservation and expiry. Both-replica reads
 passed and the final status was CANCELLED. This supports duplicate handling
 across the pooled replicas for that pair; it is not a load benchmark or proof
-of all possible races. Different-customer seat contention remains pending.
+of all possible races.
+
+BOOKING_SEAT_CONTENTION_OK subsequently tested two different customers for
+demo-seated/A1 through those same two pooled replicas. Responses were HTTP201
+and409 SEAT_UNAVAILABLE, with winning pod index0 and losing index1. Both-replica
+reads passed for reservation a727535e-28e1-46d1-91c8-0a15f9151689, and cleanup
+reached CANCELLED. That pair had one winner; it does not establish all inventory
+races or sustained-load behaviour. Post-test availability and background
+processing health still need their separate checks.
 
 ## What changes
 
@@ -199,6 +207,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI and post-pooling seat
-contention remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI and post-test inventory/
+processing health remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.
