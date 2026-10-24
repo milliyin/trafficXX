@@ -1,20 +1,39 @@
 # Real database token renewal across expiry
 
-Status: live Job startup and 209 successful SQL probes are observed; final
-expiry-boundary renewal result remains pending. No image build or serving
-deployment update is needed. The helper uses the current immutable Browse image
-and mounts the reviewed diagnostic source from a ConfigMap.
+Status: **live expiry-boundary renewal passed** on 24 October 2026. The Job
+completed 1/1 and reported `DATABASE_TOKEN_RENEWAL_OK` for the original run.
+This proves fresh SQL login after the initial token expired in the isolated
+diagnostic process; it does not prove uninterrupted serving-pod availability.
 
-## Active user-run check
+## Verified live result
+
+| Evidence | Result |
+| --- | --- |
+| Job | `browse-token-renewal-check`, Complete 1/1 |
+| Run | `f1b7fde54dd24bdda3598c206b3a3e45` |
+| Duration | 86,428 seconds, approximately 24 hours |
+| Successful SQL checks | 289 |
+| Original token expiry | 24 October 2026, 16:01:10 UTC / 9:01:10 PM Pakistan |
+| Final fresh SQL check | 24 October 2026, 16:01:40.434155 UTC / 9:01:40 PM Pakistan |
+| Replacement token expiry | 25 October 2026, 04:02:08 UTC |
+| Renewal evidence | Different token, new SQL login after original expiry, same SDK credential instance |
+| Database and identity | `trafficxx`, `trafficxx-lab-browse` |
+| Encryption | TLS 1.3 |
+| Inventory writes | None |
+
+The final login occurred approximately 30 seconds after the original token's
+expiry. No new check needs to be started to establish this result. Preserve
+the safe final output; completed diagnostic logs have a two-day TTL.
+
+## Earlier progress, before completion
 
 The user created browse-token-renewal-check and supplied TOKEN_RENEWAL_WAITING
 with run_id f1b7fde54dd24bdda3598c206b3a3e45. Initial access-token expiry is
 2026-10-24T16:01:10+00:00; the earliest final check is
 2026-10-24T16:01:40+00:00 (October24at21:01:40 Asia/Karachi). Initial estimated
 wait was86428seconds, with probes every300seconds. This records initial SQL
-success and scheduling only, not renewal success. Retain this run_id when
-checking progress/final output; actual completion and no-restart status remain
-to be verified after the expiry boundary.
+success and scheduling only, not renewal success. The final result above later
+confirmed completion with the same run ID and underlying SDK credential.
 
 On October24 the user supplied the same run_id after17hours: Job Running0/1,
 pod browse-token-renewal-check-z8zdd Running1/1 with zero restarts. Progress
@@ -24,9 +43,9 @@ the initial expiry. This is evidence of a later-expiring token being available
 within the ongoing process, consistent with proactive SDK refresh. The progress
 output does not contain the final token-value comparison or boundary verdict.
 The last reported23946remaining seconds still refer to the original final-check
-boundary, not the newer token expiry. Keep the Job running until the original
-October24at16:01:40UTC /21:01:40Pakistan boundary and require the final success
-record plus completed same-run/no-restart evidence. No renewal pass is recorded yet.
+boundary, not the newer token expiry. Keeping the Job running until the original
+October24at16:01:40UTC /21:01:40Pakistan boundary was required before a pass.
+The supplied final record now confirms the fresh-login boundary and renewal.
 
 ## What this proves
 
@@ -125,5 +144,6 @@ Eight offline cases use fake time and metadata to verify the required expiry,
 new-login and changed-token gates, server clock checks, bounded monotonic wait,
 SDK-call delegation, redaction and cleanup preventing false success. They do
 not simulate a real Azure renewal. Bash/YAML/Python checks and mocked
-subscription/existing-Job/startup guards passed. Live boundary proof remains
-pending; Docker remains stopped and no local Azure/credential access occurred.
+subscription/existing-Job/startup guards passed. Live boundary proof was later
+supplied by the user's completed AKS Job. No local Azure or credential access
+was needed to inspect that evidence.

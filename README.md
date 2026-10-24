@@ -56,8 +56,8 @@ check. The consumer processed all 12 queued events: read-only SQL verified
 error-free heartbeat. Native queue counts were zero active messages and zero
 dead letters. These are point-in-time processing and drain results. Remaining
 workers are not deployed.
-Remaining workload SQL permissions, broader recovery experiments and sustained
-token-renewal verification are next steps. The base and messaging schema have
+Remaining workload SQL permissions and broader recovery experiments are separate
+steps. The isolated 24-hour database token-renewal check has passed. The base and messaging schema have
 been bootstrapped. A controlled duplicate resend also passed with unchanged
 stored state and an empty queue. A controlled consumer pause also passed:
 two events waited, then drained after restart, with 14 inbox records and seven
@@ -247,13 +247,12 @@ Next:
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.
    User screenshots confirm all eight panels render with live data; a further
-   bounded read test passed on ca8. Sustained-load and token-renewal tests remain.
-   A [background token-renewal check](docs/database-token-renewal.md) is prepared
-   using the existing image and real SDK expiry metadata. At17hours, the same
-   run had209successful SQL checks and zero pod restarts; observed token expiry
-   had advanced. This supports ongoing refresh but is not the final verdict;
-   earliest final check is2026-10-24T16:01:40Z. Expiry-boundary proof remains
-   pending; short requests do not establish renewal.
+   bounded read test passed on ca8. The
+   [background token-renewal check](docs/database-token-renewal.md) later passed:
+   Complete 1/1, 289 SQL checks over approximately 24 hours, a changed token and
+   fresh SQL login at 2026-10-24T16:01:40Z after the original token expired.
+   It used the same SDK credential instance and TLS 1.3, without inventory writes.
+   This isolated process result does not establish serving-pod continuity.
    [Browse pool alert rules](docs/browse-pool-alerts.md) are prepared and tested
    separately while that Job runs. AKS loading/evaluation passed: all five rules
    healthy and inactive, two Browse targets with fresh stored samples. External

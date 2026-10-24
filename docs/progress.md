@@ -15,6 +15,7 @@ earlier checkpoints. It is not a live status page.
 | Observation | Operations API, Prometheus, authenticated Grafana HTTPS, pool dashboards, and native alert evaluation checked. |
 | Controlled booking writes | Eighteen create/cancel pairs completed with cleanup verified and inventory restored. |
 | Stored event consistency | Read-only audit verified 72 matching outbox/inbox records and 36 latest projections at that checkpoint. |
+| Database token renewal | Completed approximately 24 hours and 289 SQL checks; a fresh SQL login succeeded after the original token expired, using a changed token and the same SDK credential instance. Isolated process only. |
 | 50-user Browse experiment | 1,382 successful reads in 60.133 seconds; zero errors; p95 209.486 ms. |
 | 100-user Browse experiment | 2,734 successful reads in 60.134 seconds; zero errors; p95 313.140 ms with queue limit 16. |
 | 100-user client memory comparison | 2,745 successful reads in 60.156 seconds; zero errors; p95 294.158 ms. Sampled generator peak process RSS 33.250 MiB versus the preceding 241.094 MiB. |
@@ -70,8 +71,10 @@ or establish sustained production capacity.
   database samples had maxima CPU 5.51%, memory 21.20% and connections 25.
   Sampling, warmup and placement differences prevent a precise saturation,
   isolated causal, sustained capacity or production SLO verdict.
-- **Token renewal:** the original expiry-boundary Job has no final verdict in
-  the supplied record. Its running/progress output is not a renewal pass.
+- **Token renewal completed:** the original Job reported
+  `DATABASE_TOKEN_RENEWAL_OK` and Complete 1/1. Its final SQL login occurred
+  about 30 seconds after original expiry. Serving-pod continuity and other
+  workload identities remain separate checks.
 - **Notifications:** warning evaluation is tested; external notification
   delivery is not configured or tested.
 - **Production readiness:** longer load, broader failure domains, customer
