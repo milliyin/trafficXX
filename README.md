@@ -308,11 +308,13 @@ Next:
    retained in the load guide. This single short pass does not establish a
    production latency SLO, sustained capacity or readiness for higher stages.
    Generator process RSS sampled 241.094 MiB and Kubernetes memory 228.059 MiB
-   against its 256 MiB limit. Post-run health checks and generator overhead
-   review are next before preparing a larger load. Post-test health checks
-   passed. A mounted-script --users 100 --client-memory-comparison is prepared
-   to remove repeated default HTTP/TLS-handler construction; no image rebuild
-   is needed, and a live Linux memory improvement remains unverified.
+   against its 256 MiB limit. Post-test health checks passed. The subsequent
+   mounted-script client-memory comparison passed all 2,745 reads in 60.156s
+   with zero errors and p95 294.158 ms. Sampled generator process RSS peaked
+   at 33.250 MiB, about 86% below the earlier 241.094 MiB observation, with
+   the same application image, serving pods and pool limits. No image rebuild
+   was required. This is one bounded comparison, not higher-load capacity proof;
+   fresh post-comparison health checks remain next.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

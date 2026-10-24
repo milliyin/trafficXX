@@ -17,6 +17,7 @@ earlier checkpoints. It is not a live status page.
 | Stored event consistency | Read-only audit verified 72 matching outbox/inbox records and 36 latest projections at that checkpoint. |
 | 50-user Browse experiment | 1,382 successful reads in 60.133 seconds; zero errors; p95 209.486 ms. |
 | 100-user Browse experiment | 2,734 successful reads in 60.134 seconds; zero errors; p95 313.140 ms with queue limit 16. |
+| 100-user client memory comparison | 2,745 successful reads in 60.156 seconds; zero errors; p95 294.158 ms. Sampled generator peak process RSS 33.250 MiB versus the preceding 241.094 MiB. |
 
 The fresh health checks after the 100-user pass reported both demo events still
 at 100 available tickets, healthy workers, no backlog, and no active alerts.
@@ -37,9 +38,10 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
-- **Load generator memory:** process RSS reached 241 MiB in the passing run.
-  An HTTP-only, per-thread client comparison is prepared; a live Linux improvement
-  is not yet verified.
+- **Post-comparison health:** the HTTP-only, per-thread client passed its live
+  Linux comparison with substantially lower sampled process RSS. Fresh demo and
+  Operations checks after that run are still pending. One comparison does not
+  establish a causal memory profile or higher-load capacity.
 - **Higher user counts:** 250, 500, and 1,000 users have not been tested. Each
   requires a separately reviewed workload and adequate generator headroom.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in

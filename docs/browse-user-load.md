@@ -1075,7 +1075,7 @@ all existing successful workload/Job/pod evidence. A successful workload does
 not automatically prove memory reduction: compare its observed memory to the
 prior same-size trial before preparing a higher user stage. Keep Cloud Shell
 open for up to seven minutes and retain complete output on pass or failure.
-No live client-memory-comparison result has been supplied yet.
+The live comparison result is recorded below.
 
 All 473 offline methods passed, including per-thread isolation, fresh request
 headers, response closure on success/oversize, HTTP-only/no-TLS construction,
@@ -1086,3 +1086,40 @@ HTTP/1.1 requests used Connection: close; a 302 was not followed. The server
 stopped. Isolated native Job renders confirmed unchanged budgets/security.
 These are correctness checks, not Azure SQL, memory or latency SLO proof.
 Docker remained stopped and no local Azure login or credential file was used.
+
+## Live client memory comparison passed
+
+User-supplied output for run `57452cc724c1`, Job
+`browse-users-100-clientmemory`, reported both BROWSE_USERS_WORKLOAD_OK and
+BROWSE_USERS_100_OK. All 100 paced users participated: 2,745 reads returned
+HTTP 200 with zero errors over 60.156 seconds (45.631 requests/s). Latency was
+180.784 ms p50, 294.158 ms p95, 360.832 ms p99 and 463.075 ms maximum.
+
+| Observation | Previous queue-16 run | HTTP-only client comparison |
+| --- | --- | --- |
+| Sampled peak generator process RSS | 241.094 MiB | 33.250 MiB |
+| End generator process RSS | 236.566 MiB | 30.219 MiB |
+| Sampled peak threads | 102 | 102 |
+| Successful reads | 2,734 | 2,745 |
+| Kubernetes sampled generator memory maximum | 228.059 MiB | 26.078 MiB |
+| Kubernetes sampled generator CPU maximum | 0.380182 cores | 0.026729 cores |
+
+Sampled peak process RSS was about 86.2% lower. The new policy
+`thread-local-http-only-fresh-connections-v1` was verified. The same cad image
+and serving pods were used; each pool still had four ready/max connections
+and 16 waiting slots. Both pools made zero new connection attempts during
+the workload, with all error/rejection counters unchanged. Sampled waiting
+peaked at four and five; database connection reuse remained intact.
+
+The generator budget stayed one CPU/256 MiB. All resource/stability gates
+passed, serving processes stayed unchanged, inventory stayed 100 per event,
+and no inventory writes occurred. Process RSS and Kubernetes memory have
+different sampling and accounting; their values are not interchangeable.
+This single comparison supports reduced observed generator overhead under
+this workload, without isolating every allocation cause or proving a capacity
+or latency SLO. Neither 250 nor 1,000 users were tested.
+
+Pre-run demo and Operations checks passed (processed 72, no backlog or active
+alerts; historical publication failures four and dead-letter audit one).
+Fresh post-comparison demo and Operations checks are next before any larger
+stage. The original token-renewal Job remains a separate pending verdict.

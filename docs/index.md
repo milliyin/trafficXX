@@ -24,17 +24,19 @@ results behind a system that holds tickets, moves events, and recovers from faul
 
 <div class="tx-milestone" markdown>
 
-**100 paced users. 2,734 successful reads. Zero errors.**
+**100 paced users. 2,745 successful reads. Zero errors.**
 
 A one-minute in-cluster Browse test passed with four ready database connections
-and 16 waiting slots per pod. 95% of requests completed within 313 ms.
+and 16 waiting slots per pod. 95% of requests completed within 295 ms.
+The revised load client sampled a 33.25 MiB peak process RSS, compared with
+241.094 MiB in the preceding same-size trial.
 
-[Read the experiment and its limits](browse-user-load.md#live-100-user-queue-16-comparison-passed)
+[Read the experiment and its limits](browse-user-load.md#live-client-memory-comparison-passed)
 
 </div>
 
 This is a learning lab, not a production-readiness claim. Results are dated
-observations. The load generator's memory use is the next investigation.
+observations. Higher user counts remain separate experiments.
 
 ## Find your starting point
 
