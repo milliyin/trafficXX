@@ -231,8 +231,9 @@ Next:
    customer isolation and cancellation checks. Concurrent requests through both
    new replicas returned one reservation/expiry (HTTP200/201), then cancellation
    passed. A same-seat race through both replicas also passed: one201, one409
-   SEAT_UNAVAILABLE, winning reservation cancelled. Post-test inventory and
-   processing checks remain pending. Workers still
+   SEAT_UNAVAILABLE, winning reservation cancelled. Post-test demo inventory was
+   restored to100each; Operations reported36processed, no backlog/active warnings,
+   and fresh error-free workers. These are bounded functional checks. Workers still
    connect directly. [Browse pool Prometheus/Grafana monitoring](docs/browse-pool-monitoring.md)
    passed after ca8 build/deployment: two healthy discovered targets with fresh
    stored samples and an eight-panel dashboard verified through its datasource.

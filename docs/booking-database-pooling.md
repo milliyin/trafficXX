@@ -3,7 +3,8 @@
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.
 Post-pooling reservation flow, duplicate concurrency and seat contention passed.
-Post-test inventory and processing checks are pending.
+Post-test demo inventory and Operations health checks also passed. These are
+bounded functional checkpoints, not a sustained-load or token-renewal result.
 Existing Browse monitoring is verified; its overnight token-renewal Job stays
 on its original image/run and must not be restarted for this change.
 
@@ -57,9 +58,8 @@ a09bb8b1-289b-4f64-958a-a0bb920e1d53: duplicate requests reused its hold,
 changed-request key reuse was rejected, another customer's lookup was hidden,
 cancellation reached CANCELLED, and replaying the cancelled key returned that
 same outcome. This establishes the sequential pooled API flow for that run.
-The test retains
-cancelled history/outbox rows; post-test inventory and event processing need
-separate checks.
+The test retains cancelled history/outbox rows; post-test inventory and event
+processing were checked separately below.
 
 BOOKING_CONCURRENCY_OK then verified reservation
 44edc74e-7184-4715-b037-eef6e36234f4 through both new Booking pods
@@ -74,8 +74,17 @@ demo-seated/A1 through those same two pooled replicas. Responses were HTTP201
 and409 SEAT_UNAVAILABLE, with winning pod index0 and losing index1. Both-replica
 reads passed for reservation a727535e-28e1-46d1-91c8-0a15f9151689, and cleanup
 reached CANCELLED. That pair had one winner; it does not establish all inventory
-races or sustained-load behaviour. Post-test availability and background
-processing health still need their separate checks.
+races or sustained-load behaviour.
+
+After all three write experiments, BROWSE_DEMO_HTTP_OK verified two events with
+100 available units each for demo-general and demo-seated, plus alive/ready.
+OPERATIONS_HTTP_OK reported 36 processed events, zero outbox pending and
+processing outstanding, zero processing-failure records, and no active alerts.
+Consumer/publisher heartbeats were fresh (1.585381/0.217789 seconds) without
+errors. Publication-failure history remained4 and dead-letter audit history1;
+neither is a current backlog or native queue-depth count. This confirms the
+bounded post-test inventory and aggregate processing-health checkpoint. It is
+not a new full-row inbox/projection consistency audit or native queue check.
 
 ## What changes
 
@@ -207,6 +216,6 @@ and their collection passed locally (pytest 8.4.2; CI pins 9.1.1):
 outbox-failure rollback of all writes plus advisory/event-lock release; expiry
 cleanup committed before conflict; concurrent duplicate handling; same-seat
 contention; and HTTP pool sharing/capacity/shutdown. Docker remains stopped, so
-those database tests were not run locally. Hosted CI and post-test inventory/
-processing health remain unverified. No throughput gain, Booking token renewal, pool dashboard
+those database tests were not run locally. Hosted CI and a new full-row consumer
+consistency/native queue audit remain unverified. No throughput gain, Booking token renewal, pool dashboard
 or external notification delivery is claimed by this stage.
