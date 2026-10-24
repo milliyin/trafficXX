@@ -87,7 +87,8 @@ class BrowseUsers(unittest.TestCase):
             probe.run(fixtures.config(), fixtures.Http(), lambda *args: (503, {'PRIVATE': 'BODY'}),
                       duration=.3, think=.02)
         self.assertIn('BROWSE_USERS_PHASE_FAILED', output.getvalue())
-        self.assertIn('503', output.getvalue())
+        self.assertIn('UNEXPECTED_HTTP_STATUS_503', output.getvalue())
+        self.assertNotIn('DEMO_INVENTORY_CHANGED', output.getvalue())
         self.assertNotIn('PRIVATE', output.getvalue())
 
     def test_pool_errors_or_initial_inventory_changes_prevent_success(self):

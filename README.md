@@ -299,7 +299,9 @@ Next:
    documented; v3 passed with the reviewed sampling allowance and startup gate.
    The next explicit 100-user stage is prepared and locally tested: run
    python3 scripts/run-browse-users.py --users 100 after fresh health checks.
-   Its live result is pending; higher stages are not started automatically.
+   Its first live attempt stopped after one HTTP 503 (22 successful reads,
+   less than one second); cause investigation and fresh health checks are next.
+   Higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

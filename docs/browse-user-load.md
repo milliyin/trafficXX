@@ -316,5 +316,37 @@ Job render/gate/UID-scoped stop and blocking an active earlier 50-user Job.
 Shortened real loopback HTTP tests exercised 50 users (75 valid reads) and
 100 users (149 valid reads), then stopped their server. Native kubectl with an
 empty isolated kubeconfig rendered both Job names with identical resource and
-security settings. This is local correctness evidence; no live 100-user result
-has been supplied. Docker stayed stopped; no local Azure commands were run.
+security settings. This is local correctness evidence. The first live 100-user attempt is
+recorded below. Docker stayed stopped; no local Azure commands were run.
+
+
+## First 100-user attempt: stopped on HTTP 503
+
+Run 5f3e53736ffa / Job browse-users-100 passed startup resource gating after
+healthy demo/Operations checks (inventory 100 each, processed 72, no backlog
+or active alerts). It then stopped 0.974 seconds into the workload: only 23
+users had issued requests, with 23 attempts, 22 HTTP 200s and one HTTP 503.
+Sampled peak workload concurrency was 17. No complete 100-user result or
+capacity limit was established. The failed Job/files are retained:
+browse-users-5f3e53736ffa-files. Do not delete or rerun before diagnosis.
+
+The old shared response validator combined HTTP status and inventory validation
+under DEMO_INVENTORY_CHANGED. Thus the supplied label does not demonstrate an
+inventory change: the unexpected 503 alone produced it. The validator now
+classifies unexpected status first as UNEXPECTED_HTTP_STATUS_503, without
+printing response bodies. Successful HTTP 200 payloads still undergo the same
+inventory checks. This diagnostic correction needs no serving-image change and
+does not change stop limits or authorize a new load run.
+
+The 503 body was not retained, so the exact cause is unknown. Application code
+can return 503 for pool queue/timeout/closed conditions (DATABASE_BUSY), while
+other availability paths also return 503. Pool pressure is a hypothesis, not
+proved by the supplied status. No observer stop was recorded before the short
+run ended. Reported resource maxima mostly cover startup; with coarse collection
+they cannot characterize this subsecond failure or exclude a transient spike.
+
+The parent reported DIAGNOSTIC_JOB_FAILED and requested a UID-scoped generator
+stop. Confirm native Job/pod termination and fresh Browse/Operations health;
+inspect both Browse replicas' recent logs and pool counters before choosing any
+change. Do not increase pool size, scale replicas or proceed to 250 users from
+this result. The 100-user stage has not passed.

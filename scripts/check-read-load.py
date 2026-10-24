@@ -79,6 +79,9 @@ def pool_snapshot(target, customer, http):
 
 
 def validate_response(api, route, status, body):
+    # Classify transport/service status before checking a successful payload.
+    expected_status = 404 if api == 'booking' else 200
+    require(status == expected_status, 'UNEXPECTED_HTTP_STATUS_' + str(status))
     if api == 'booking':
         require(status == 404 and body == {'detail': {'code': 'RESERVATION_NOT_FOUND'}},
                 'BOOKING_LOOKUP_CHANGED')
