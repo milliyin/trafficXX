@@ -50,8 +50,9 @@ or establish sustained production capacity.
   completed with all 250 users, 6,986 successful reads and no new pool errors.
   It restored four connections per pod, verified health and retained its
   recovery journal. The current default remains four; the pass applies to
-  the tested eight-connection configuration. Longer/repeated trials and a
-  decision on retaining eight remain separate work. No 500/1,000-user test ran.
+  the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
+  is prepared, awaiting live preflight. A decision on retaining eight and
+  pod autoscaling remain later work. No 500/1,000-user test ran.
 - **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
   cached SQL and much longer client calls support investigating round-trip
   cost with bounded pool concurrency. The passing trial's three minute-level

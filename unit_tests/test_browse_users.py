@@ -4,6 +4,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import importlib.util
 import io
+import ast
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -59,6 +61,16 @@ class BrowseUsers(unittest.TestCase):
         self.assertEqual(result['pool_size_verified'], 8)
         self.assertTrue(all(row['pool_max'] == 8 for row in result['pools']))
         self.assertEqual(result['attempts'], result['valid_responses'])
+        config['duration_seconds'] = 180
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = probe.run(config, http, service, duration=.9, think=.05)
+        self.assertEqual(result['scheduled_duration_seconds'], 180)
+        self.assertEqual(result['users_with_requests'], 250)
+        self.assertTrue(250 <= result['attempts'] <= 22500)
+        self.assertIn('"max_workload_attempts": 22500', output.getvalue())
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'INVALID_DURATION_COMPARISON'):
+            probe.run(dict(config, duration_seconds=120), Mock(), Mock())
     def test_failure_snapshots_retain_timing_evidence_without_private_fields(self):
         targets = fixtures.config()['targets']['browse']
         stats = dict(pool_min=4, pool_max=4, pool_size=4, pool_available=4,
@@ -436,7 +448,24 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4):
+    def test_longer_cli_propagates_exact_duration_without_running_cloud_commands(self):
+        for filename, arguments, expected in (
+            ('run-browse-users.py', ['--users', '250', '--single-query-comparison', '--pool-size', '8', '--duration', '180'],
+             {'duration_seconds': 180, 'users': 250, 'pool_size': 8, 'single_query_comparison': True}),
+            ('run-browse-pool-comparison.py', ['--duration', '180', '--preflight-only'],
+             {'duration_seconds': 180, 'preflight_only': True, 'restore_only': False})):
+            tree = ast.parse((ROOT / 'scripts' / filename).read_text())
+            block = tree.body[-1]
+            self.assertIsInstance(block, ast.If)
+            code = compile(ast.Module(body=block.body, type_ignores=[]), filename, 'exec')
+            execute = Mock(return_value=0)
+            with patch.object(sys, 'argv', [filename, *arguments]), self.assertRaises(SystemExit) as caught:
+                exec(code, {'argparse': argparse, '__doc__': 'test CLI', 'execute': execute})
+            self.assertEqual(caught.exception.code, 0)
+            for key, value in expected.items():
+                self.assertEqual(execute.call_args.kwargs[key], value)
+
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4, duration_seconds=60):
         commands, polls = [], [0]
         if single_query_comparison:
             client_memory_comparison = True
@@ -446,7 +475,8 @@ class BrowseUsersRunner(unittest.TestCase):
             queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = ('browse-users-250-pool8' if pool_size == 8 else
+        job_name = ('browse-users-250-pool8-180s' if duration_seconds == 180 else
+                    'browse-users-250-pool8' if pool_size == 8 else
                     f'browse-users-{users}-singlequery' if single_query_comparison else
                     'browse-users-250' if users == 250 else
                     'browse-users-100-clientmemory' if client_memory_comparison else
@@ -507,6 +537,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 self.assertEqual(json.loads(Path(source).read_text())['client_memory_comparison'], client_memory_comparison)
                 self.assertEqual(json.loads(Path(source).read_text())['single_query_comparison'], single_query_comparison)
                 self.assertEqual(json.loads(Path(source).read_text())['pool_size'], pool_size)
+                self.assertEqual(json.loads(Path(source).read_text())['duration_seconds'], duration_seconds)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -546,7 +577,8 @@ class BrowseUsersRunner(unittest.TestCase):
             result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
                                     rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison,
                                     client_memory_comparison=client_memory_comparison,
-                                    single_query_comparison=single_query_comparison, pool_size=pool_size)
+                                    single_query_comparison=single_query_comparison, pool_size=pool_size,
+                                    duration_seconds=duration_seconds)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -696,6 +728,24 @@ class BrowseUsersRunner(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'INVALID_POOL_SIZE_COMPARISON'):
                 runner.execute(users=count, single_query_comparison=single, pool_size=8)
 
+    def test_three_minute_runner_bounds_duration_attempts_deadline_and_owned_job(self):
+        code, output, commands = self.scenario(users=250, single_query_comparison=True, pool_size=8,
+                                               duration_seconds=180)
+        self.assertEqual(code, 0, output)
+        self.assertIn('"job": "browse-users-250-pool8-180s"', output)
+        self.assertIn('"max_workload_attempts": 22500', output)
+        render = next(args for args in commands if args[:2] == ('patch', '--local'))
+        changes = json.loads(render[render.index('--patch') + 1])
+        self.assertIn({'op': 'replace', 'path': '/spec/activeDeadlineSeconds', 'value': 540}, changes)
+        code, output, commands = self.scenario('resource-stop', users=250, single_query_comparison=True,
+                                               pool_size=8, duration_seconds=180)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2],
+                         'browse-users-250-pool8-180s')
+        for count, size in ((100, 8), (250, 4)):
+            with self.assertRaisesRegex(ValueError, 'INVALID_DURATION_COMPARISON'):
+                runner.execute(users=count, pool_size=size, single_query_comparison=True, duration_seconds=180)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -790,6 +840,13 @@ class BrowseUsersRunner(unittest.TestCase):
         for row in eight['pools']:
             row['pool_max'] = 8
         runner.validate(eight, 'abcdef123456', 250, True, True, True, True, True, 8)
+        longer = dict(eight, attempts=22500, valid_responses=22500, status_counts={'200': 22500},
+                      elapsed_seconds=180.1, scheduled_duration_seconds=180)
+        runner.validate(longer, 'abcdef123456', 250, True, True, True, True, True, 8, 180)
+        for bad in (dict(longer, elapsed_seconds=60.1), dict(longer, scheduled_duration_seconds=60),
+                    dict(longer, attempts=22501)):
+            with self.assertRaises(ValueError):
+                runner.validate(bad, 'abcdef123456', 250, True, True, True, True, True, 8, 180)
         with self.assertRaises(ValueError):
             runner.validate(eight, 'abcdef123456', 250, True, True, True, True, True)
         with self.assertRaises(ValueError):

@@ -108,7 +108,12 @@ def metrics():
     return json.loads(base.kube('get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'))
 
 
-def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4):
+def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4, duration_seconds=60):
+    require(type(duration_seconds) is int and duration_seconds in (60, 180)
+            and (duration_seconds == 60 or (users == 250 and pool_size == 8 and single_query_comparison)),
+            'INVALID_DURATION_COMPARISON')
+    if duration_seconds == 180:
+        require(outcome.get('scheduled_duration_seconds') == 180, 'DURATION_NOT_VERIFIED')
     require(type(pool_size) is int and pool_size in (4, 8)
             and (pool_size == 4 or (users == 250 and single_query_comparison)), 'INVALID_POOL_SIZE_COMPARISON')
     if pool_size == 8:
@@ -119,7 +124,7 @@ def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=F
                 'LARGER_STAGE_REQUIRES_ALL_GUARDS')
     require(outcome.get('result') == 'BROWSE_USERS_WORKLOAD_OK' and outcome.get('run_id') == run_id
             and outcome.get('users') == users and outcome.get('users_with_requests') == users
-            and type(outcome.get('attempts')) is int and users <= outcome['attempts'] <= users * 30
+            and type(outcome.get('attempts')) is int and users <= outcome['attempts'] <= users * (duration_seconds // 2)
             and outcome.get('valid_responses') == outcome['attempts']
             and outcome.get('status_counts') == {'200': outcome['attempts']}
             and not outcome.get('errors') and not outcome.get('observer_checks')
@@ -127,7 +132,7 @@ def validate(outcome, run_id, users=50, warm_pool=False, rejection_diagnostics=F
             and outcome.get('availability_before_and_after') == 100
             and outcome.get('pool_processes_unchanged') is True
             and outcome.get('latency_slo_tested') is False
-            and 60 <= outcome.get('elapsed_seconds', 0) <= 75
+            and duration_seconds <= outcome.get('elapsed_seconds', 0) <= duration_seconds + 15
             and 1 <= outcome.get('sampled_peak_workload_http_in_flight', 0) <= users,
             'INCOMPLETE_WORKLOAD_EVIDENCE')
     if warm_pool:
@@ -194,7 +199,10 @@ def release_gate(pod, run_id, job_name=JOB):
               + json.dumps(run_id) + "); p.replace('/state/start')")
 
 
-def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4):
+def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False, single_query_comparison=False, pool_size=4, duration_seconds=60):
+    require(type(duration_seconds) is int and duration_seconds in (60, 180)
+            and (duration_seconds == 60 or (users == 250 and pool_size == 8 and single_query_comparison)),
+            'INVALID_DURATION_COMPARISON')
     require(type(pool_size) is int and pool_size in (4, 8)
             and (pool_size == 4 or (users == 250 and single_query_comparison)), 'INVALID_POOL_SIZE_COMPARISON')
     require(type(users) is int and users in (50, 100, 250), 'INVALID_STAGE')
@@ -213,7 +221,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
     require(not warm_pool or users in (100, 250), 'WARM_POOL_REQUIRES_100_USERS')
     require(not (warm_pool and diagnostic_retry), 'SELECT_ONE_COMPARISON')
     require(not rejection_diagnostics or warm_pool, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON')
-    job_name = ('browse-users-250-pool8' if pool_size == 8 else
+    job_name = ('browse-users-250-pool8-180s' if duration_seconds == 180 else
+                'browse-users-250-pool8' if pool_size == 8 else
                 f'browse-users-{users}-singlequery' if single_query_comparison else
                 'browse-users-250' if users == 250 else
                 'browse-users-100-clientmemory' if client_memory_comparison else
@@ -295,7 +304,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
                 'require_rejection_counters': rejection_diagnostics,
                 'required_queue_limit': 16 if queue_comparison else 8,
                 'client_memory_comparison': client_memory_comparison,
-                'single_query_comparison': single_query_comparison, 'pool_size': pool_size, 'targets': {
+                'single_query_comparison': single_query_comparison, 'pool_size': pool_size,
+                'duration_seconds': duration_seconds, 'targets': {
                 api: row['pods'] for api, row in before.items()}}))
             manifest = base.kube('create', 'configmap', files_name, '-n', 'trafficxx',
                                  '--from-file=probe.py=' + str(ROOT / 'scripts/check-browse-users.py'),
@@ -306,6 +316,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
         manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
                              '--type=json', '--patch', json.dumps([
                                  {'op': 'replace', 'path': '/metadata/name', 'value': job_name},
+                                 {'op': 'replace', 'path': '/spec/activeDeadlineSeconds', 'value': duration_seconds + 360},
                                  {'op': 'replace', 'path': '/spec/template/spec/containers/0/image', 'value': reference},
                                  {'op': 'replace', 'path': '/spec/template/spec/nodeName', 'value': generator_node},
                                  {'op': 'replace', 'path': '/spec/template/spec/volumes/0/configMap/name', 'value': files_name}]),
@@ -316,8 +327,8 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
             'metadata': {'ownerReferences': [{'apiVersion': 'batch/v1', 'kind': 'Job', 'name': job_name,
                           'uid': job['metadata']['uid'], 'blockOwnerDeletion': False}]}}))
         print(json.dumps({'result': 'BROWSE_USERS_STARTED', 'job': job_name, 'run_id': run_id,
-                          'users': users, 'duration_seconds': 60, 'think_seconds': 2,
-                          'max_workload_attempts': users * 30, 'runtime_image': reference,
+                          'users': users, 'duration_seconds': duration_seconds, 'think_seconds': 2,
+                          'max_workload_attempts': users * (duration_seconds // 2), 'runtime_image': reference,
                           'generator_node': generator_node,
                           'diagnostic_retry': diagnostic_retry, 'warm_pool_comparison': warm_pool, 'rejection_diagnostics': rejection_diagnostics, 'queue_comparison': queue_comparison, 'client_memory_comparison': client_memory_comparison,
                           'single_query_comparison': single_query_comparison,
@@ -327,7 +338,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
                           'inventory_writes': False,
                           'note': 'Only the selected user count; no automatic progression or scaling.'}), flush=True)
         stage = 'observe_job_and_resources'
-        deadline, running_since, generator = time.monotonic() + 450, None, None
+        deadline, running_since, generator = time.monotonic() + duration_seconds + 390, None, None
         while True:
             finished = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
             require(finished['metadata']['uid'] == job['metadata']['uid'], 'DIAGNOSTIC_JOB_REPLACED')
@@ -378,7 +389,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
         outcome = json.loads(logs.splitlines()[-1])
         require(gate_released, 'RESOURCE_GATE_NOT_RELEASED')
         validate(outcome, run_id, users, warm_pool, rejection_diagnostics, queue_comparison, client_memory_comparison,
-                 single_query_comparison, pool_size)
+                 single_query_comparison, pool_size, duration_seconds)
         require(generator is not None and set(watch.rows) == set(expected) | {generator}
                 and all(len(row['timestamps']) >= 2 for row in watch.rows.values()),
                 'INSUFFICIENT_DISTINCT_RESOURCE_SAMPLES')
@@ -392,6 +403,7 @@ def execute(*, preflight_only=False, users=50, diagnostic_retry=False, warm_pool
                           'warm_pool_comparison': warm_pool, 'rejection_diagnostics': rejection_diagnostics, 'queue_comparison': queue_comparison, 'client_memory_comparison': client_memory_comparison,
                           'single_query_comparison': single_query_comparison,
                           'pool_size': pool_size,
+                          'duration_seconds': duration_seconds,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'inventory_writes': False, 'latency_slo_tested': False,
                           'note': 'Review results before preparing any higher stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
@@ -451,7 +463,11 @@ if __name__ == '__main__':
                         help='Separate guarded 100- or 250-user Job requiring combined-query timing evidence.')
     parser.add_argument('--pool-size', type=int, choices=(4, 8), default=4,
                         help='Eight is only for the separate guarded 250-user single-query pool comparison.')
+    parser.add_argument('--duration', type=int, choices=(60, 180), default=60,
+                        help='180 seconds is only supported for the separate 250-user pool-eight comparison.')
     args = parser.parse_args()
+    if args.duration == 180 and (args.users != 250 or args.pool_size != 8 or not args.single_query_comparison):
+        parser.error('--duration 180 requires --users 250 --pool-size 8 --single-query-comparison')
     if args.pool_size == 8 and (args.users != 250 or not args.single_query_comparison):
         parser.error('--pool-size 8 requires --users 250 --single-query-comparison')
     if args.single_query_comparison:
@@ -474,4 +490,5 @@ if __name__ == '__main__':
                              diagnostic_retry=args.diagnostic_retry, warm_pool=args.warm_pool_comparison,
                              rejection_diagnostics=args.rejection_diagnostics, queue_comparison=args.queue_comparison,
                              client_memory_comparison=args.client_memory_comparison,
-                             single_query_comparison=args.single_query_comparison, pool_size=args.pool_size))
+                             single_query_comparison=args.single_query_comparison, pool_size=args.pool_size,
+                             duration_seconds=args.duration))

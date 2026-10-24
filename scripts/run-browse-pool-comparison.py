@@ -33,6 +33,17 @@ def require(condition, code):
         raise ValueError(code)
 
 
+def job_for(duration):
+    require(type(duration) is int and duration in (60, 180), 'INVALID_TRIAL_DURATION')
+    return JOB if duration == 60 else JOB + '-180s'
+
+
+def validate_state(state, duration=None):
+    saved_duration = state.get('duration_seconds', 60)
+    require(state.get('version') == 1 and state.get('job') == job_for(saved_duration)
+            and (duration is None or duration == saved_duration), 'UNEXPECTED_JOURNAL')
+
+
 def deployment():
     return json.loads(base.kube('get', 'deployment', 'browse', '-n', 'trafficxx', '-o', 'json'))
 
@@ -61,7 +72,7 @@ def policy(app, size):
     return result
 
 
-def state_for(app):
+def state_for(app, duration_seconds=60):
     indices = policy(app, 4)
     trial = deepcopy(app['spec']['template'])
     for name in ('BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX'):
@@ -69,7 +80,8 @@ def state_for(app):
     return {'version': 1, 'deployment_uid': app['metadata']['uid'],
             'image': app['spec']['template']['spec']['containers'][0]['image'],
             'baseline_hash': fingerprint(app['spec']['template']), 'trial_hash': fingerprint(trial),
-            'job': JOB, 'state': 'prepared', 'load_passed': False}
+            'job': job_for(duration_seconds), 'duration_seconds': duration_seconds,
+            'state': 'prepared', 'load_passed': False}
 
 
 def save(path, state, *, create=False):
@@ -137,7 +149,7 @@ def verify_pool(size):
 
 def patch_pool(app, state, expected, desired):
     require((expected, desired) in ((4, 8), (8, 4)), 'INVALID_POOL_POLICY_TRANSITION')
-    require(state.get('version') == 1 and state.get('job') == JOB, 'UNEXPECTED_JOURNAL')
+    validate_state(state)
     require(app['metadata']['uid'] == state['deployment_uid'], 'DEPLOYMENT_REPLACED')
     expected_hash = state['baseline_hash' if expected == 4 else 'trial_hash']
     require(fingerprint(app['spec']['template']) == expected_hash, 'DEPLOYMENT_TEMPLATE_CHANGED')
@@ -229,25 +241,28 @@ def database_metrics(start):
         return False
 
 
-def execute(*, journal=JOURNAL, restore_only=False, preflight_only=False):
+def execute(*, journal=None, restore_only=False, preflight_only=False, duration_seconds=60):
+    job_name = job_for(duration_seconds)
+    if journal is None:
+        journal = JOURNAL if duration_seconds == 60 else JOURNAL.with_name('trafficxx-browse-pool8-180s-journal.json')
     state, changed, restored, code, stage = None, False, False, 1, 'preflight'
     try:
         context()
         if restore_only:
             state = json.loads(journal.read_text())
-            require(state.get('version') == 1 and state.get('job') == JOB, 'UNEXPECTED_JOURNAL')
+            validate_state(state, duration_seconds)
             restore(journal, state)
             return 0
         require(not journal.exists(), 'INSPECT_EXISTING_POOL_COMPARISON_JOURNAL')
         no_active_load()
-        require(not base.kube('get', 'job', JOB, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
+        require(not base.kube('get', 'job', job_name, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
                 'INSPECT_EXISTING_POOL_COMPARISON_JOB')
         hpas = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
         require(not any(row['spec']['scaleTargetRef'].get('name') == 'browse' for row in hpas), 'BROWSE_HPA_PRESENT')
         flow = users.load('check-browse-concurrency')
         before = {api: base.snapshot(flow, api) for api in ('browse', 'booking')}
         app = deployment()
-        state = state_for(app)
+        state = state_for(app, duration_seconds)
         health()
         verify_pool(4)
         expected = {row['pod']: {'container': 'browse', 'cpu': .5, 'memory': 256} for row in before['browse']['pods']}
@@ -256,6 +271,7 @@ def execute(*, journal=JOURNAL, restore_only=False, preflight_only=False):
                 and row['memory_limit_fraction'] < .85 for row in values.values()), 'BASELINE_RESOURCE_PRESSURE')
         if preflight_only:
             print(json.dumps({'result': 'BROWSE_POOL8_PREFLIGHT_OK', 'inventory_writes': False,
+                              'duration_seconds': duration_seconds, 'job': job_name,
                               'journal_created': False, 'pool_policy_changed': False}))
             return 0
         require({api: base.snapshot(flow, api) for api in before} == before, 'SERVING_PODS_CHANGED')
@@ -274,7 +290,8 @@ def execute(*, journal=JOURNAL, restore_only=False, preflight_only=False):
         stage = 'pool8_workload'
         state['load_runner_start_utc'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         save(journal, state)
-        code = users.execute(users=250, single_query_comparison=True, pool_size=8)
+        code = users.execute(users=250, single_query_comparison=True, pool_size=8,
+                             duration_seconds=duration_seconds)
         state['load_passed'] = code == 0
         state['database_metric_samples_available'] = database_metrics(state['load_runner_start_utc'])
         save(journal, state)
@@ -292,12 +309,14 @@ def execute(*, journal=JOURNAL, restore_only=False, preflight_only=False):
                 print(json.dumps({'result': 'BROWSE_POOL4_RESTORE_FAILED', 'error_type': type(error).__name__,
                                   'check': str(error) if type(error) is ValueError else None,
                                   'journal': str(journal),
-                                  'recovery': 'Keep journal; after diagnostic loads stop, rerun with --restore. '
+                                  'recovery': 'Keep journal; after diagnostic loads stop, rerun with --restore --duration '
+                                              + str(duration_seconds) + '. '
                                               'Template/identity conflicts require inspection; they are not overwritten.'}), flush=True)
                 code = 1
     if changed:
         print(json.dumps({'result': 'BROWSE_POOL8_COMPARISON_OK' if code == 0 and restored else 'BROWSE_POOL8_COMPARISON_NOT_PASSED',
                           'load_passed': state['load_passed'], 'baseline_pool_restored': restored,
+                          'duration_seconds': duration_seconds, 'job': job_name,
                           'database_metric_samples_available': state.get('database_metric_samples_available', False),
                           'journal': str(journal), 'inventory_writes': False}), flush=True)
     return code
@@ -308,5 +327,7 @@ if __name__ == '__main__':
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--preflight-only', action='store_true')
     modes.add_argument('--restore', action='store_true')
+    parser.add_argument('--duration', type=int, choices=(60, 180), default=60)
     args = parser.parse_args()
-    raise SystemExit(execute(restore_only=args.restore, preflight_only=args.preflight_only))
+    raise SystemExit(execute(restore_only=args.restore, preflight_only=args.preflight_only,
+                             duration_seconds=args.duration))

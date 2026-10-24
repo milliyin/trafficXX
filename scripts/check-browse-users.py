@@ -1,4 +1,4 @@
-"""In-cluster read-only stage: 50, 100 or 250 paced users for 60 seconds, no retries."""
+"""Bounded paced reads: 60 seconds, or a scoped 180-second pool-eight trial; no retries."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -115,12 +115,17 @@ def generator_memory(path=Path('/proc/self/status')):
         return None
 
 
-def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
+def run(config, http=read.read_json, service=read.read_url, *, duration=None,
         think=THINK, users=None):
     targets = read.targets_from(config)['browse']
     configured_users = config.get('users', USERS)
     users = configured_users if users is None else users
     pool_size = config.get('pool_size', 4)
+    scheduled_duration = config.get('duration_seconds', DURATION)
+    read.require(type(scheduled_duration) is int and scheduled_duration in (60, 180)
+                 and (scheduled_duration == 60 or (users == 250 and pool_size == 8
+                      and config.get('single_query_comparison') is True)), 'INVALID_DURATION_COMPARISON')
+    duration = scheduled_duration if duration is None else duration
     read.require(type(pool_size) is int and pool_size in (4, 8)
                  and (pool_size == 4 or (users == 250 and config.get('single_query_comparison') is True)),
                  'INVALID_POOL_SIZE_COMPARISON')
@@ -140,7 +145,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                      and config.get('require_warm_pool') is True
                      and config.get('require_rejection_counters') is True
                      and config.get('required_queue_limit') == 16, 'INVALID_SINGLE_QUERY_COMPARISON')
-    max_attempts = users * 30
+    max_attempts = users * (scheduled_duration // THINK)
     customer = 'lab-browse-users-' + config['run_id']
     for target in targets:
         for route in ('general', 'seated'):
@@ -210,7 +215,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         # Spread initial requests across one think interval, avoiding a cold burst.
         if stop.wait(think * index / users):
             return
-        for iteration in range(min(30, max_attempts // users)):
+        for iteration in range(max_attempts // users):
             if stop.is_set() or time.monotonic() >= deadline:
                 return
             route = ('general', 'seated')[(index + iteration) % 2]
@@ -265,7 +270,8 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                      'sampled_max_rss_mib': max((row['rss_mib'] for row in memory_rows), default=None),
                      'sampled_max_threads': max((row['threads'] for row in memory_rows), default=None)}
     errors = Counter(row[4] for row in results if row[4])
-    summary = {'users': users, 'users_with_requests': len({row[0] for row in results}),
+    summary = {'users': users, 'scheduled_duration_seconds': scheduled_duration,
+               'users_with_requests': len({row[0] for row in results}),
                'attempts': len(results), 'valid_responses': len(results) - sum(errors.values()),
                'errors': dict(errors), 'status_counts': dict(Counter(str(row[2]) for row in results)),
                'routes': dict(Counter(row[3] for row in results)),

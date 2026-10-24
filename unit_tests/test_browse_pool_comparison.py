@@ -51,7 +51,7 @@ class PoolComparison(unittest.TestCase):
         with self.assertRaises(ValueError):
             trial.patch_pool(original, state, 4, 16)
 
-    def scenario(self, fault=None, preflight=False, restore_only=False):
+    def scenario(self, fault=None, preflight=False, restore_only=False, duration_seconds=60):
         live, commands, health_calls = app(), [], []
         active = [fault == 'overlap']
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -83,7 +83,8 @@ class PoolComparison(unittest.TestCase):
             if fault == 'trial-health' and len(health_calls) == 2:
                 raise ValueError('HEALTH_FAILED')
         def workload(**kwargs):
-            self.assertEqual(kwargs, {'users': 250, 'single_query_comparison': True, 'pool_size': 8})
+            self.assertEqual(kwargs, {'users': 250, 'single_query_comparison': True, 'pool_size': 8,
+                                      'duration_seconds': duration_seconds})
             trial.policy(live, 8)
             if fault == 'interrupt':
                 raise KeyboardInterrupt()
@@ -100,7 +101,7 @@ class PoolComparison(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             journal = Path(folder) / 'journal.json'
             if restore_only:
-                trial.save(journal, trial.state_for(live), create=True)
+                trial.save(journal, trial.state_for(live, duration_seconds), create=True)
                 if fault == 'resume-eight':
                     live['spec']['template']['spec']['containers'][0]['env'][0]['value'] = '8'
                     live['spec']['template']['spec']['containers'][0]['env'][1]['value'] = '8'
@@ -115,7 +116,8 @@ class PoolComparison(unittest.TestCase):
                     patch.object(trial.users, 'execute', side_effect=workload) as load, \
                     patch.object(trial.time, 'monotonic', side_effect=range(0, 10000, 100)), \
                     redirect_stdout(output):
-                code = trial.execute(journal=journal, preflight_only=preflight, restore_only=restore_only)
+                code = trial.execute(journal=journal, preflight_only=preflight, restore_only=restore_only,
+                                     duration_seconds=duration_seconds)
             saved = json.loads(journal.read_text()) if journal.exists() else None
             return code, output.getvalue(), live, saved, commands, load.call_count
 
@@ -173,3 +175,24 @@ class PoolComparison(unittest.TestCase):
         self.assertEqual(saved['state'], 'restored')
         self.assertEqual(calls, 0)
         self.assertEqual(sum(args[:2] == ('patch', 'deployment') for args in commands), 1)
+
+    def test_longer_trial_has_distinct_identity_and_resumes_only_matching_journal(self):
+        self.assertNotEqual(trial.job_for(180), trial.job_for(60))
+        state = trial.state_for(app(), 180)
+        self.assertEqual(state['job'], 'browse-users-250-pool8-180s')
+        with self.assertRaises(ValueError):
+            trial.validate_state(state, 60)
+        legacy = trial.state_for(app())
+        legacy.pop('duration_seconds')
+        trial.validate_state(legacy, 60)
+        for preflight in (True, False):
+            code, output, live, saved, commands, calls = self.scenario(preflight=preflight, duration_seconds=180)
+            self.assertEqual(code, 0, output)
+            self.assertIn('"duration_seconds": 180', output)
+            trial.policy(live, 4)
+            if not preflight:
+                self.assertEqual(saved['job'], 'browse-users-250-pool8-180s')
+        code, output, live, saved, commands, calls = self.scenario('resume-eight', restore_only=True, duration_seconds=180)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(saved['state'], 'restored')
+        trial.policy(live, 4)

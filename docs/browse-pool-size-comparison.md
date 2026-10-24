@@ -2,6 +2,9 @@
 
 Status: live 250-user trial passed; four-connection baseline restored and health verified.
 
+A separate three-minute stability mode is now prepared, with no live result
+yet. Its commands and recovery journal are described at the end of this guide.
+
 The user supplied BROWSE_POOL8_PREFLIGHT_OK with journal_created false and
 pool_policy_changed false. Both serving pods confirmed minimum/maximum four
 and queue limit 16. Demo availability remained 100 per event and Operations
@@ -194,3 +197,62 @@ prevent isolating every causal factor. It is not 250 simultaneous requests,
 a reservation-write test, a maximum-capacity measurement or a production SLO.
 Longer/repeated trials and a decision on retaining eight should precede claims
 about sustained operation or higher user counts. No 500-user stage ran.
+
+## Prepared three-minute stability mode
+
+This repeats 250 paced users with the same eight connections per pod for
+180 seconds instead of 60. It keeps two-second pauses, queue limit 16, two
+steady replicas, single-query SQL, transaction/checkout behavior, generator
+one CPU/256 MiB and all error/latency/waiting/resource stop conditions. It is
+not an autoscaling test and does not permanently retain eight connections.
+
+Run only the preflight first:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/run-browse-pool-comparison.py --duration 180 --preflight-only
+```
+
+The expected BROWSE_POOL8_PREFLIGHT_OK includes duration_seconds 180 and Job
+`browse-users-250-pool8-180s`, with journal_created and pool_policy_changed
+both false. It still requires the currently restored four-connection baseline.
+No image rebuild is needed.
+
+After reviewing preflight, the full command is:
+
+```bash
+python3 scripts/run-browse-pool-comparison.py --duration 180
+```
+
+This uses a separate recovery journal:
+`~/trafficxx-browse-pool8-180s-journal.json`. It preserves the original one-minute
+Job and journal. Its workload is capped at **22,500 GETs** (90 per user), with
+bounded in-memory receipt storage. Existing resource limits are not increased.
+The diagnostic Job deadline becomes 540 seconds and the parent's observation
+deadline 570 seconds, allowing for unchanged startup gates and the longer
+workload. The resource-gate timeout remains 240 seconds. These are process
+lifetime bounds, not relaxed per-request or resource stop thresholds.
+
+Final validation requires the configured 180-second duration, measured elapsed
+180-195 seconds, all 250 participants, matching successful responses and the
+existing pool/query/resource/stability evidence. A one-minute result cannot
+pass as a three-minute result. Database metrics still include generator warmup
+and are subject to one-minute aggregation/publication delay.
+
+The runner attempts restoration to four on completion or handled failure,
+verifying both actual pool policies and health. Keep Cloud Shell running until
+the final restoration result; allow roughly 15-20 minutes for rollouts,
+sampling, workload and recovery. If interrupted hard, retain the three-minute
+journal and, after diagnostic loads are terminal, use the matching command:
+
+```bash
+python3 scripts/run-browse-pool-comparison.py --duration 180 --restore
+```
+
+The original one-minute restore command continues to use its original journal.
+Do not remove either journal or reset a Job to bypass an existing-run guard.
+The longer mode accepts only the explicit 250-user, eight-connection,
+single-query configuration; it is not a general arbitrary-duration load tool.
+No live preflight, temporary rollout or workload has been supplied for this mode
+yet. The original token-renewal Job remains a separate pending verification.
