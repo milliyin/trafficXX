@@ -670,3 +670,24 @@ post-run serving-pod stability verdict was produced. Do not delete/rerun the
 fixed comparison blindly or progress to 250 users. A future experiment should
 review bounded waiting capacity and the generator while preserving an explicit
 request latency stop; no further tuning or new run has been applied yet.
+
+
+### Recovery confirmed after the warm comparison
+
+The user confirmed browse-users-100-warm terminal Failed (5m55s). Fresh demo
+checks reported alive/ready, two events and 100 available units each. Operations
+reported processed 72, zero pending/outstanding work and ages, zero processing
+failures, no active alerts and unchanged historical publication failures four
+and dead-letter audit count one. Consumer/publisher heartbeats were present
+without errors (5.252435s and 1.076952s). Native broker counts were not measured
+by this check. This completes the post-warm-comparison health checkpoint.
+
+The current measured boundary remains: the bounded 50-user workload passed;
+the tested 100-user workload did not meet its zero-error stop policy, even with
+a warm four-connection pool. It is not a precise maximum user count or a
+production SLO. Do not infer an ongoing outage from the terminal Failed test Job.
+No new load run, pool/queue tuning or resource change is started by this result.
+Before further tuning, the useful next preparation is per-exception pool
+rejection metrics (queue-full versus timeout/closed), alongside a review of the
+load generator's observed memory overhead. Another identical retry alone would
+not resolve those diagnostic gaps. The original renewal Job stays unchanged.
