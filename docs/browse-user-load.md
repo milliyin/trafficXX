@@ -371,3 +371,30 @@ No cause is proved by that line alone. Read both existing replicas' numeric
 /internal/database-pool counters next; this endpoint does not borrow SQL
 connections. Lifetime counters can corroborate pool pressure but cannot by
 themselves isolate a single request or establish the precise exception.
+
+
+### Pool counters after recovery
+
+The user read both existing replicas' /internal/database-pool endpoints:
+
+| Counter | g649w | k6fdk (503 replica) |
+| --- | ---: | ---: |
+| Pool size / available | 2 / 2 | 2 / 2 |
+| Requests waiting | 0 | 0 |
+| Requests total | 9092 | 9046 |
+| Request errors | 0 | 1 |
+| Connection attempts | 58 | 57 |
+| Connection errors / lost / bad returns | 0 / 0 / 0 | 0 / 0 / 0 |
+
+Both retained their configured minimum one and maximum four. Instance IDs were
+931a3f5c25ea49198ba0c3d41a1715b6 (g649w) and
+18100244dbdc4446a0b841942360ec86 (k6fdk).
+The sole cumulative request error is on the same replica as the observed 503.
+This supports pool acquisition pressure as the likely explanation; it does
+not independently distinguish a full waiting queue from acquisition timeout or
+identify the original exception. Zero connection-error/lost/bad-return counters
+show no recorded failures of those types in these processes. Current idle
+capacity and no waiters confirm pool recovery at observation time, not unused
+capacity during the initial burst. No pool size or wait-limit tuning has been
+applied. Before a controlled retry, preserve the allowlisted service error code
+and immediate failure-time pool counters so the next diagnosis is specific.
