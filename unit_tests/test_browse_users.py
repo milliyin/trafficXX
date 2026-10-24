@@ -309,11 +309,14 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False, client_memory_comparison=False):
         commands, polls = [], [0]
+        if client_memory_comparison:
+            queue_comparison = True
         if queue_comparison:
             warm_pool = rejection_diagnostics = True
-        job_name = ('browse-users-100-queue16' if queue_comparison else
+        job_name = ('browse-users-100-clientmemory' if client_memory_comparison else
+                    'browse-users-100-queue16' if queue_comparison else
                     'browse-users-100-rejections' if rejection_diagnostics else
                     'browse-users-100-warm' if warm_pool else
                     'browse-users-100-diagnostic' if diagnostic_retry else
@@ -367,6 +370,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 self.assertEqual(json.loads(Path(source).read_text())['require_warm_pool'], warm_pool)
                 self.assertEqual(json.loads(Path(source).read_text())['require_rejection_counters'], rejection_diagnostics)
                 self.assertEqual(json.loads(Path(source).read_text())['required_queue_limit'], 16 if queue_comparison else 8)
+                self.assertEqual(json.loads(Path(source).read_text())['client_memory_comparison'], client_memory_comparison)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -404,7 +408,8 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
             result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
-                                    rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison)
+                                    rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison,
+                                    client_memory_comparison=client_memory_comparison)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -482,6 +487,18 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'QUEUE_COMPARISON_REQUIRES_100_USERS'):
             runner.execute(users=50, queue_comparison=True)
 
+    def test_client_memory_comparison_has_own_job_and_keeps_existing_pool_policy(self):
+        code, output, commands = self.scenario(users=100, client_memory_comparison=True)
+        self.assertEqual(code, 0)
+        self.assertIn('"job": "browse-users-100-clientmemory"', output)
+        self.assertIn('"queue_comparison": true', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-clientmemory-pod' in args for args in commands))
+        code, output, commands = self.scenario('resource-stop', users=100, client_memory_comparison=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2], 'browse-users-100-clientmemory')
+        with self.assertRaisesRegex(ValueError, 'QUEUE_COMPARISON_REQUIRES_100_USERS'):
+            runner.execute(users=50, client_memory_comparison=True)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -546,6 +563,14 @@ class BrowseUsersRunner(unittest.TestCase):
         for row in queue['pools']:
             row.update(pool_waiting_limit=16, sampled_peak_waiting=12)
         runner.validate(queue, 'abcdef123456', 100, True, True, True)
+        with self.assertRaisesRegex(ValueError, 'CLIENT_POLICY_NOT_VERIFIED'):
+            runner.validate(queue, 'abcdef123456', 100, True, True, True, True)
+        queue['http_client_policy'] = 'thread-local-http-only-fresh-connections-v1'
+        with self.assertRaisesRegex(ValueError, 'CLIENT_MEMORY_EVIDENCE_MISSING'):
+            runner.validate(queue, 'abcdef123456', 100, True, True, True, True)
+        queue['generator_memory'] = {'source': '/proc/self/status', 'samples': 3,
+                                     'sampled_max_rss_mib': 50, 'sampled_max_threads': 102}
+        runner.validate(queue, 'abcdef123456', 100, True, True, True, True)
         with self.assertRaises(ValueError):
             runner.validate(queue, 'abcdef123456', 100, True, True)
         queue['verified_queue_limit'] = 8

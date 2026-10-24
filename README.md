@@ -307,7 +307,10 @@ Next:
    production latency SLO, sustained capacity or readiness for higher stages.
    Generator process RSS sampled 241.094 MiB and Kubernetes memory 228.059 MiB
    against its 256 MiB limit. Post-run health checks and generator overhead
-   review are next before preparing a larger load.
+   review are next before preparing a larger load. Post-test health checks
+   passed. A mounted-script --users 100 --client-memory-comparison is prepared
+   to remove repeated default HTTP/TLS-handler construction; no image rebuild
+   is needed, and a live Linux memory improvement remains unverified.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

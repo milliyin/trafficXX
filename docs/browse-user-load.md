@@ -1008,3 +1008,81 @@ reduce generator overhead before preparing a separately reviewed larger stage.
 No new full SQL/broker audit is implied by this read-only success, and no
 post-success Operations result has yet been supplied. The original renewal
 Job remains untouched and its final expiry-boundary verdict is still separate.
+
+
+## Post-100 health confirmed; HTTP client memory comparison prepared
+
+The user supplied fresh BROWSE_DEMO_HTTP_OK with alive/ready and 100 available
+tickets for each event. OPERATIONS_HTTP_OK confirmed processed 72, no pending
+or outstanding work, zero processing failures and no active alerts. Historical
+publication failures four and dead-letter audit count one stayed unchanged;
+consumer/publisher heartbeats were present without errors (3.385009s/0.172123s).
+This completes post-success application health checks; it is not a fresh native
+broker-depth or full SQL audit.
+
+Code review found that each load request constructed a default urllib opener.
+[Python 3.12's HTTPSHandler constructs a TLS context at initialization](https://github.com/python/cpython/blob/v3.12.15/Lib/urllib/request.py#L1275),
+and build_opener includes that default handler even for the probe's internal
+HTTP requests. The local Windows Python 3.10 handler behaves differently, so
+local memory figures cannot reproduce or establish the Linux/Python 3.12 cause
+of the earlier 241 MiB process peak. Repeated handler/TLS-context construction
+is avoidable work; its contribution to actual live RSS remains to be measured.
+
+The shared read client now explicitly constructs only HTTP handlers, with an
+empty proxy configuration, the existing redirect refusal, numeric/status/body
+handling and no cookie/auth/cache/file/FTP/HTTPS handlers. Non-HTTP schemes fail
+before network access. An opener is retained only within its own worker thread.
+Each call still creates a fresh Request and HTTP connection, sends the customer
+header for that call, reads at most 64 KiB and closes the response. This is not
+HTTP keep-alive, response caching, a database change or a TLS-verification
+exception; the fixed workload targets were already internal HTTP endpoints.
+Application HTTPS access and the original renewal Job are unaffected.
+
+A bounded local comparison used separate fresh client processes, 100 users and
+600 loopback reads per run. Default per-request construction built 600 openers;
+the new source constructed 100 HTTP-only openers. The Windows working-set peaks
+were about 28.6 versus 29.0 MiB, respectively: no measured local RSS reduction.
+That platform/runtime differs from the Azure job; do not present this as a
+memory fix already verified in Linux. A handler-reuse-only intermediate also
+failed to show a Windows memory benefit and was replaced by the explicit
+HTTP-only design. The intended live comparison keeps the same workloads and
+uses the existing in-process/Kubernetes memory observations.
+
+The explicit new command is:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 100 --client-memory-comparison
+```
+
+It selects the new fixed Job browse-users-100-clientmemory and implies the
+existing warm, rejection-counter and queue-16 guards. The existing deployed
+cad image is reused as the runtime; the new stdlib scripts are mounted from a
+per-run ConfigMap, so no image build, application rollout or infrastructure
+change is required. All prior Jobs are preserved. Active-load/existing-Job,
+identity/ownership/stability and original resource/error/wait/latency gates
+remain. The workload is still 100 users for one minute, two-second pauses and
+at most 3,000 GETs, with generator one CPU/256 MiB, four database connections and
+16 waiting slots per Browse pod. No resource limit or stop threshold is relaxed.
+
+The probe requires the new helper policy before user traffic and reports
+http_client_policy=thread-local-http-only-fresh-connections-v1. The final parent
+verdict requires that policy and actual Linux RSS/thread samples as well as
+all existing successful workload/Job/pod evidence. A successful workload does
+not automatically prove memory reduction: compare its observed memory to the
+prior same-size trial before preparing a higher user stage. Keep Cloud Shell
+open for up to seven minutes and retain complete output on pass or failure.
+No live client-memory-comparison result has been supplied yet.
+
+All 473 offline methods passed, including per-thread isolation, fresh request
+headers, response closure on success/oversize, HTTP-only/no-TLS construction,
+unsupported-protocol refusal, selected Job/config/UID-scoped stop and required
+client/memory evidence. Actual shortened loopback HTTP tests exercised all
+50 users (75 valid reads), 100 users (148), and warm queue-16 100 users (149).
+HTTP/1.1 requests used Connection: close; a 302 was not followed. The server
+stopped. Isolated native Job renders confirmed unchanged budgets/security.
+These are correctness checks, not Azure SQL, memory or latency SLO proof.
+Docker remained stopped and no local Azure login or credential file was used.

@@ -9,8 +9,10 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
+HTTP_CLIENT_POLICY = 'thread-local-http-only-fresh-connections-v1'
 PERIOD = 0.5
 DURATION = 30
 REJECTION_KEYS = ('rejections_queue_full', 'rejections_timeout', 'rejections_closed')
@@ -35,9 +37,32 @@ def read_json(target, path, customer):
     return read_url('http://' + target['ip'] + ':8000' + path, customer)
 
 
+_client_state = threading.local()
+
+
+def build_http_opener():
+    # Do not use build_opener: Python 3.12 constructs its default HTTPS handler
+    # and TLS context even for HTTP-only calls. This probe has only HTTP targets.
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler({}), urllib.request.UnknownHandler(),
+                    urllib.request.HTTPHandler(), urllib.request.HTTPDefaultErrorHandler(),
+                    NoRedirect(), urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
+def http_opener():
+    # Handler construction is reused only within one thread. urllib still opens
+    # and closes a fresh HTTP connection for every request. No cookie/auth handler.
+    if not hasattr(_client_state, 'opener'):
+        _client_state.opener = build_http_opener()
+    return _client_state.opener
+
+
 def read_url(url, customer):
-    # Fresh HTTP connection per call; these timings include that client cost.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    # Fresh Request and HTTP connection per call; no application-response cache.
+    require(urllib.parse.urlsplit(url).scheme == 'http', 'HTTP_ONLY_READ_CLIENT')
+    opener = http_opener()
     request = urllib.request.Request(url,
                                      headers={'X-Customer-Id': customer}, method='GET')
     try:

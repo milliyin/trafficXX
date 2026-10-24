@@ -86,6 +86,9 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     users = configured_users if users is None else users
     read.require(type(users) is int and users in (50, 100) and users == configured_users
                  and duration > 0 and think > 0, 'INVALID_STAGE')
+    if config.get('client_memory_comparison'):
+        read.require(getattr(read, 'HTTP_CLIENT_POLICY', None) ==
+                     'thread-local-http-only-fresh-connections-v1', 'UPDATE_READ_CLIENT_FIRST')
     max_attempts = users * 30
     customer = 'lab-browse-users-' + config['run_id']
     for target in targets:
@@ -251,6 +254,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             'rejection_counters_verified': bool(config.get('require_rejection_counters')),
             'verified_queue_limit': required_queue,
             'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
+            'http_client_policy': getattr(read, 'HTTP_CLIENT_POLICY', None),
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
 

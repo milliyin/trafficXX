@@ -118,15 +118,74 @@ class ReadLoad(unittest.TestCase):
         opener = MagicMock()
         opener.open.side_effect = urllib.error.HTTPError('http://test', 404, 'missing', {},
             io.BytesIO(b'{"detail":{"code":"RESERVATION_NOT_FOUND"}}'))
-        with patch.object(probe.urllib.request, 'build_opener', return_value=opener) as build:
+        with patch.object(probe, '_client_state', threading.local()), \
+                patch.object(probe, 'build_http_opener', return_value=opener) as build:
             status, body = probe.read_json({'ip': '10.244.0.1'}, '/reservations/missing', 'lab-customer')
         self.assertEqual(status, 404)
         self.assertEqual(body, {'detail': {'code': 'RESERVATION_NOT_FOUND'}})
         request = opener.open.call_args.args[0]
         self.assertEqual(request.get_method(), 'GET')
         self.assertIsNone(request.data)
-        self.assertIsInstance(build.call_args.args[1], probe.NoRedirect)
-        self.assertEqual(build.call_args.args[0].proxies, {})
+        build.assert_called_once()
+
+
+    def test_http_only_opener_does_not_construct_tls_or_enable_extra_protocols(self):
+        with patch.object(probe.urllib.request, 'HTTPSHandler', side_effect=AssertionError('TLS_NOT_NEEDED')), \
+                patch.object(probe.urllib.request, 'getproxies', side_effect=AssertionError('NO_ENV_PROXY')):
+            opener = probe.build_http_opener()
+        self.assertTrue(any(isinstance(handler, probe.NoRedirect) for handler in opener.handlers))
+        self.assertTrue(any(isinstance(handler, probe.urllib.request.HTTPHandler) for handler in opener.handlers))
+        self.assertFalse(hasattr(opener, 'https_open'))
+        for handler in opener.handlers:
+            self.assertFalse(isinstance(handler, (probe.urllib.request.FileHandler, probe.urllib.request.FTPHandler,
+                                                  probe.urllib.request.HTTPCookieProcessor)))
+        with patch.object(probe, 'http_opener') as client:
+            for url in ('https://example.invalid', 'file:///test', 'ftp://example.invalid', 'data:text/plain,test'):
+                with self.assertRaisesRegex(probe.CheckFailed, 'HTTP_ONLY_READ_CLIENT'):
+                    probe.read_url(url, 'customer')
+            client.assert_not_called()
+
+    def test_http_handlers_are_reused_within_thread_without_reusing_request_headers(self):
+        opener = MagicMock()
+        response = opener.open.return_value
+        response.code, response.read.return_value = 200, b'{"available": 100}'
+        with patch.object(probe, '_client_state', threading.local()), \
+                patch.object(probe, 'build_http_opener', return_value=opener) as build:
+            first = probe.read_url('http://127.0.0.1/one', 'customer-one')
+            second = probe.read_url('http://127.0.0.1/two', 'customer-two')
+        self.assertEqual(first, second)
+        build.assert_called_once()
+        requests = [call.args[0] for call in opener.open.call_args_list]
+        self.assertIsNot(requests[0], requests[1])
+        self.assertEqual(requests[0].get_header('X-customer-id'), 'customer-one')
+        self.assertEqual(requests[1].get_header('X-customer-id'), 'customer-two')
+        self.assertEqual(opener.open.return_value.__exit__.call_count, 2)
+        self.assertTrue(all(request.data is None and request.get_method() == 'GET' for request in requests))
+
+    def test_http_handler_instances_are_not_shared_between_worker_threads(self):
+        barrier = threading.Barrier(2)
+        def worker(index):
+            first = probe.http_opener()
+            barrier.wait(timeout=5)
+            return first, probe.http_opener()
+        import concurrent.futures
+        with patch.object(probe, '_client_state', threading.local()), \
+                patch.object(probe, 'build_http_opener', side_effect=lambda *args: object()) as build:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                values = list(executor.map(worker, range(2)))
+        self.assertIs(values[0][0], values[0][1])
+        self.assertIs(values[1][0], values[1][1])
+        self.assertIsNot(values[0][0], values[1][0])
+        self.assertEqual(build.call_count, 2)
+
+    def test_reused_handler_closes_oversized_response_and_keeps_size_guard(self):
+        opener = MagicMock()
+        opener.open.return_value.read.return_value = b'x' * 65537
+        with patch.object(probe, '_client_state', threading.local()), \
+                patch.object(probe, 'build_http_opener', return_value=opener), \
+                self.assertRaisesRegex(probe.CheckFailed, 'RESPONSE_TOO_LARGE'):
+            probe.read_url('http://127.0.0.1/test', 'customer')
+        opener.open.return_value.__exit__.assert_called_once()
 
 
 class ReadLoadRunner(unittest.TestCase):
