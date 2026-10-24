@@ -67,7 +67,8 @@ or establish sustained production capacity.
   overhead and bounded pool concurrency; it does not establish saturation
   during the subsecond failures. A controlled four-versus-eight connection
   comparison is [prepared with a recovery journal and restoration to four](browse-pool-size-comparison.md).
-  Its live preflight and workload output are pending; no capacity change has run.
+  Its live preflight passed with both pools still at four and no journal or
+  policy change. The temporary eight-connection trial remains pending.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

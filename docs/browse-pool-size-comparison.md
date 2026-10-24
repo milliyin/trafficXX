@@ -1,6 +1,13 @@
 # Temporary Browse pool size comparison
 
-Status: prepared, with no live preflight or load result yet.
+Status: live preflight passed; no eight-connection rollout or load result yet.
+
+The user supplied BROWSE_POOL8_PREFLIGHT_OK with journal_created false and
+pool_policy_changed false. Both serving pods confirmed minimum/maximum four
+and queue limit 16. Demo availability remained 100 per event and Operations
+reported processed 72, zero backlog or processing failures, no active alerts
+and healthy worker heartbeats. The full trial source also passed all GitHub
+CI jobs in [run 40115229776](https://github.com/milliyin/trafficXX/actions/runs/40115229776).
 
 The latest [capacity observation](browse-user-load.md#live-read-only-capacity-observation-passed)
 found low recent database resource use and cheap cached query execution, with
