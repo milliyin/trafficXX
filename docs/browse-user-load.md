@@ -1535,8 +1535,13 @@ path, so the earlier 100-user phase means cannot substitute for its profile.
 
 The parent reported DIAGNOSTIC_JOB_FAILED and requested a UID-scoped stop.
 Serving replicas and configuration were not changed, and no inventory writes
-were generated. Native Job terminal state and fresh post-failure demo/Operations
-health remain next. Preserve both failed 250-user Jobs; no larger run, automatic
+were generated. The user subsequently confirmed the Job Failed (0/1, duration
+3m20s), demo alive/ready with availability 100 per event, and Operations healthy:
+processed 72, zero pending/outstanding work, zero processing failures, no active
+alerts, healthy consumer/publisher heartbeats (3.707856s/0.958368s), and unchanged
+historical publication failures four and dead-letter audit one. This completes
+the recovery checkpoint; native broker depth was not measured by these checks.
+Preserve both failed 250-user Jobs; no larger run, automatic
 retry, queue/connection increase, checkout-check removal or replica scaling
 has been performed. The 100-user improvement remains valid at its measured
 scope; it did not establish recovery at the 250-user workload.
