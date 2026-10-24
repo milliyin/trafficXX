@@ -1414,4 +1414,56 @@ error/rejection deltas, queue pressure and generator memory with the earlier
 
 Keep Cloud Shell open for up to eight minutes. Retain complete output and run
 the demo/Operations health scripts afterwards, on success or failure. There
-is no live result for this mode yet and no guarantee that 250 users will pass.
+is no guarantee that 250 users will pass. The first live result follows.
+
+## Live 100-user single-query comparison passed
+
+Run `e730b8fbc5b7`, Job `browse-users-100-singlequery`, passed both workload
+and final BROWSE_USERS_100_OK checks on the deployed caf image. All 100 users
+participated: 2,804 reads returned HTTP 200 with zero errors over 60.100 seconds
+(46.655 requests/s). Both routes received 1,402 requests. Observed HTTP
+concurrency peaked at 17 and no observer stop condition occurred.
+
+| Observation | Earlier client-memory run | Single-query run |
+| --- | ---: | ---: |
+| Successful reads | 2,745 | 2,804 |
+| Latency p50 | 180.784 ms | 137.788 ms |
+| Latency p95 | 294.158 ms | 201.078 ms |
+| Latency p99 | 360.832 ms | 282.238 ms |
+| Maximum latency | 463.075 ms | 397.346 ms |
+| Sampled peak generator process RSS | 33.250 MiB | 33.164 MiB |
+
+Pool minimum/maximum four and waiting limit 16 were verified. Both serving
+processes and pods stayed unchanged during this run, made zero new connection
+attempts, and recorded no increase in error or rejection counters. Inventory
+remained 100 per event and no inventory writes occurred. Sampled pool waiting
+peaked at six on mht5h and one on p85p4; sampled size peaked at four on both.
+Thus a lower response latency does not imply waiting disappeared or became
+uniformly lower on every pod.
+
+| Mean server-process client timing | mht5h | p85p4 |
+| --- | ---: | ---: |
+| Acquisition | 42.018 ms (1,418 observations) | 27.822 ms (1,398 observations) |
+| Body | 56.849 ms (1,418) | 48.500 ms (1,399) |
+| Return | 28.328 ms (1,418) | 24.158 ms (1,399) |
+| Combined availability query | 56.826 ms (1,412) | 48.485 ms (1,392) |
+
+The single-query policy and unchanged legacy query counters were verified.
+Phase populations differ because background readiness and in-flight requests
+can cross snapshot boundaries. Acquisition includes checkout checks and queue
+waiting; queries include network/fetch time. These averages are not per-request
+percentiles or isolated database execution times.
+
+The generator retained its one CPU/256 MiB limit, sampled 62 process-memory
+observations, peaked at 102 threads, and ended at 30.168 MiB RSS. Kubernetes
+sampled generator maxima were 0.031810 CPU cores and 25.383 MiB over three
+distinct samples. App CPU maxima were 0.037407/0.028064 cores and memory
+60.004/60.449 MiB over four samples each. These are sampled/windowed readings,
+not precise peaks or interchangeable process/cgroup measures.
+
+This bounded result supports the single-query change at the tested workload;
+image, pod/node placement and sample differences prevent an isolated causal
+performance claim. It establishes no sustained capacity, latency SLO or
+250-user pass. Pre-run demo/Operations health passed (processed 72, no backlog
+or active alerts; historical publication failures four and audit count one).
+Fresh post-run health checks remain next before a separate larger-stage review.

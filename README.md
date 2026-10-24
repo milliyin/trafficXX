@@ -320,7 +320,11 @@ Next:
    it forces the verified client and pool policy, keeps existing budgets and
    stop conditions. Its first run stopped early on one confirmed queue-full
    HTTP 503 after 60 requests; no 250-user pass or capacity verdict. Post-failure
-   recovery checks are next; preserve the failed Job and see the load guide.
+   recovery checks after instrumentation rollout passed. Preserve the failed
+   Job and see the load guide. The later single-query 100-user comparison passed
+   2,804 reads in 60.100s, zero errors, p95 201.078 ms and peak generator RSS
+   33.164 MiB. Fresh health checks after that load are next before reviewing
+   any new 250-user attempt.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
