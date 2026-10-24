@@ -16,5 +16,6 @@ USER root
 COPY requirements-test.txt .
 RUN pip install --no-cache-dir -r requirements-test.txt
 COPY tests ./tests
+COPY scripts/check-browse-db-capacity.py ./scripts/check-browse-db-capacity.py
 USER app
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

@@ -29,6 +29,28 @@ runner = load('browse_users_runner', 'scripts/run-browse-users.py')
 
 
 class BrowseUsers(unittest.TestCase):
+    def test_failure_snapshots_retain_timing_evidence_without_private_fields(self):
+        targets = fixtures.config()['targets']['browse']
+        stats = dict(pool_min=4, pool_max=4, pool_size=4, pool_available=4,
+                     requests_waiting=0, requests_num=2, connections_num=4,
+                     requests_errors=0, connections_errors=0, connections_lost=0, returns_bad=0,
+                     timing_event_query_count=0, timing_units_query_count=0, PRIVATE='DO_NOT_PRINT')
+        for phase in probe.TIMING_PHASES:
+            stats['timing_' + phase + '_count'] = 2
+            stats['timing_' + phase + '_total_us'] = 2000
+        initial = {target['pod']: {'instance_id': 'a' * 32, 'statistics': dict(stats)} for target in targets}
+        def http(target, path, customer):
+            after = dict(stats, requests_errors=1, requests_num=3)
+            for phase in probe.TIMING_PHASES:
+                after['timing_' + phase + '_count'] += 1
+                after['timing_' + phase + '_total_us'] += 3000
+            return 200, {'instance_id': 'a' * 32, 'statistics': after}
+        rows = probe.failure_pools(targets, initial, 'test', http)
+        self.assertEqual(rows[0]['timings']['acquire']['mean_ms'], 3)
+        self.assertNotIn('DO_NOT_PRINT', json.dumps(rows))
+        self.assertIsNone(probe.query_timing_deltas(stats, stats, allow_empty=True)['body']['mean_ms'])
+        with self.assertRaises(fixtures.probe.CheckFailed):
+            probe.query_timing_deltas(stats, dict(stats, timing_acquire_count=1), allow_empty=True)
     def test_single_query_probe_requires_timers_and_reports_interval_deltas(self):
         config = dict(fixtures.config(), users=100, client_memory_comparison=True,
                       single_query_comparison=True, require_warm_pool=True,

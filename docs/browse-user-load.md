@@ -1545,3 +1545,56 @@ Preserve both failed 250-user Jobs; no larger run, automatic
 retry, queue/connection increase, checkout-check removal or replica scaling
 has been performed. The 100-user improvement remains valid at its measured
 scope; it did not establish recovery at the 250-user workload.
+
+## Read-only capacity observation prepared
+
+After the failed Job and application recovery are confirmed, run:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/inspect-browse-capacity.py
+```
+
+No image rebuild, deployment or new load Job is needed. The Cloud Shell runner
+checks the lab subscription/context, stable Browse/Booking pods and absence
+of an active read-load Job. It reads PostgreSQL SKU/tier/version/region and
+AKS region, then summarizes the last 30 minutes of one-minute Azure CPU,
+memory and connection samples. Missing samples are reported as null, not zero.
+This window is not tied precisely to the failed run and minute aggregation
+can hide short pressure. Azure's active_connections metric includes idle
+sessions; it is not the count of currently executing queries.
+[Azure metrics definitions](https://learn.microsoft.com/en-us/azure/postgresql/monitor/concepts-monitoring).
+
+The runner then sends a fixed Python diagnostic to each existing Browse pod,
+sequentially, using pods/exec. Each separate diagnostic process authenticates
+as the existing Browse workload identity and opens one TLS SQL connection,
+closed on exit; the two pod probes never run concurrently. It sets a read-only
+transaction, a two-second statement timeout and a 500 ms lock timeout. It reads
+configured connection limits and count-only catalog session observations,
+performs six SELECT 1 measurements, and EXPLAIN ANALYZE of each of the two demo
+availability SELECTs. These execute only bounded read queries, not writes.
+[PostgreSQL EXPLAIN semantics](https://www.postgresql.org/docs/17/sql-explain.html).
+
+Output contains only numeric plan summaries (planning/execution time, root row
+count and shared hit/read blocks), identity/TLS confirmation and count/latency
+statistics. It prints no raw SQL plans, query strings from other sessions,
+customer rows, passwords or tokens. Catalog visibility remains limited to the
+Browse role; session counts include the extra diagnostic and background
+processes and do not establish usable remaining connection capacity.
+Server execution time includes more than CPU work, while simple SELECT time
+includes the network round trip and client/driver work. This is an idle
+baseline, not a concurrent saturation test.
+
+The application statistics/limits, SQL permissions, transaction policy and
+original token-renewal Job are unchanged. No local Azure connection or Docker
+start is required. A failure prints its stage/type; do not grant broader SQL
+permissions or retry a load merely to make the diagnostic pass. Live output
+for this observation is still pending.
+
+Failure diagnostics in the mounted user-load probe now also retain per-phase
+timing deltas when available from the same serving processes. Empty phase
+intervals use count zero and mean null; invalid/reset counters report a timing
+error without hiding the original HTTP/pool failure. The existing failed Jobs
+contain their original mounted scripts and cannot retroactively gain this
+evidence. This change does not create or retry a load test.

@@ -45,7 +45,7 @@ def query_timing_snapshot(stats):
     read.require(stats['timing_availability_query_count'] >= 2, 'SINGLE_QUERY_PREFLIGHT_NOT_OBSERVED')
 
 
-def query_timing_deltas(before, after):
+def query_timing_deltas(before, after, *, allow_empty=False):
     query_timing_snapshot(after)
     read.require(all(after['timing_' + phase + '_count'] == before['timing_' + phase + '_count']
                      for phase in ('event_query', 'units_query')), 'LEGACY_QUERY_COUNTER_INCREASED')
@@ -54,9 +54,10 @@ def query_timing_deltas(before, after):
         prefix = 'timing_' + phase + '_'
         count = after[prefix + 'count'] - before[prefix + 'count']
         total = after[prefix + 'total_us'] - before[prefix + 'total_us']
-        read.require(count > 0 and total >= 0, 'SINGLE_QUERY_TIMINGS_INCOMPLETE')
+        read.require(count >= 0 and total >= 0 and (count > 0 or (allow_empty and total == 0)),
+                     'SINGLE_QUERY_TIMINGS_INCOMPLETE')
         result[phase] = {'observations': count, 'total_us': total,
-                         'mean_ms': round(total / count / 1000, 3)}
+                         'mean_ms': round(total / count / 1000, 3) if count else None}
     return result
 
 
@@ -80,6 +81,12 @@ def failure_pools(targets, initial, customer, http):
                           for key in ('requests_num', 'connections_num', *read.ERROR_KEYS, *read.REJECTION_KEYS)
                           if key in after['statistics'] and key in initial[name]['statistics']}
                 row['counter_deltas'] = deltas if all(n >= 0 for n in deltas.values()) else None
+                if 'timing_availability_query_count' in initial[name]['statistics']:
+                    try:
+                        row['timings'] = query_timing_deltas(initial[name]['statistics'], after['statistics'],
+                                                            allow_empty=True)
+                    except Exception as error:
+                        row['timing_error_type'] = type(error).__name__
             else:
                 row['counter_deltas'] = None
         except Exception as error:

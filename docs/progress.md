@@ -60,6 +60,8 @@ or establish sustained production capacity.
   75 HTTP 200 and two confirmed queue-full HTTP 503 responses on one pod.
   The diagnostic Job is confirmed terminal and fresh post-failure health checks
   passed. There is still no 250-user pass.
+  A read-only SKU/region/metrics/connection/query-plan observation is prepared;
+  live output is pending. Failure timing capture is improved for future probes.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification
