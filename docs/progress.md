@@ -53,15 +53,20 @@ or establish sustained production capacity.
   investigate; PostgreSQL CPU saturation or 250-user recovery is not established.
   The single-statement lookup is deployed; its 24-read diagnostic passed.
   Body means fell from 76-84 ms to 52-59 ms across the observed pods, consistent
-  with one fewer round trip. Placement/sample differences limit comparison;
+  with one fewer round trip. Placement/sample differences limit comparison.
   The guarded 100-user single-query comparison also passed with 2,804 valid
   reads and zero rejections; fresh post-run health checks passed. A separate
   guarded 250-user single-query comparison then stopped early: 77 participants,
   75 HTTP 200 and two confirmed queue-full HTTP 503 responses on one pod.
   The diagnostic Job is confirmed terminal and fresh post-failure health checks
   passed. There is still no 250-user pass.
-  A read-only SKU/region/metrics/connection/query-plan observation is prepared;
-  live output is pending. Failure timing capture is improved for future probes.
+  The read-only capacity observation passed: AKS East US, PostgreSQL Central US;
+  recent minute-level maxima CPU 7.89%, memory 20.99%, connections 20.
+  Cached demo queries executed in 0.147-0.178 ms on the server, while simple
+  client reads averaged 33.5-34.0 ms. This supports investigating round-trip
+  overhead and bounded pool concurrency; it does not establish saturation
+  during the subsecond failures. A controlled four-versus-eight connection
+  comparison is the proposed next experiment and has not been prepared or run.
 - **Token renewal:** the original expiry-boundary Job has no final verdict in
   the supplied record. Its running/progress output is not a renewal pass.
 - **Notifications:** warning evaluation is tested; external notification

@@ -1590,7 +1590,7 @@ The application statistics/limits, SQL permissions, transaction policy and
 original token-renewal Job are unchanged. No local Azure connection or Docker
 start is required. A failure prints its stage/type; do not grant broader SQL
 permissions or retry a load merely to make the diagnostic pass. Live output
-for this observation is still pending.
+for this observation is recorded below.
 
 Failure diagnostics in the mounted user-load probe now also retain per-phase
 timing deltas when available from the same serving processes. Empty phase
@@ -1598,3 +1598,59 @@ intervals use count zero and mean null; invalid/reset counters report a timing
 error without hiding the original HTTP/pool failure. The existing failed Jobs
 contain their original mounted scripts and cannot retroactively gain this
 evidence. This change does not create or retry a load test.
+
+## Live read-only capacity observation passed
+
+BROWSE_CAPACITY_OBSERVATION_OK confirmed unchanged serving pods, no inventory
+writes and at most one extra diagnostic SQL connection. Both Browse pod probes
+confirmed the expected non-admin workload identity, database trafficxx, TLSv1.3
+and read-only transactions with the specified statement/lock timeouts.
+
+The server is Ready, PostgreSQL 17, GeneralPurpose Standard_D2ds_v5 in Central
+US. AKS reports eastus. The reported Azure metric window was
+2026-10-24 16:32:18-17:02:18 UTC, with 30 observations per metric:
+
+| Recent one-minute metric | Window maximum |
+| --- | ---: |
+| CPU percent | 7.891657% |
+| Memory percent | 20.991787% |
+| Connections, including idle | 20 |
+
+Both SQL probes read max_connections 859, superuser-reserved 10 and reserved
+5. Each counted 24 visible server sessions, 11 current-database sessions and
+nine Browse sessions, including its own diagnostic connection; two database
+session states were hidden from the Browse role. The catalog snapshot and Azure
+metric samples have different times/accounting. These are not a safe concurrent
+query budget or a recommendation to open hundreds of client connections.
+
+| Observation | mht5h | p85p4 |
+| --- | ---: | ---: |
+| Six SELECT 1 samples, mean | 33.546 ms | 34.037 ms |
+| Simple SELECT minimum / maximum | 28.716 / 57.468 ms | 29.119 / 58.378 ms |
+| General availability server execution | 0.149 ms | 0.147 ms |
+| Seated availability server execution | 0.178 ms | 0.178 ms |
+| General EXPLAIN client duration | 33.552 ms | 33.752 ms |
+| Seated EXPLAIN client duration | 32.308 ms | 32.785 ms |
+
+Planning times were 0.224-0.643 ms. Each query returned one event row and
+reported zero shared read blocks, with eight or eleven shared hit blocks.
+These are small cached demo queries outside concurrent load. They demonstrate
+that the measured client duration was much greater than server execution time
+in this baseline, not that every future query will be equally cheap.
+
+Cross-region placement, repeated transaction/checkout round trips and four
+bounded connections per pod are a plausible explanation for requests spending
+time occupying the pool and filling its waiting queue. This is a supported
+hypothesis, not a fully isolated causal profile: client timings include driver
+work, query execution includes more than CPU, the Azure window is not aligned
+precisely with the failed run, and minute metrics can miss subsecond pressure.
+No sustained database CPU, memory or server connection-limit exhaustion was
+observed in this sample; none can be ruled out for arbitrary load.
+
+The proposed next experiment is a separately guarded four-versus-eight
+connections-per-pod comparison, preserving queue 16, two replicas, query and
+transaction policy and workload pacing. Such an experiment needs explicit
+probe/bounds updates, a distinct Job, resource/latency observation and a
+reviewable rollback before execution. It has not been implemented or run.
+No database SKU/region move, scaling, grants, queue change or new load occurred
+as part of this read-only observation. The original renewal Job remains separate.
