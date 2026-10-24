@@ -1,7 +1,7 @@
 # First in-cluster user-load stage
 
-Status: source/local validation passed. The first two live attempts stopped on
-resource-metric freshness; a complete live workload result remains pending.
+Status: the live v3 50-user stage passed. The first two attempts stopped on
+resource-metric freshness; their evidence is retained below.
 This runs only the first 50-user stage; 100/250/500/1,000 users require separate
 review and preparation after these results. No scaling or new Azure resource
 provisioning is performed.
@@ -193,10 +193,46 @@ Job deadline and 450-second parent deadline. After release, missing/stale
 generator metrics fail immediately. Keep Cloud Shell open; allow up to seven
 minutes including startup and the unchanged one-minute workload.
 
-The next Job is browse-users-50-v3; neither failed predecessor is deleted.
+The revised Job is browse-users-50-v3; neither failed predecessor is deleted.
 All 448 offline methods passed, including the exact 62.375-second regression,
 the 90-second boundary and rejection of older/future samples. The real loopback
-50-user/75-GET smoke and isolated native Job render passed. Live v3 success is
-still pending. Resource summaries span startup and load; two distinct timestamps
+50-user/75-GET smoke and isolated native Job render passed. Live v3 success was subsequently supplied; see below. Resource summaries span startup and load; two distinct timestamps
 can come from startup, and a 60-second collector can miss brief pressure during
 a one-minute workload. These observations do not establish sustained capacity.
+
+
+## Live 50-user result
+
+The user supplied BROWSE_USERS_WORKLOAD_OK and final BROWSE_USERS_50_OK for
+run a15b13bf9b4f / Job browse-users-50-v3. The gate required two distinct fresh
+samples per pod before traffic started. Parent output reprints child logs at
+completion, so the printed WAITING marker after GATE_RELEASED is not a second
+wait or an inverted execution sequence.
+
+All 50 users issued requests: 1,382 attempts, all HTTP 200, evenly split into
+691 general and 691 seated reads. Elapsed workload time was 60.133 seconds,
+achieved rate 22.982 requests/s, sampled peak workload HTTP concurrency eight.
+Latency was p50 172.167 ms, p95 209.486 ms, p99 237.460 ms, maximum 327.461 ms.
+No workload errors or observer stop checks were reported.
+
+Both serving pools reached their configured maximum of four connections and
+sampled waiting of one. Error counters stayed unchanged. Borrow deltas were
+705 and 689, with three physical connection attempts per pod; these include
+background readiness reads. Waiting did not trigger the sustained-wait stop.
+This does not establish that waiting was absent between samples or that larger
+loads have connection headroom.
+
+Sampled resource maxima across startup and workload:
+
+| Pod | Distinct source samples | CPU cores | Memory MiB |
+| --- | ---: | ---: | ---: |
+| browse-6775788b9b-g649w | 4 | 0.019858 | 59.992 |
+| browse-6775788b9b-k6fdk | 4 | 0.016576 | 60.711 |
+| browse-users-50-v3-gxdxj | 3 | 0.126665 | 124.820 |
+
+Inventory remained 100 for each demo event. No inventory writes occurred;
+serving pods and pool processes stayed unchanged. This is a short, paced,
+in-cluster Browse read result, not a reservation-write, public-ingress,
+sustained-capacity or production latency SLO result. Review a fresh Browse demo
+and Operations health check before preparing a separate 100-user stage. No
+higher stage has been started. The original token-renewal Job is untouched.

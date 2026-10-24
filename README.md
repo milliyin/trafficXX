@@ -290,14 +290,14 @@ Next:
    A subsequent read-only SQL audit verified 72 matching outbox/inbox records,
    36 latest-state projections and zero missing/mismatched/orphaned records.
    Native Service Bus counts also confirmed zero active messages/dead letters.
-   The [first in-cluster 50-user Browse stage](docs/browse-user-load.md) is now
-   prepared and locally tested: one minute, paced reads, at most 1,500 requests,
-   pool/resource stop limits and CPU/memory sampling. Live evidence is pending;
-   higher user counts and autoscaling are not enabled automatically.
-   Both early attempts stopped on metric freshness and are confirmed stopped.
-   The second sent no workload traffic. Version v3 allows a 90-second source age
-   for the reported collector cadence and longer startup for distinct samples,
-   while preserving traffic/resource caps. Live success is pending.
+   The [first in-cluster 50-user Browse stage](docs/browse-user-load.md) passed:
+   1,382 successful availability reads in 60.133 seconds (22.982 requests/s),
+   p95 209.486 ms, no HTTP/pool errors and inventory still 100 per demo event.
+   Both pools reached four connections with sampled waiting of one; serving
+   pods stayed unchanged. Resource maxima are coarse samples, not capacity or
+   production latency guarantees. Both earlier metric-freshness failures are
+   documented; v3 passed with the reviewed sampling allowance and startup gate.
+   Higher user counts require review and are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
