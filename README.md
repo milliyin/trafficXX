@@ -309,7 +309,10 @@ Next:
    were deployed in ACR image cac. The live diagnostic confirmed two queue-full
    rejections with zero timeout/closed-pool rejections; 911 of 913 reads succeeded
    before it stopped. Generator process RSS peaked at 209 MiB. Post-run recovery
-   checks and a bounded waiting-queue comparison are next; 100 users remain unpassed.
+   checks passed. A bounded queue comparison is prepared: 16 waiting slots per
+   Browse pod, four ready/max connections, unchanged latency/resource stops.
+   It needs a new Browse build/rollout before --users 100 --queue-comparison.
+   The live result is pending; 100 users remain unpassed.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.

@@ -4,4 +4,4 @@ from trafficxx.database_pool import DatabasePool
 
 class BrowseDatabase(DatabasePool):
     def __init__(self):
-        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN')
+        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING')

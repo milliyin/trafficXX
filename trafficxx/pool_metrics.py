@@ -3,6 +3,7 @@ METRICS = {
     'size': ('gauge', 'pool_size', 'Pool slots, including connections being prepared.'),
     'limit': ('gauge', 'pool_max', 'Configured maximum pool slots per process.'),
     'available': ('gauge', 'pool_available', 'Idle connections available for borrowing.'),
+    'waiting_limit': ('gauge', 'pool_waiting_limit', 'Configured maximum queued borrowers per process.'),
     'waiting': ('gauge', 'requests_waiting', 'Requests waiting for a pool connection.'),
     'borrows_total': ('counter', 'requests_num', 'Connection borrows requested since process start.'),
     'borrow_errors_total': ('counter', 'requests_errors', 'Failed borrows since process start.'),

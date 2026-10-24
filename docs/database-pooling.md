@@ -200,3 +200,15 @@ fields before user traffic and captures same-process deltas. It also measures
 the generator's sampled Linux RSS/thread count to investigate its memory use.
 No connection/queue/resource limits or request pacing changed. This requires a
 new Browse image/rollout and has no live diagnostic result yet.
+
+
+The live rejection diagnostic subsequently confirmed two TooManyRequests /
+queue-full rejections and zero acquisition-timeout/closed-pool rejections.
+Fresh post-run application health passed. The next prepared policy sets
+BROWSE_DB_POOL_MAX_WAITING=16 (default eight, accepted values only eight or 16),
+while retaining the Browse minimum/maximum four. Booking stays at eight waiting
+slots. Actual pool_waiting_limit is exposed numerically and as a Prometheus
+gauge. The [separate queue comparison](browse-user-load.md) requires that actual
+setting before offering user traffic. No latency or resource stop was relaxed;
+a larger queue may increase latency and does not add SQL execution capacity.
+A new Browse image/rollout and live comparison are still pending.

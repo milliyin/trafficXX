@@ -49,6 +49,8 @@ spec:
             - name: http
               containerPort: 8000
           env:
+            - name: BROWSE_DB_POOL_MAX_WAITING
+              value: "16"
             - name: BROWSE_DB_POOL_MIN
               value: "4"
             - name: BROWSE_DB_POOL_MAX

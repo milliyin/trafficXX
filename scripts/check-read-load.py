@@ -77,10 +77,13 @@ def pool_snapshot(target, customer, http):
     require(not present or (present == set(REJECTION_KEYS) and
             all(type(values[key]) is int and values[key] >= 0 for key in REJECTION_KEYS)),
             'INVALID_POOL_REJECTION_COUNTERS')
+    waiting_limit = values.get('pool_waiting_limit', 8)
+    require(type(waiting_limit) is int and waiting_limit in ((8, 16) if target['api'] == 'browse' else (8,)),
+            'POOL_WAITING_LIMIT_CHANGED')
     require(values['pool_min'] in ((1, 4) if target['api'] == 'browse' else (1,))
             and values['pool_max'] == 4
             and 1 <= values['pool_size'] <= 4 and values['pool_available'] <= values['pool_size']
-            and values['requests_waiting'] <= 8, 'POOL_BOUNDS_CHANGED')
+            and values['requests_waiting'] <= waiting_limit, 'POOL_BOUNDS_CHANGED')
     return row
 
 

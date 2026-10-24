@@ -56,10 +56,12 @@ def snapshot(call, index):
             'connections_lost', 'returns_bad')
     require(all(type(stats.get(key)) is int and stats[key] >= 0 for key in keys),
             'Invalid numeric pool statistics')
+    waiting_limit = stats.get('pool_waiting_limit', 8)
+    require(type(waiting_limit) is int and waiting_limit in (8, 16), 'Unexpected queue limit')
     require(stats['pool_min'] in (1, 4) and stats['pool_max'] == 4
             and 1 <= stats['pool_size'] <= 4
             and stats['pool_available'] <= stats['pool_size']
-            and stats['requests_waiting'] <= 8, 'Unexpected pool bounds')
+            and stats['requests_waiting'] <= waiting_limit, 'Unexpected pool bounds')
     return row
 
 

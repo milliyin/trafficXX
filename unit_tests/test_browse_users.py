@@ -189,6 +189,33 @@ class BrowseUsers(unittest.TestCase):
         self.assertEqual(failure['generator_memory']['sampled_max_rss_mib'], 160)
         self.assertEqual(failure['generator_memory']['sampled_max_threads'], 102)
 
+    def test_queue_comparison_checks_actual_limit_and_accepts_bounded_sixteen(self):
+        config = dict(fixtures.config(), users=100, required_queue_limit=16)
+        service = Mock()
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'DEPLOY_REQUESTED_QUEUE_LIMIT_FIRST'):
+            probe.run(config, fixtures.Http(), service)
+        service.assert_not_called()
+        class Queue(fixtures.Http):
+            def __call__(self, target, path, customer):
+                status, body = super().__call__(target, path, customer)
+                if path == '/internal/database-pool':
+                    body['statistics']['pool_waiting_limit'] = 16
+                return status, body
+        http = Queue()
+        def service(url, customer):
+            return http(config['targets']['browse'][0], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            outcome = probe.run(config, http, service, duration=.4, think=.02)
+        self.assertEqual(outcome['verified_queue_limit'], 16)
+        self.assertTrue(all(row['pool_waiting_limit'] == 16 for row in outcome['pools']))
+        target = config['targets']['browse'][0]
+        def snapshot(*args):
+            status, row = http(*args)
+            row['statistics']['requests_waiting'] = 17
+            return status, row
+        with self.assertRaisesRegex(fixtures.probe.CheckFailed, 'POOL_BOUNDS_CHANGED'):
+            fixtures.probe.pool_snapshot(target, 'test', snapshot)
+
     def test_pool_errors_or_initial_inventory_changes_prevent_success(self):
         for fault in ('observer', 'inventory'):
             with self.subTest(fault=fault), redirect_stdout(io.StringIO()), \
@@ -282,9 +309,12 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False):
+    def scenario(self, fault=None, preflight_only=False, users=50, diagnostic_retry=False, warm_pool=False, rejection_diagnostics=False, queue_comparison=False):
         commands, polls = [], [0]
-        job_name = ('browse-users-100-rejections' if rejection_diagnostics else
+        if queue_comparison:
+            warm_pool = rejection_diagnostics = True
+        job_name = ('browse-users-100-queue16' if queue_comparison else
+                    'browse-users-100-rejections' if rejection_diagnostics else
                     'browse-users-100-warm' if warm_pool else
                     'browse-users-100-diagnostic' if diagnostic_retry else
                     runner.JOB if users == 50 else 'browse-users-100')
@@ -329,12 +359,14 @@ class BrowseUsersRunner(unittest.TestCase):
             if args[:2] == ('get', 'deployment'):
                 return json.dumps({'spec': {'template': {'spec': {'containers': [
                     {'name': 'browse', 'env': ([{'name': 'BROWSE_DB_POOL_MIN', 'value': '4'},
-                        {'name': 'BROWSE_DB_POOL_MAX', 'value': '4'}] if warm_pool and fault != 'cold-policy' else []), 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
+                        {'name': 'BROWSE_DB_POOL_MAX', 'value': '4'},
+                        {'name': 'BROWSE_DB_POOL_MAX_WAITING', 'value': '16' if queue_comparison and fault != 'old-queue' else '8'}] if warm_pool and fault != 'cold-policy' else []), 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
             if args[:2] == ('create', 'configmap'):
                 source = next(arg.split('=', 2)[2] for arg in args if arg.startswith('--from-file=targets.json='))
                 self.assertEqual(json.loads(Path(source).read_text())['users'], users)
                 self.assertEqual(json.loads(Path(source).read_text())['require_warm_pool'], warm_pool)
                 self.assertEqual(json.loads(Path(source).read_text())['require_rejection_counters'], rejection_diagnostics)
+                self.assertEqual(json.loads(Path(source).read_text())['required_queue_limit'], 16 if queue_comparison else 8)
                 return '{}'
             if args[:2] == ('patch', '--local'):
                 return '{}'
@@ -372,7 +404,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
             result = runner.execute(preflight_only=preflight_only, users=users, diagnostic_retry=diagnostic_retry, warm_pool=warm_pool,
-                                    rejection_diagnostics=rejection_diagnostics)
+                                    rejection_diagnostics=rejection_diagnostics, queue_comparison=queue_comparison)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -435,6 +467,21 @@ class BrowseUsersRunner(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'REJECTION_DIAGNOSTICS_REQUIRES_WARM_COMPARISON'):
             runner.execute(users=100, rejection_diagnostics=True)
 
+    def test_queue_comparison_requires_deployed_sixteen_and_owns_new_job(self):
+        code, output, commands = self.scenario(users=100, queue_comparison=True)
+        self.assertEqual(code, 0)
+        self.assertIn('"job": "browse-users-100-queue16"', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-queue16-pod' in args for args in commands))
+        code, output, commands = self.scenario('old-queue', users=100, queue_comparison=True)
+        self.assertEqual(code, 1)
+        self.assertIn('DEPLOY_QUEUE_COMPARISON_FIRST', output)
+        self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
+        code, output, commands = self.scenario('resource-stop', users=100, queue_comparison=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(next(args for args in commands if args[:2] == ('patch', 'job'))[2], 'browse-users-100-queue16')
+        with self.assertRaisesRegex(ValueError, 'QUEUE_COMPARISON_REQUIRES_100_USERS'):
+            runner.execute(users=50, queue_comparison=True)
+
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
         self.assertEqual(code, 0)
@@ -492,6 +539,18 @@ class BrowseUsersRunner(unittest.TestCase):
         for row in warm['initial_pools'].values():
             row['statistics'].update(rejections_queue_full=0, rejections_timeout=0, rejections_closed=0)
         runner.validate(warm, 'abcdef123456', 100, True, True)
+        queue = deepcopy(warm)
+        queue['verified_queue_limit'] = 16
+        for row in queue['initial_pools'].values():
+            row['statistics']['pool_waiting_limit'] = 16
+        for row in queue['pools']:
+            row.update(pool_waiting_limit=16, sampled_peak_waiting=12)
+        runner.validate(queue, 'abcdef123456', 100, True, True, True)
+        with self.assertRaises(ValueError):
+            runner.validate(queue, 'abcdef123456', 100, True, True)
+        queue['verified_queue_limit'] = 8
+        with self.assertRaisesRegex(ValueError, 'QUEUE_LIMIT_NOT_VERIFIED'):
+            runner.validate(queue, 'abcdef123456', 100, True, True, True)
         warm['initial_pools']['browse-a']['statistics']['pool_min'] = 1
         with self.assertRaisesRegex(ValueError, 'WARM_POOL_NOT_VERIFIED'):
             runner.validate(warm, 'abcdef123456', 100, True)

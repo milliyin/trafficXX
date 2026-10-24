@@ -841,3 +841,86 @@ absorb brief contention but can increase latency; it is not more database
 execution capacity and does not promise a successful run. The generator still
 needs its current resource supervision. No queue change or new load has been
 implemented or run at this checkpoint. Do not progress to 250 users.
+
+
+## Recovery confirmed; bounded queue comparison prepared
+
+The user confirmed browse-users-100-rejections terminal Failed (5m57s).
+Fresh demo checks reported alive/ready, two events and 100 available units each.
+Operations remained healthy at processed 72, no pending/outstanding work,
+processing failures or active alerts, and unchanged historical publication
+failures four/audit count one. Both worker heartbeats were present without
+errors (consumer 2.266782s, publisher 1.492495s). Native broker counts were not
+measured. This completes the recovery checkpoint after queue-full confirmation.
+
+Prepared source adds optional BROWSE_DB_POOL_MAX_WAITING, default eight when
+unspecified. Its only accepted values are eight and 16; zero/unlimited and
+unreviewed sizes fail before creating a pool. The Browse deployment sets 16.
+Booking keeps its existing queue limit eight. Browse minimum and maximum remain
+four, with the same startup wait, three-second acquisition timeout, checked
+connections and callable fresh identity parameters. No replica, query, database
+grant, request pacing or generator resource setting is changed.
+
+The actual limit is exposed in numeric pool_waiting_limit and the Prometheus
+gauge trafficxx_browse_pool_waiting_limit. Previous images without this field
+can still be read as the old reviewed eight-place policy by generic diagnostics;
+the explicit 16-place comparison requires the new actual field. Borrow/counter
+snapshot helpers validate observed waiters against the reported reviewed cap,
+rather than incorrectly rejecting a queue of nine as a configuration error.
+The same original sustained-wait and latency stop conditions remain.
+
+The explicit new mode is:
+
+```bash
+python3 scripts/run-browse-users.py --users 100 --queue-comparison
+```
+
+It implies warm-pool and rejection diagnostics and creates fixed Job
+browse-users-100-queue16. It requires 100 users and excludes the earlier generic
+retry flag. Preflight requires the deployed queue environment setting 16; the
+in-cluster probe independently verifies both actual pool limits before user
+traffic. Initial and final success evidence retain and validate the selected
+limit. Old eight-place experiment modes are not substitutes for this comparison.
+Earlier failed Jobs remain intact, and active loads/existing fixed Jobs still
+block startup. No HTTP or workload retry happens automatically.
+
+The comparison keeps 100 users, 60 seconds, two-second pauses, maximum 3,000
+GETs, four ready/max connections per Browse pod, two-second observed request
+stop, original error/wait/resource gates, and generator one CPU/256 MiB limits.
+All rejection counters and sampled Linux RSS/thread reporting remain active.
+A larger queue increases the number of requests permitted to wait; it does not
+increase SQL execution capacity and can worsen latency. No successful 100-user
+result, memory improvement or higher-stage readiness is claimed.
+
+A new Browse image is needed for the configurable queue and actual-limit field:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/build-browse-image.sh
+```
+
+After IMAGE_BUILD_OK:
+
+```bash
+bash scripts/deploy-browse.sh &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh
+```
+
+Allow collection for the new pods, confirm both have CPU/memory readings with
+kubectl top pods, then run the explicit queue comparison. Keep Cloud Shell open
+for up to seven minutes and share the complete pass/failure output. The build,
+rollout and live queue comparison are pending; the original renewal Job stays
+untouched. No 250-user experiment is started.
+
+All 468 offline methods passed. Added cases cover bounded queue configuration,
+zero/unreviewed-value rejection, unchanged Booking limit, actual-limit guards,
+refusal of the old deployment policy, selected Job/config/UID-scoped stop,
+waiting values above the former cap, and final evidence matching queue 16.
+Shortened real loopback HTTP checks exercised all 50 users (74 valid reads),
+100 users (149), and warm/counter-enabled queue-16 100 users (149), with the
+server stopped afterward. Native isolated Job renders preserved resource and
+security settings and validated the deployment environment. These establish
+local correctness, not Azure SQL capacity or a latency SLO. Docker stayed
+stopped and no local Azure connection was used.

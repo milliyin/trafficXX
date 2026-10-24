@@ -93,6 +93,27 @@ class BrowsePool(unittest.TestCase):
         self.assertEqual(self.factory.call_args.kwargs['min_size'], 1)
         self.pool.wait.assert_not_called()
 
+    def test_reviewed_waiting_limit_is_bounded_and_independent_from_booking(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN',
+                                            'BROWSE_DB_POOL_MAX_WAITING')
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4', 'BROWSE_DB_POOL_MIN': '4',
+                                    'BROWSE_DB_POOL_MAX_WAITING': '16'}):
+            database.open()
+            self.assertEqual(self.factory.call_args.kwargs['max_waiting'], 16)
+            self.assertEqual(self.factory.call_args.kwargs['max_size'], 4)
+            self.pool.get_stats.return_value = {}
+            self.assertEqual(database.statistics()['statistics']['pool_waiting_limit'], 16)
+            booking = self.module.DatabasePool('booking', 'BOOKING_DB_POOL_MAX')
+            booking.open()
+            self.assertEqual(self.factory.call_args.kwargs['max_waiting'], 8)
+
+    def test_unlimited_or_unreviewed_queue_sizes_fail_before_connecting(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', waiting_variable='BROWSE_DB_POOL_MAX_WAITING')
+        for value in ('0', '-1', '9', '17', 'unlimited'):
+            with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX_WAITING': value}), self.assertRaises(ValueError):
+                database.open()
+        self.factory.assert_not_called()
+
     def test_new_connection_parameters_are_resolved_each_time(self):
         self.parameters.side_effect = [{'password': 'FIRST'}, {'password': 'NEW'}]
         self.assertEqual(self.module.pool_parameters(), {'password': 'FIRST'})

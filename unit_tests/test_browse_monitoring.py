@@ -93,11 +93,13 @@ class BrowseMonitoring(unittest.TestCase):
         self.assertNotIn('{', result)
 
     def test_rejection_metrics_have_fixed_names_and_counter_types(self):
-        text = metrics.render({'rejections_queue_full': 2, 'rejections_timeout': 3,
+        text = metrics.render({'pool_waiting_limit': 16, 'rejections_queue_full': 2, 'rejections_timeout': 3,
                                'rejections_closed': 4, 'private': 'PRIVATE'})
         for name, value in (('queue_full_total', 2), ('acquire_timeouts_total', 3), ('closed_rejections_total', 4)):
             self.assertIn('# TYPE trafficxx_browse_pool_' + name + ' counter', text)
             self.assertIn('trafficxx_browse_pool_' + name + ' ' + str(value), text)
+        self.assertIn('# TYPE trafficxx_browse_pool_waiting_limit gauge', text)
+        self.assertIn('trafficxx_browse_pool_waiting_limit 16', text)
         self.assertNotIn('PRIVATE', text)
         with self.assertRaises(ValueError):
             metrics.render({'rejections_queue_full': 'PRIVATE'})

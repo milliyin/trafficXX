@@ -32,7 +32,7 @@ def execute(config):
 
 
 SERVICE_ERROR_CODES = frozenset(('DATABASE_BUSY', 'DATABASE_UNAVAILABLE'))
-POOL_KEYS = ('pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
+POOL_KEYS = ('pool_waiting_limit', 'pool_min', 'pool_max', 'pool_size', 'pool_available', 'requests_waiting',
              'requests_num', 'connections_num', *read.ERROR_KEYS)
 
 
@@ -101,6 +101,11 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         read.require(all(all(key in row['statistics'] for key in read.REJECTION_KEYS)
                          for row in initial.values()), 'DEPLOY_POOL_REJECTION_COUNTERS_FIRST')
         error_keys += read.REJECTION_KEYS
+    required_queue = config.get('required_queue_limit')
+    if required_queue is not None:
+        read.require(type(required_queue) is int and required_queue in (8, 16), 'INVALID_QUEUE_COMPARISON')
+        read.require(all(row['statistics'].get('pool_waiting_limit', 8) == required_queue
+                         for row in initial.values()), 'DEPLOY_REQUESTED_QUEUE_LIMIT_FIRST')
     memory_start = generator_memory()
     memory_samples = []
     peaks = {target['pod']: {'size': initial[target['pod']]['statistics']['pool_size'],
@@ -230,6 +235,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
                      and after['statistics']['connections_num'] >= before['statistics']['connections_num'],
                      'POOL_COUNTER_RESET')
         pools.append({'pod': name, 'pool_max': 4,
+                      'pool_waiting_limit': before['statistics'].get('pool_waiting_limit', 8),
                       'pool_error_counters_unchanged': True,
                       'sampled_peak_size': max(peaks[name]['size'], after['statistics']['pool_size']),
                       'sampled_peak_waiting': max(peaks[name]['waiting'], after['statistics']['requests_waiting']),
@@ -243,6 +249,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
             'pool_processes_unchanged': True, 'latency_slo_tested': False,
             'warm_pool_verified': bool(config.get('require_warm_pool')),
             'rejection_counters_verified': bool(config.get('require_rejection_counters')),
+            'verified_queue_limit': required_queue,
             'initial_pools': {name: safe_pool(row) for name, row in initial.items()},
             'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
