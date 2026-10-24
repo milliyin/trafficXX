@@ -579,3 +579,38 @@ Build success establishes the release artifact, not deployed pool readiness or
 100-user performance. Next deploy using the saved immutable reference, run demo
 and Operations checks, then the explicit --users 100 --warm-pool-comparison
 command above. No warm rollout or live comparison result has yet been supplied.
+
+
+### Warm rollout healthy; first launch blocked before Job creation
+
+The user supplied BROWSE_DEPLOYED with new Ready, zero-restart pods
+browse-594b8f9998-9pww6 (10.244.3.88, apps node vmss000000) and
+browse-594b8f9998-wm7ln (10.244.2.183, apps node vmss000001). An old k6fdk pod was
+still Terminating in that rollout snapshot. Demo checks passed with both
+availabilities 100. Operations remained healthy at processed 72, no backlog or
+active alerts, unchanged historical publication failures four and audit count
+one; heartbeats consumer 3.118647s/publisher 1.664247s without errors.
+
+The immediate comparison launch failed at baseline_cpu_memory with
+BROWSE_RESOURCE_METRICS_MISSING. Job/files were null, the gate remained closed
+and no generator stop was needed: no load Job or workload was started. New pods
+were only seconds old in the rollout output, making collector startup delay
+the likely explanation. The warm-pool live workload is still untested.
+
+Allow about two minutes for collection after the rollout, then check:
+
+```bash
+kubectl top pods -n trafficxx -l app.kubernetes.io/name=trafficxx-browse
+```
+
+Once both new pods have resource entries, rerun the same explicit comparison:
+
+```bash
+python3 scripts/run-browse-users.py --users 100 --warm-pool-comparison
+```
+
+The runner itself still validates selected pod identity, metric completeness
+and source age; kubectl top is only a readiness hint. No freshness or resource
+limit was relaxed. Because this launch created no Job, the fixed comparison
+name remains available; no deletion or rebuild is required. If metrics remain
+missing, retain the new failure rather than bypassing the guard.
