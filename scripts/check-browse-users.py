@@ -1,4 +1,4 @@
-"""In-cluster read-only stage: 50 paced users for 60 seconds, no retries."""
+"""In-cluster read-only stage: 50 or 100 paced users for 60 seconds, no retries."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -11,7 +11,6 @@ import read_probe as read
 USERS = 50
 DURATION = 60
 THINK = 2
-MAX_ATTEMPTS = 1500
 
 
 def wait_for_resource_gate(config, path=Path('/state/start'), sleep=time.sleep, clock=time.monotonic):
@@ -33,9 +32,13 @@ def execute(config):
 
 
 def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION,
-        think=THINK, users=USERS):
+        think=THINK, users=None):
     targets = read.targets_from(config)['browse']
-    read.require(users == 50 and duration > 0 and think > 0, 'INVALID_STAGE')
+    configured_users = config.get('users', USERS)
+    users = configured_users if users is None else users
+    read.require(type(users) is int and users in (50, 100) and users == configured_users
+                 and duration > 0 and think > 0, 'INVALID_STAGE')
+    max_attempts = users * 30
     customer = 'lab-browse-users-' + config['run_id']
     for target in targets:
         for route in ('general', 'seated'):
@@ -84,7 +87,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
         # Spread initial requests across one think interval, avoiding a cold burst.
         if stop.wait(think * index / users):
             return
-        for iteration in range(min(30, MAX_ATTEMPTS // users)):
+        for iteration in range(min(30, max_attempts // users)):
             if stop.is_set() or time.monotonic() >= deadline:
                 return
             route = ('general', 'seated')[(index + iteration) % 2]
@@ -111,7 +114,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
 
     print(json.dumps({'result': 'BROWSE_USERS_PHASE_STARTED', 'run_id': config['run_id'],
                       'users': users, 'duration_seconds': duration, 'think_seconds': think,
-                      'max_workload_attempts': MAX_ATTEMPTS}), flush=True)
+                      'max_workload_attempts': max_attempts}), flush=True)
     with ThreadPoolExecutor(max_workers=users + 1) as executor:
         observer = executor.submit(observe)
         futures = [executor.submit(user, index) for index in range(users)]
@@ -158,7 +161,7 @@ def run(config, http=read.read_json, service=read.read_url, *, duration=DURATION
     return {'result': 'BROWSE_USERS_WORKLOAD_OK', 'run_id': config['run_id'], **summary,
             'pools': pools, 'inventory_writes': False, 'availability_before_and_after': 100,
             'pool_processes_unchanged': True, 'latency_slo_tested': False,
-            'scope': 'In-cluster Browse Service reads; 50 paced users are not 50 requests/s.'}
+            'scope': 'In-cluster Browse Service reads; paced users are not requests/s.'}
 
 
 if __name__ == '__main__':

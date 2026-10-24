@@ -1,4 +1,4 @@
-"""Cloud Shell: run only the 50-user stage, observing Kubernetes resource usage."""
+"""Cloud Shell: run one explicitly selected 50- or 100-user stage, observing Kubernetes resource usage."""
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -108,10 +108,11 @@ def metrics():
     return json.loads(base.kube('get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'))
 
 
-def validate(outcome, run_id):
+def validate(outcome, run_id, users=50):
+    require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
     require(outcome.get('result') == 'BROWSE_USERS_WORKLOAD_OK' and outcome.get('run_id') == run_id
-            and outcome.get('users') == 50 and outcome.get('users_with_requests') == 50
-            and type(outcome.get('attempts')) is int and 50 <= outcome['attempts'] <= 1500
+            and outcome.get('users') == users and outcome.get('users_with_requests') == users
+            and type(outcome.get('attempts')) is int and users <= outcome['attempts'] <= users * 30
             and outcome.get('valid_responses') == outcome['attempts']
             and outcome.get('status_counts') == {'200': outcome['attempts']}
             and not outcome.get('errors') and not outcome.get('observer_checks')
@@ -120,7 +121,7 @@ def validate(outcome, run_id):
             and outcome.get('pool_processes_unchanged') is True
             and outcome.get('latency_slo_tested') is False
             and 60 <= outcome.get('elapsed_seconds', 0) <= 75
-            and 1 <= outcome.get('sampled_peak_workload_http_in_flight', 0) <= 50,
+            and 1 <= outcome.get('sampled_peak_workload_http_in_flight', 0) <= users,
             'INCOMPLETE_WORKLOAD_EVIDENCE')
     values = [outcome['latency_ms'][name] for name in ('p50', 'p95', 'p99', 'max')]
     require(all(isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
@@ -135,21 +136,23 @@ def validate(outcome, run_id):
             'POOL_OBSERVATIONS_INCOMPLETE')
 
 
-def stop_owned_job(uid):
+def stop_owned_job(uid, job_name=JOB):
     # Shorten only this diagnostic Job's deadline, retaining Pod logs and CM.
-    base.kube('patch', 'job', JOB, '-n', 'trafficxx', '--type=json', '--patch', json.dumps([
+    base.kube('patch', 'job', job_name, '-n', 'trafficxx', '--type=json', '--patch', json.dumps([
         {'op': 'test', 'path': '/metadata/uid', 'value': uid},
         {'op': 'replace', 'path': '/spec/activeDeadlineSeconds', 'value': 1}]))
 
 
-def release_gate(pod, run_id):
-    require(pod.startswith(JOB + '-') and re.fullmatch(r'[0-9a-f]{12}', run_id), 'UNEXPECTED_GATE_TARGET')
+def release_gate(pod, run_id, job_name=JOB):
+    require(pod.startswith(job_name + '-') and re.fullmatch(r'[0-9a-f]{12}', run_id), 'UNEXPECTED_GATE_TARGET')
     base.kube('exec', '-n', 'trafficxx', 'pod/' + pod, '-c', 'check', '--', 'python', '-c',
               "from pathlib import Path; p=Path('/state/start.tmp'); p.write_text("
               + json.dumps(run_id) + "); p.replace('/state/start')")
 
 
-def execute(*, preflight_only=False):
+def execute(*, preflight_only=False, users=50):
+    require(type(users) is int and users in (50, 100), 'INVALID_STAGE')
+    job_name = JOB if users == 50 else 'browse-users-100'
     stage, job, files_name = 'subscription', None, None
     create_requested = False
     gate_released = False
@@ -161,11 +164,11 @@ def execute(*, preflight_only=False):
         stage = 'kubernetes_context'
         require(base.kube('config', 'current-context') == 'trafficxx-lab-aks', 'WRONG_CONTEXT')
         stage = 'existing_jobs'
-        require(not base.kube('get', 'job', JOB, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
-                'INSPECT_EXISTING_50_USER_JOB')
+        require(not base.kube('get', 'job', job_name, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
+                'INSPECT_EXISTING_USER_LOAD_JOB')
         other = json.loads(base.kube('get', 'jobs', '-n', 'trafficxx', '-o', 'json'))['items']
         require(not any((row['metadata']['name'] == 'read-load-baseline'
-                         or row['metadata']['name'].startswith('browse-users-50'))
+                         or row['metadata']['name'].startswith('browse-users-'))
                         and not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
                                     for c in row.get('status', {}).get('conditions', []))
                         for row in other), 'OTHER_READ_LOAD_ACTIVE')
@@ -201,7 +204,7 @@ def execute(*, preflight_only=False):
         require(all(row['cpu_limit_fraction'] < .8 and row['memory_limit_fraction'] < .85
                     for row in baseline.values()), 'BASELINE_RESOURCE_PRESSURE')
         if preflight_only:
-            print(json.dumps({'result': 'BROWSE_USERS_PREFLIGHT_OK', 'users': 50,
+            print(json.dumps({'result': 'BROWSE_USERS_PREFLIGHT_OK', 'users': users,
                               'cpu_memory_metrics_available': True, 'inventory_writes': False}))
             return 0
         reference = before['browse']['pods'][0]['image']
@@ -213,7 +216,7 @@ def execute(*, preflight_only=False):
         base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
         with tempfile.TemporaryDirectory(prefix='trafficxx-browse-users-') as folder:
             path = Path(folder) / 'targets.json'
-            path.write_text(json.dumps({'run_id': run_id, 'targets': {
+            path.write_text(json.dumps({'run_id': run_id, 'users': users, 'targets': {
                 api: row['pods'] for api, row in before.items()}}))
             manifest = base.kube('create', 'configmap', files_name, '-n', 'trafficxx',
                                  '--from-file=probe.py=' + str(ROOT / 'scripts/check-browse-users.py'),
@@ -223,6 +226,7 @@ def execute(*, preflight_only=False):
         stage = 'create_job'
         manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
                              '--type=json', '--patch', json.dumps([
+                                 {'op': 'replace', 'path': '/metadata/name', 'value': job_name},
                                  {'op': 'replace', 'path': '/spec/template/spec/containers/0/image', 'value': reference},
                                  {'op': 'replace', 'path': '/spec/template/spec/nodeName', 'value': generator_node},
                                  {'op': 'replace', 'path': '/spec/template/spec/volumes/0/configMap/name', 'value': files_name}]),
@@ -230,22 +234,22 @@ def execute(*, preflight_only=False):
         create_requested = True
         job = json.loads(base.kube('create', '-f', '-', '-o', 'json', data=manifest))
         base.kube('patch', 'configmap', files_name, '-n', 'trafficxx', '--type=merge', '--patch', json.dumps({
-            'metadata': {'ownerReferences': [{'apiVersion': 'batch/v1', 'kind': 'Job', 'name': JOB,
+            'metadata': {'ownerReferences': [{'apiVersion': 'batch/v1', 'kind': 'Job', 'name': job_name,
                           'uid': job['metadata']['uid'], 'blockOwnerDeletion': False}]}}))
-        print(json.dumps({'result': 'BROWSE_USERS_STARTED', 'job': JOB, 'run_id': run_id,
-                          'users': 50, 'duration_seconds': 60, 'think_seconds': 2,
-                          'max_workload_attempts': 1500, 'runtime_image': reference,
+        print(json.dumps({'result': 'BROWSE_USERS_STARTED', 'job': job_name, 'run_id': run_id,
+                          'users': users, 'duration_seconds': 60, 'think_seconds': 2,
+                          'max_workload_attempts': users * 30, 'runtime_image': reference,
                           'generator_node': generator_node,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'generator_metrics_warmup_seconds': GENERATOR_METRICS_WARMUP,
                           'inventory_writes': False,
-                          'note': 'Only 50 users; no automatic progression or scaling.'}), flush=True)
+                          'note': 'Only the selected user count; no automatic progression or scaling.'}), flush=True)
         stage = 'observe_job_and_resources'
         deadline, running_since, generator = time.monotonic() + 450, None, None
         while True:
-            finished = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
+            finished = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
             require(finished['metadata']['uid'] == job['metadata']['uid'], 'DIAGNOSTIC_JOB_REPLACED')
-            pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-l', 'job-name=' + JOB, '-o', 'json'))['items']
+            pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-l', 'job-name=' + job_name, '-o', 'json'))['items']
             require(len(pods) <= 1, 'UNEXPECTED_GENERATOR_REPLICAS')
             require(not finished.get('status', {}).get('failed'), 'DIAGNOSTIC_JOB_FAILED')
             if pods:
@@ -258,7 +262,7 @@ def execute(*, preflight_only=False):
                 if pod['status']['phase'] == 'Running' and running_since is None:
                     running_since = time.monotonic()
                 if pod['status']['phase'] in ('Running', 'Succeeded', 'Failed'):
-                    logs = base.kube('logs', '-n', 'trafficxx', 'job/' + JOB, '-c', 'check')
+                    logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
             if finished.get('status', {}).get('succeeded') == 1:
                 require(pods and pods[0]['status']['phase'] == 'Succeeded', 'GENERATOR_COMPLETION_MISSING')
                 break
@@ -282,7 +286,7 @@ def execute(*, preflight_only=False):
                     and all(len(row['timestamps']) >= 2 for row in watch.rows.values())
                     and all(row['cpu_limit_fraction'] < .8 and row['memory_limit_fraction'] < .85
                             for row in values.values())):
-                release_gate(generator, run_id)
+                release_gate(generator, run_id, job_name)
                 gate_released = True
                 print(json.dumps({'result': 'BROWSE_USERS_RESOURCE_GATE_RELEASED', 'run_id': run_id,
                                   'distinct_fresh_samples_per_pod_minimum': 2}), flush=True)
@@ -291,7 +295,7 @@ def execute(*, preflight_only=False):
         require(bool(logs.splitlines()), 'WORKLOAD_LOGS_MISSING')
         outcome = json.loads(logs.splitlines()[-1])
         require(gate_released, 'RESOURCE_GATE_NOT_RELEASED')
-        validate(outcome, run_id)
+        validate(outcome, run_id, users)
         require(generator is not None and set(watch.rows) == set(expected) | {generator}
                 and all(len(row['timestamps']) >= 2 for row in watch.rows.values()),
                 'INSUFFICIENT_DISTINCT_RESOURCE_SAMPLES')
@@ -299,18 +303,18 @@ def execute(*, preflight_only=False):
         require(before == {api: base.snapshot(flow, api) for api in before}, 'SERVING_PODS_CHANGED')
         for line in logs.splitlines():
             print(line, flush=True)
-        print(json.dumps({'result': 'BROWSE_USERS_50_OK', 'run_id': run_id, 'job': JOB,
+        print(json.dumps({'result': 'BROWSE_USERS_' + str(users) + '_OK', 'run_id': run_id, 'job': job_name,
                           'resources': watch.summary(), 'serving_pods_unchanged': True,
                           'resource_gate_released': True,
                           'resource_max_age_seconds': RESOURCE_MAX_AGE,
                           'inventory_writes': False, 'latency_slo_tested': False,
-                          'note': 'Review results before authorizing the 100-user stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
+                          'note': 'Review results before preparing any higher stage. CPU is window-averaged; peaks are sampled.'}), flush=True)
         return 0
     except (Exception, KeyboardInterrupt) as error:
         if job is None and create_requested:
             # Resolve a lost create response without stopping a concurrent run.
             try:
-                candidate = json.loads(base.kube('get', 'job', JOB, '-n', 'trafficxx', '-o', 'json'))
+                candidate = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 volumes = candidate['spec']['template']['spec']['volumes']
                 if any(row.get('configMap', {}).get('name') == files_name for row in volumes):
                     job = candidate
@@ -319,12 +323,12 @@ def execute(*, preflight_only=False):
         stop_attempted, stop_requested = job is not None, False
         if job is not None:
             try:
-                stop_owned_job(job['metadata']['uid'])
+                stop_owned_job(job['metadata']['uid'], job_name)
                 stop_requested = True
             except Exception:
                 pass
             try:
-                logs = base.kube('logs', '-n', 'trafficxx', 'job/' + JOB, '-c', 'check')
+                logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
             except Exception:
                 pass
         for line in logs.splitlines():
@@ -335,7 +339,7 @@ def execute(*, preflight_only=False):
                           'metric_failure': getattr(error, 'details', None),
                           'resource_gate_released': gate_released,
                           'command_exit_code': getattr(error, 'returncode', None),
-                          'job': JOB if job else None, 'files': files_name,
+                          'job': job_name if job else None, 'files': files_name,
                           'generator_stop_attempted': stop_attempted, 'generator_stop_requested': stop_requested,
                           'resources': watch.summary(),
                           'note': 'Inspect this diagnostic Job and logs; do not start overlapping runs. No serving replicas were changed.'}), flush=True)
@@ -345,4 +349,6 @@ def execute(*, preflight_only=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight-only', action='store_true')
-    raise SystemExit(execute(preflight_only=parser.parse_args().preflight_only))
+    parser.add_argument('--users', type=int, choices=(50, 100), default=50)
+    args = parser.parse_args()
+    raise SystemExit(execute(preflight_only=args.preflight_only, users=args.users))

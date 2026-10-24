@@ -2,8 +2,9 @@
 
 Status: the live v3 50-user stage passed. The first two attempts stopped on
 resource-metric freshness; their evidence is retained below.
-This runs only the first 50-user stage; 100/250/500/1,000 users require separate
-review and preparation after these results. No scaling or new Azure resource
+The default remains the first 50-user stage. After its live pass and healthy
+post-checks, an explicit --users 100 stage is prepared below; 250/500/1,000 users
+require separate review and preparation. No scaling or new Azure resource
 provisioning is performed.
 
 The existing apps node pool already has cluster autoscaling enabled (two to
@@ -247,3 +248,73 @@ Consumer/publisher heartbeats were present without errors, aged 4.213274 and
 1.234180 seconds. Native broker queue counts were not measured by this check.
 This completes the post-50-user application-health checkpoint. A separately
 reviewed 100-user test is the next candidate; it has not been started.
+
+
+## Prepared 100-user stage
+
+The user authorized preparation after the successful 50-user run and fresh
+healthy Browse/Operations checks. Run the same runner with explicit --users 100.
+It creates the separate fixed Job browse-users-100 and puts the selected count
+in the mounted configuration. Omitting the flag still selects 50; counts other
+than 50 or 100 are rejected. There is no automatic progression.
+
+The workload is unchanged except for 100 users and a maximum of 3,000 GETs
+(30 per user). It still lasts 60 seconds, staggers initial requests over two
+seconds and pauses two seconds after each response. At most 100 workload HTTP
+requests plus one observer can be in flight. That is not a 100 requests/s target.
+The generator retains one CPU/256 MiB on an existing apps node. Both serving
+pools retain four connections and all HTTP/pool/resource stop limits remain.
+Both pools reached four slots with sampled waiting of one at 50 users: watch
+latency and waiting closely, without assuming spare connection capacity.
+
+All active browse-users-* and read-load-baseline Jobs block startup. Completed
+50-user Jobs are permitted and remain intact. Failure stops only the selected
+Job using its UID; the gate also targets only that selected Job's owned pod.
+The new final success marker is BROWSE_USERS_100_OK; a workload marker alone
+still does not establish full Job/resource/stability success. On failure retain
+the output and inspect that Job before any retry. All earlier sampled-metrics
+limitations, no write-load/SLO claim and no notification tests still apply.
+
+For a fresh browser Cloud Shell session, select the existing subscription,
+refresh the existing cluster credentials and convert for the Cloud Shell Azure
+login. Clone only if the session has no repository. These commands run in the
+user's Cloud Shell; no local Azure connection is needed.
+
+```bash
+az account set --subscription 35aaf788-f4cf-40c3-9ea5-bc8fe8708a85 &&
+az aks get-credentials --resource-group trafficxx-lab-rg --name trafficxx-lab-aks --overwrite-existing &&
+kubelogin convert-kubeconfig -l azurecli
+```
+
+After that succeeds:
+
+```bash
+if [ -d ~/trafficxx/.git ]; then
+  git -C ~/trafficxx pull --ff-only origin main
+else
+  git clone https://github.com/milliyin/trafficXX.git ~/trafficxx
+fi
+```
+
+After the clone/pull succeeds:
+
+```bash
+cd ~/trafficxx &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/run-browse-users.py --users 100
+```
+
+Keep Cloud Shell open for up to seven minutes. No image build is needed. Share
+the complete result before considering a higher stage. The original renewal
+Job is not changed, and its final verdict still requires separate evidence.
+
+Local validation: all 450 offline methods passed, including real selected-stage
+result validation, all 100 users participating, the 3,000 attempt ceiling,
+unsupported/mismatched-stage rejection, mounted count propagation, separate
+Job render/gate/UID-scoped stop and blocking an active earlier 50-user Job.
+Shortened real loopback HTTP tests exercised 50 users (75 valid reads) and
+100 users (149 valid reads), then stopped their server. Native kubectl with an
+empty isolated kubeconfig rendered both Job names with identical resource and
+security settings. This is local correctness evidence; no live 100-user result
+has been supplied. Docker stayed stopped; no local Azure commands were run.

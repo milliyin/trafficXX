@@ -297,7 +297,9 @@ Next:
    pods stayed unchanged. Resource maxima are coarse samples, not capacity or
    production latency guarantees. Both earlier metric-freshness failures are
    documented; v3 passed with the reviewed sampling allowance and startup gate.
-   Higher user counts require review and are not started automatically.
+   The next explicit 100-user stage is prepared and locally tested: run
+   python3 scripts/run-browse-users.py --users 100 after fresh health checks.
+   Its live result is pending; higher stages are not started automatically.
    The first attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before

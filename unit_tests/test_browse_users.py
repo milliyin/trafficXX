@@ -62,6 +62,25 @@ class BrowseUsers(unittest.TestCase):
         self.assertEqual(len(result['pools']), 2)
         self.assertTrue(all(api == 'browse' for api, _, _ in http.calls))
 
+    def test_hundred_paced_users_require_explicit_stage_and_keep_gets_bounded(self):
+        config, http, urls = fixtures.config(), fixtures.Http(), []
+        config['users'] = 100
+        def service(url, customer):
+            self.assertTrue(url.startswith('http://browse.trafficxx.svc.cluster.local/events/demo-'))
+            urls.append(url)
+            return http(config['targets']['browse'][len(urls) % 2], '/' + url.split('/', 3)[3], customer)
+        with redirect_stdout(io.StringIO()):
+            result = probe.run(config, http, service, duration=.5, think=.05)
+        self.assertEqual(result['users_with_requests'], 100)
+        self.assertTrue(100 <= result['attempts'] <= 3000)
+        self.assertEqual(result['attempts'], result['valid_responses'])
+        self.assertLessEqual(result['sampled_peak_workload_http_in_flight'], 100)
+        for count in (True, 250, 1000):
+            with self.assertRaises(fixtures.probe.CheckFailed):
+                probe.run(dict(config, users=count), http, service, duration=.1, think=.02)
+        with self.assertRaises(fixtures.probe.CheckFailed):
+            probe.run(fixtures.config(), http, service, users=100)
+
     def test_unexpected_http_response_stops_without_printing_response_body(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(fixtures.probe.CheckFailed):
@@ -164,9 +183,10 @@ class BrowseUsers(unittest.TestCase):
 
 
 class BrowseUsersRunner(unittest.TestCase):
-    def scenario(self, fault=None, preflight_only=False):
+    def scenario(self, fault=None, preflight_only=False, users=50):
         commands, polls = [], [0]
-        generator = runner.JOB + '-pod'
+        job_name = runner.JOB if users == 50 else 'browse-users-100'
+        generator = job_name + '-pod'
         now = datetime.now(timezone.utc).isoformat()
         config = fixtures.config()
         counts = {}
@@ -194,7 +214,8 @@ class BrowseUsersRunner(unittest.TestCase):
             if args[:2] == ('get', 'job') and '--ignore-not-found' in args:
                 return 'job/existing' if fault == 'existing' else ''
             if args[:2] == ('get', 'jobs'):
-                return '{"items":[]}'
+                return json.dumps({'items': [{'metadata': {'name': 'browse-users-50-v3'}, 'status': {}}]
+                                  if fault == 'active-earlier-stage' else []})
             if args[:2] == ('get', 'hpa'):
                 return json.dumps({'items': [{'spec': {'scaleTargetRef': {'kind': 'Deployment', 'name': 'browse'}}}]
                                   if fault == 'hpa' else []})
@@ -206,7 +227,11 @@ class BrowseUsersRunner(unittest.TestCase):
             if args[:2] == ('get', 'deployment'):
                 return json.dumps({'spec': {'template': {'spec': {'containers': [
                     {'name': 'browse', 'resources': {'limits': {'cpu': '500m', 'memory': '256Mi'}}}]}}}})
-            if args[:2] == ('create', 'configmap') or args[:2] == ('patch', '--local'):
+            if args[:2] == ('create', 'configmap'):
+                source = next(arg.split('=', 2)[2] for arg in args if arg.startswith('--from-file=targets.json='))
+                self.assertEqual(json.loads(Path(source).read_text())['users'], users)
+                return '{}'
+            if args[:2] == ('patch', '--local'):
                 return '{}'
             if args[:2] == ('create', '-f') and '-o' in args:
                 if fault in ('lost-create', 'foreign-create'):
@@ -241,7 +266,7 @@ class BrowseUsersRunner(unittest.TestCase):
                 patch.object(runner, 'validate', side_effect=ValueError('INCOMPLETE') if fault == 'invalid' else None), \
                 patch.object(runner, 'uuid4', return_value=type('Id', (), {'hex': 'abcdef123456'})()), \
                 patch.object(runner.time, 'sleep'), redirect_stdout(output):
-            result = runner.execute(preflight_only=preflight_only)
+            result = runner.execute(preflight_only=preflight_only, users=users)
         return result, output.getvalue(), commands
 
     def test_success_requires_resource_and_job_evidence_and_unchanged_pods(self):
@@ -249,6 +274,24 @@ class BrowseUsersRunner(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('BROWSE_USERS_50_OK', output)
         self.assertFalse(any(args[0] in ('delete', 'scale') for args in commands))
+
+    def test_hundred_stage_owns_separate_job_and_blocks_overlapping_fifty(self):
+        code, output, commands = self.scenario(users=100)
+        self.assertEqual(code, 0)
+        self.assertIn('BROWSE_USERS_100_OK', output)
+        self.assertIn('"max_workload_attempts": 3000', output)
+        self.assertTrue(any(args[0] == 'exec' and 'pod/browse-users-100-pod' in args for args in commands))
+        render = next(args for args in commands if args[:2] == ('patch', '--local'))
+        operations = json.loads(render[render.index('--patch') + 1])
+        self.assertIn({'op': 'replace', 'path': '/metadata/name', 'value': 'browse-users-100'}, operations)
+        code, output, commands = self.scenario('resource-stop', users=100)
+        stops = [args for args in commands if args[:2] == ('patch', 'job')]
+        self.assertEqual(code, 1)
+        self.assertEqual(stops[0][2], 'browse-users-100')
+        code, output, commands = self.scenario('active-earlier-stage', users=100)
+        self.assertEqual(code, 1)
+        self.assertIn('OTHER_READ_LOAD_ACTIVE', output)
+        self.assertFalse(any(args[0] in ('create', 'apply', 'patch') for args in commands))
 
     def test_stale_startup_generator_is_excluded_until_fresh_then_gate_is_released(self):
         code, output, commands = self.scenario('stale-generator')
@@ -291,6 +334,14 @@ class BrowseUsersRunner(unittest.TestCase):
                            for name in ('browse-a', 'browse-b')],
                  'latency_ms': {'p50': 100, 'p95': 200, 'p99': 300, 'max': 400}}
         runner.validate(valid, 'abcdef123456')
+        hundred = dict(valid, users=100, users_with_requests=100, attempts=3000,
+                       valid_responses=3000, status_counts={'200': 3000},
+                       sampled_peak_workload_http_in_flight=100)
+        runner.validate(hundred, 'abcdef123456', 100)
+        for changed in (dict(hundred, attempts=3001), dict(hundred, users_with_requests=99),
+                        dict(hundred, users=50), dict(hundred, sampled_peak_workload_http_in_flight=101)):
+            with self.assertRaises(ValueError):
+                runner.validate(changed, 'abcdef123456', 100)
         for key, value in [('users', 100), ('attempts', 1501), ('users_with_requests', 49),
                            ('elapsed_seconds', 30), ('inventory_writes', True), ('run_id', 'wrong'), ('pools', [])]:
             with self.subTest(key=key), self.assertRaises(ValueError):
