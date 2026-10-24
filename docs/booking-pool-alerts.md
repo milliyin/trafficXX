@@ -47,7 +47,7 @@ short queues between scrapes. High pool occupancy alone does not fire a rule.
 
 These rules evaluate in Prometheus. External email/phone/chat delivery is not
 configured. A dashboard follow-up adds alert counts and history below; live
-API verification passed and browser rendering remains unconfirmed. An independent
+API verification and user browser confirmation passed. An independent
 monitor is needed to detect Prometheus itself being unavailable.
 
 ## Deploy from browser Cloud Shell
@@ -139,5 +139,9 @@ GRAFANA_BOOKING_POOL_OK: ten panels, datasource trafficxx-prometheus, two target
 with at least two stored samples each, pending 0 and firing 0, and five healthy
 inactive Booking rules. Operations and Browse dashboard/rule verification also
 passed, and unauthenticated dashboard access was denied. This proves live
-provisioning and datasource checks for the new panels; their browser rendering
-still needs separate confirmation. External notifications remain unconfigured.
+provisioning and datasource checks for the new panels; the user subsequently
+confirmed browser visibility. External notifications remain unconfigured.
+
+A [controlled target-warning drill](booking-alert-recovery.md) is now prepared
+and locally tested to observe actual firing, stored history and recovery after
+a temporary two-to-one replica reduction. Live drill evidence remains pending.

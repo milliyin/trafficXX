@@ -13,7 +13,7 @@ External notifications remain unconfigured. A subsequent
 [dashboard-only update](booking-pool-alerts.md#show-pending-and-firing-alerts-in-grafana)
 adds two alert panels (ten total). Live API verification passed: two targets,
 fresh stored samples, five healthy inactive rules and zero pending/firing counts.
-Browser rendering of those additions remains unconfirmed.
+The user also confirmed the additions are visible in the browser.
 
 ## Verified image build
 

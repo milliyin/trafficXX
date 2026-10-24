@@ -274,7 +274,9 @@ Next:
    A [Booking dashboard follow-up](docs/booking-pool-alerts.md#show-pending-and-firing-alerts-in-grafana)
    adds pending/firing counts and history (ten panels total). Live API checks
    passed with two targets, five healthy inactive rules and zero active counts;
-   browser confirmation of the additions remains pending.
+   the user confirmed the additions are visible in the browser.
+   A [controlled Booking target-warning drill](docs/booking-alert-recovery.md)
+   is prepared and locally tested; live firing and recovery remain pending.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.
