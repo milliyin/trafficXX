@@ -175,7 +175,7 @@ Policy, ownership and replica-budget errors still fail immediately. This
 bounded read-only wait does not substitute missing targets or zero metrics.
 The same retry command can be used because that invocation created no Job.
 
-### Live v2 workload completed; recovery check remains
+### Live v2 workload and separate recovery verified
 
 The subsequent v2 run `a7565c1fef4e` completed 1/1. All 250 users produced
 **21,086 HTTP 200 responses**, zero errors, in **182.162 seconds**. Latency
@@ -209,6 +209,17 @@ checks application health and sampled database pressure. It creates no Job,
 changes no replicas and emits `BROWSE_AUTOSCALING_RECOVERY_OK` only on success.
 That result verifies post-run recovery; it does not retroactively complete
 the original continuous resource audit or claim a latency SLO.
+
+The user subsequently supplied `BROWSE_AUTOSCALING_RECOVERY_OK`. The read-only
+checker observed three ready pods, then two ready pods through the existing
+HPA, with no manual scaling or new load. Final pressure was zero; borrow rate
+was approximately 0.20/second. Both demo events retained 100 available tickets,
+Operations had no backlog or active alerts, and both workers were healthy.
+The five-minute database window had five observations per metric: CPU maximum
+7.73%, memory 21.56%, and 35 connections, including idle sessions and earlier
+overlap. The final normal configuration is two ready Browse pods, eight
+connections each, queue limit 16, and autoscaling bounds two to four pods.
+The original workload's continuous resource audit remains incomplete.
 
 Keep the Job and logs. The Job has a 450-second deadline, including resource
 warmup. On a handled failure the observer attempts to stop only its own Job

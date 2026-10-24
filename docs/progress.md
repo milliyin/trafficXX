@@ -50,9 +50,10 @@ or establish sustained production capacity.
   A separate v2 workload completed: 250 users, 21,086 successful reads, zero
   errors, p95 167.385 ms, and observed scale-up from two to three ready pods.
   Its observer stopped on missing resource metrics near Job completion; a
-  completion-order race is fixed. Post-run health passed; a read-only natural
-  scale-down check remains pending. The original continuous resource audit
-  was incomplete.
+  completion-order race is fixed. The separate read-only recovery check then
+  observed natural scale-down from three to two ready pods, active metrics,
+  healthy inventory and Operations. The original continuous resource audit
+  was incomplete; workload, scale-up and post-run scale-down are verified.
 
 - **Client memory comparison completed:** the HTTP-only, per-thread client
   passed its live Linux comparison with substantially lower sampled process
@@ -66,7 +67,7 @@ or establish sustained production capacity.
   recovery journal. The current default remains four; the pass applies to
   the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
   also passed, with its baseline restoration verified. Eight connections are
-  selected for the new autoscaling profile; its rollout is pending.
+  selected and deployed for the new two-to-four-pod autoscaling profile.
   No 500/1,000-user test ran.
 - **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
   cached SQL and much longer client calls support investigating round-trip
