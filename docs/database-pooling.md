@@ -180,3 +180,13 @@ reviewed Browse floors one or four; the explicit warm-load comparison requires
 actual minimum/size four in both pods. No higher pool ceiling or waiting-queue
 limit is added. This source policy needs a new Browse image and rollout before
 its separate live comparison; it is not yet a verified performance improvement.
+
+
+The warm source policy subsequently built as ACR cab and rolled out. The live
+comparison verified four ready connections in each serving pod and zero new
+physical connection attempts during its workload. It nevertheless stopped at
+56.940 seconds after 2,565 successful responses and two DATABASE_BUSY responses.
+This rules out startup growth as a complete explanation for the remaining
+rejections; bounded queue saturation is a leading inference, not an exact
+exception diagnosis. The 100-user stage remains failed. See the load record for
+pool counter deltas, generator memory observations and required recovery checks.

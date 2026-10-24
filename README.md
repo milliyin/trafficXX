@@ -297,22 +297,16 @@ Next:
    pods stayed unchanged. Resource maxima are coarse samples, not capacity or
    production latency guarantees. Both earlier metric-freshness failures are
    documented; v3 passed with the reviewed sampling allowance and startup gate.
-   The next explicit 100-user stage is prepared and locally tested: run
-   python3 scripts/run-browse-users.py --users 100 after fresh health checks.
-   Its first live attempt stopped after one HTTP 503 (22 successful reads,
-   less than one second); cause investigation and fresh health checks are next.
-   Recovery checks passed; the failing replica recorded one pool request error.
-   A separate diagnostic retry captures allowlisted error codes and pool deltas:
-   python3 scripts/run-browse-users.py --users 100 --diagnostic-retry.
-   The diagnostic retry stopped on two DATABASE_BUSY responses while both pools
-   grew from one to four connections; startup queue pressure is the leading
-   hypothesis. A warm-pool comparison is proposed; 100 users have not passed.
-   Recovery is confirmed. A warm-pool comparison is prepared: Browse minimum
-   four, maximum four, with startup fill verification. It requires a new Browse
-   image/rollout before --users 100 --warm-pool-comparison. ACR build cab passed;
-   the warm image is ready, while rollout and live comparison remain pending.
+   At 100 users, early runs stopped on DATABASE_BUSY while pools grew from
+   one to four. The warm Browse image (ACR cab) has now rolled out with minimum
+   and maximum four. Its comparison completed 2,565 successful reads out of
+   2,567 attempts before two DATABASE_BUSY responses stopped it at 56.940s.
+   Pools stayed at four with no new connection attempts/errors, so startup
+   growth alone does not explain the remaining rejections. The generator also
+   sampled 227.008 MiB against its 256 MiB limit. Recovery checks and review of
+   bounded queueing/generator overhead are next; 100 users have not passed.
    Higher stages are not started automatically.
-   The first attempt failed before journal creation/writes; a read-only
+   The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod

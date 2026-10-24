@@ -614,3 +614,59 @@ and source age; kubectl top is only a readiness hint. No freshness or resource
 limit was relaxed. Because this launch created no Job, the fixed comparison
 name remains available; no deletion or rebuild is required. If metrics remain
 missing, retain the new failure rather than bypassing the guard.
+
+
+## Live warm-pool comparison: failed near the end of the workload
+
+The user supplied run 657965cc61f8 / Job browse-users-100-warm on image
+85b47ca41a2d1add3fd7f1deac95a63d9cf44e08c412ba07d23e341d5c62361e.
+Resource gating passed and both actual serving pools began at minimum/maximum
+four, size/available four, no waiters and no request errors.
+
+All 100 users issued requests. The workload stopped after 56.940 seconds:
+2,567 attempts, 2,565 HTTP 200 responses and two HTTP 503s carrying DATABASE_BUSY.
+Achieved rate across this partial run was 45.082 requests/s; sampled peak workload
+HTTP concurrency was 23. Route attempts were 1,283 general and 1,284 seated.
+Mixed-response latency was p50 188.795 ms, p95 323.629 ms, p99 388.640 ms and
+maximum 493.550 ms. The first failing request was seated availability, 37.893 ms,
+at phase time 56.550 seconds. These are partial failed-run measurements, not a
+successful 60-second workload, capacity verdict or production latency SLO.
+
+Post-stop counters retained the same process IDs and showed:
+
+| Pod | Requests delta | Connection attempts delta | Request errors delta | Final size / available |
+| --- | ---: | ---: | ---: | ---: |
+| browse-594b8f9998-9pww6 | 1318 | 0 | 2 | 4 / 4 |
+| browse-594b8f9998-wm7ln | 1260 | 0 | 0 | 4 / 4 |
+
+Both had zero new connection errors, losses or bad returns and zero post-stop
+waiters. No connection creation was needed during the workload. The new floor
+was therefore in effect, but it did not eliminate rejections. The earlier
+startup-growth hypothesis cannot explain the whole remaining behavior. Brief
+saturation of the bounded waiting queue is the leading inference from fast
+rejection with warm pools; DATABASE_BUSY still groups queue-full, timeout and
+closed-pool exceptions. Post-stop idle capacity does not establish peak queue
+length or exact per-request attribution. No observer stop was recorded.
+
+Sampled maxima across startup and load were:
+
+| Pod | Distinct source samples | CPU cores | Memory MiB |
+| --- | ---: | ---: | ---: |
+| browse-594b8f9998-9pww6 | 5 | 0.040612 | 59.598 |
+| browse-594b8f9998-wm7ln | 5 | 0.037071 | 59.965 |
+| browse-users-100-warm-nplls | 3 | 0.291812 | 227.008 |
+
+The generator sample is about 88.7% of its 256 MiB limit, above the configured
+85% sampled-pressure threshold. The run reported an HTTP failure, not a
+sustained-resource stop; the coarse API samples do not establish how long that
+usage persisted. Do not describe the generator as proven to have ample memory
+headroom. Review its overhead and collection timing before larger user counts.
+
+The parent reported DIAGNOSTIC_JOB_FAILED and requested a UID-scoped stop;
+files browse-users-657965cc61f8-files are retained. Confirm native terminal Job
+status and fresh demo/Operations health next. Successful pre-load inventory
+checks do not replace a post-failure check. No final BROWSE_USERS_100_OK or
+post-run serving-pod stability verdict was produced. Do not delete/rerun the
+fixed comparison blindly or progress to 250 users. A future experiment should
+review bounded waiting capacity and the generator while preserving an explicit
+request latency stop; no further tuning or new run has been applied yet.
