@@ -280,6 +280,10 @@ Next:
    restored two ready replicas and five inactive rules. The complete recovery
    result verified stored firing history and the original surviving pod, with
    no inventory writes. HTTP continuity and external notifications were not tested.
+   A [small Booking write baseline](docs/booking-write-baseline.md) is now
+   prepared and locally tested: 18 one-ticket create/cancel pairs, at most four
+   flows, recovery journals and final inventory/pod stability checks. Live results
+   are pending; timings include Cloud Shell port-forward overhead.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

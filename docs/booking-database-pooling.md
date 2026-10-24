@@ -1,5 +1,9 @@
 # Booking database pooling
 
+A subsequent [small write baseline](booking-write-baseline.md) is prepared to
+measure 18 bounded create/cancel pairs through the pooled serving replicas.
+Its live timings remain pending and include Cloud Shell port-forward overhead.
+
 Status: source/local validation, Azure image build ca9, Booking rollout,
 read-only serving-pod reuse check and isolated SQL pool probe passed.
 Post-pooling reservation flow, duplicate concurrency and seat contention passed.
