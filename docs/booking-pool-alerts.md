@@ -142,6 +142,8 @@ passed, and unauthenticated dashboard access was denied. This proves live
 provisioning and datasource checks for the new panels; the user subsequently
 confirmed browser visibility. External notifications remain unconfigured.
 
-A [controlled target-warning drill](booking-alert-recovery.md) is now prepared
-and locally tested to observe actual firing, stored history and recovery after
-a temporary two-to-one replica reduction. Live drill evidence remains pending.
+A [controlled target-warning drill](booking-alert-recovery.md) observed actual
+firing after a temporary two-to-one replica reduction and confirmed restoration
+to two ready replicas/five healthy inactive rules. The supplied final recovery
+JSON was truncated; the remaining fields, including its explicit stored-history
+verdict, await complete output. Do not repeat the drill to recover missing text.

@@ -276,7 +276,9 @@ Next:
    passed with two targets, five healthy inactive rules and zero active counts;
    the user confirmed the additions are visible in the browser.
    A [controlled Booking target-warning drill](docs/booking-alert-recovery.md)
-   is prepared and locally tested; live firing and recovery remain pending.
+   observed the target warning firing with one healthy scrape target, then
+   restored two ready replicas and five inactive rules. The final recovery JSON
+   was truncated; its remaining fields await the complete output.
 3. Configure and test the remaining worker identities' SQL permissions before
    deployment. Keep future schema changes in additive migrations. Single-pod
    replacement does not establish zero downtime or node/zone failure recovery.

@@ -1,7 +1,26 @@
 # Controlled Booking target-warning drill
 
-Status: prepared and locally tested; no live drill result yet. This follows
+Status: local validation and live warning/restoration evidence passed; the
+user's final recovery JSON was truncated, as recorded below. This follows
 the verified ten-panel Booking dashboard and healthy live Booking/Browse rules.
+
+## Live checkpoint
+
+Run 0d3588713206 targeted Deployment UID
+e587fa09-243f-4a4f-812f-ee11fad7f6f2. The user supplied
+BOOKING_TARGET_WARNING_OBSERVED: TrafficxxBookingTargetsUnavailable firing,
+one healthy scrape target, 120-second configured hold and a verified native
+firing series, followed by a 30-second observation window. A browser screenshot
+also showed the preceding pending stage (pending 1, firing 0) and its history.
+
+BOOKING_REPLICAS_RESTORED confirmed desired and ready replicas restored. The
+visible BOOKING_ALERT_RECOVERY_OK JSON showed two targets/five healthy inactive
+rules before and after, with two ready replicas after recovery. That final line
+was cut off inside the surviving pod name. The complete pod name and later
+fields, including the explicit stored-firing-history verdict, have not yet been
+supplied; do not invent their values or repeat the drill to obtain them.
+This checkpoint establishes actual warning appearance and replica/rule recovery,
+not Booking HTTP continuity or external notification delivery.
 
 ## What it tests
 
@@ -94,4 +113,5 @@ ownership/unexpected counts, bounded retries, current-run history, native firing
 evidence and stable pod ownership/template checks. Native kubectl applied the
 actual scale-down/restoration/marker-removal patches locally using an empty
 isolated kubeconfig. No Azure cluster call was made. Docker stayed stopped;
-hosted CI and the real drill remain unverified.
+hosted CI remains unverified. The live evidence supplied separately by the user
+is recorded above, with its truncation limit.
