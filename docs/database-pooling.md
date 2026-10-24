@@ -212,3 +212,13 @@ gauge. The [separate queue comparison](browse-user-load.md) requires that actual
 setting before offering user traffic. No latency or resource stop was relaxed;
 a larger queue may increase latency and does not add SQL execution capacity.
 A new Browse image/rollout and live comparison are still pending.
+
+
+The subsequent queue-16 comparison on image cad passed: all 2,734 availability
+reads succeeded over 60.134 seconds at 100 paced users, with p95 313.140 ms.
+Both pools held four connections, made zero new connection attempts and had no
+error/rejection-counter increases. Inventory stayed 100 per demo event and the
+serving pods stayed unchanged. This is a short read-only pass, not sustained
+capacity or a production SLO. Generator memory remained close to its configured
+limit; review it before increasing users. Detailed results and earlier failed
+comparisons remain in the user-load record.

@@ -1,7 +1,8 @@
 # First in-cluster user-load stage
 
-Status: the live v3 50-user stage passed. The first two attempts stopped on
-resource-metric freshness; their evidence is retained below.
+Status: the live 50-user stage and the subsequent 100-user queue-16 comparison
+passed. Earlier failures and diagnostic revisions are retained below. Higher
+stages remain pending; generator memory needs review before progression.
 The default remains the first 50-user stage. After its live pass and healthy
 post-checks, an explicit --users 100 stage is prepared below; 250/500/1,000 users
 require separate review and preparation. No scaling or new Azure resource
@@ -944,3 +945,66 @@ and Operations checks, wait for resource metrics on both replacement pods,
 then run --users 100 --queue-comparison. The new fixed Job will be
 browse-users-100-queue16, with actual queue-limit, warm-pool and rejection-counter
 guards active. The cad rollout and live comparison are still pending.
+
+
+## Live 100-user queue-16 comparison passed
+
+The user supplied both BROWSE_USERS_WORKLOAD_OK and final BROWSE_USERS_100_OK
+for run 14a565ae316f / Job browse-users-100-queue16 on the cad image
+d383adee4fef71364a5bc3fe579a900ff02de14a36d44795176b2040dc56f640.
+The generator ran on existing apps node aks-apps-35966020-vmss000001.
+Warm-pool, rejection-counter, actual queue-16 and resource gates passed.
+
+All 100 users issued requests. Across 60.134 seconds, all 2,734 attempts returned
+valid HTTP 200 responses, with no workload or observer errors. Routes were
+1,369 general and 1,365 seated reads. Achieved rate was 45.465 requests/s and
+sampled peak workload HTTP concurrency 23. Latency was p50 172.271 ms,
+p95 313.140 ms, p99 393.370 ms and maximum 469.010 ms.
+
+Both pools began at minimum/maximum four, size/available four, queue limit 16,
+zero waiting and zero rejection counters. Process IDs remained unchanged:
+9b2677bed6a74d488be132ac9174e5dc (browse-5648774c-b45zk) and
+b812e5c107c14201b69ffbe409ae0d1b (browse-5648774c-xqzc5).
+
+| Pod | Borrow delta | New connection attempts | Sampled peak pool size | Sampled peak waiting |
+| --- | ---: | ---: | ---: | ---: |
+| browse-5648774c-b45zk | 1381 | 0 | 4 | 7 |
+| browse-5648774c-xqzc5 | 1365 | 0 | 4 | 6 |
+
+All pool error and per-exception rejection counters stayed unchanged. Borrow
+deltas include readiness/background reads. Sampled waiting below eight does
+not contradict earlier queue-full evidence: snapshots can miss short peaks.
+A passing run under queue 16 is consistent with the proposed tuning, but it
+does not isolate that setting as the sole cause: serving pods were rolled out,
+the generator used a different node than prior attempts, and trials vary.
+
+The final parent verdict confirmed the same serving pods throughout the run,
+matching successful Job/owned generator evidence, actual warm/counter/queue
+configuration and resource gates. No inventory writes occurred; both demo
+availabilities stayed 100. This is a successful bounded, paced in-cluster Browse
+read experiment, not reservation-write/public-ingress/sustained-capacity or
+production latency SLO proof. No higher stage was started.
+
+Generator memory still warrants attention. Process RSS started at 28.371 MiB
+with one thread, sampled a maximum 241.094 MiB/102 threads across 61 samples,
+and ended at 236.566 MiB with one thread. Kubernetes resource samples were:
+
+| Pod | Distinct source samples | CPU cores maximum | Memory MiB maximum |
+| --- | ---: | ---: | ---: |
+| browse-5648774c-b45zk | 4 | 0.041126 | 59.680 |
+| browse-5648774c-xqzc5 | 4 | 0.031217 | 59.887 |
+| browse-users-100-queue16-zhhdn | 3 | 0.380182 | 228.059 |
+
+These are different memory measures and collection times; process RSS cannot
+be substituted for cgroup usage or aligned exactly with an API sample.
+Nevertheless, both observations leave limited headroom against the generator's
+256 MiB container limit. The reported run passed its sampled supervision;
+a high maximum alone does not establish the configured ten-second sustained
+memory-stop condition. Do not describe the generator as adequately sized for
+250 or 1,000 users, and do not silently relax the memory guard.
+
+Next obtain a fresh demo/Operations health checkpoint, then investigate or
+reduce generator overhead before preparing a separately reviewed larger stage.
+No new full SQL/broker audit is implied by this read-only success, and no
+post-success Operations result has yet been supplied. The original renewal
+Job remains untouched and its final expiry-boundary verdict is still separate.

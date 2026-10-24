@@ -297,23 +297,17 @@ Next:
    pods stayed unchanged. Resource maxima are coarse samples, not capacity or
    production latency guarantees. Both earlier metric-freshness failures are
    documented; v3 passed with the reviewed sampling allowance and startup gate.
-   At 100 users, early runs stopped on DATABASE_BUSY while pools grew from
-   one to four. The warm Browse image (ACR cab) has now rolled out with minimum
-   and maximum four. Its comparison completed 2,565 successful reads out of
-   2,567 attempts before two DATABASE_BUSY responses stopped it at 56.940s.
-   Pools stayed at four with no new connection attempts/errors, so startup
-   growth alone does not explain the remaining rejections. The generator also
-   sampled 227.008 MiB against its 256 MiB limit. Recovery checks and review of
-   bounded queueing/generator overhead are next; 100 users have not passed.
-   Per-exception rejection counters and sampled generator RSS/thread reporting
-   were deployed in ACR image cac. The live diagnostic confirmed two queue-full
-   rejections with zero timeout/closed-pool rejections; 911 of 913 reads succeeded
-   before it stopped. Generator process RSS peaked at 209 MiB. Post-run recovery
-   checks passed. A bounded queue comparison is prepared: 16 waiting slots per
-   Browse pod, four ready/max connections, unchanged latency/resource stops.
-   ACR image build cad passed; rollout is pending before
-   --users 100 --queue-comparison.
-   The live result is pending; 100 users remain unpassed.
+   The 100-user queue comparison also passed: 2,734 successful reads in
+   60.134 seconds (45.465 requests/s), p95 313.140 ms, p99 393.370 ms and no errors.
+   Both Browse pools kept four ready/max connections with 16 waiting slots;
+   there were no new connection attempts or rejection-counter increases.
+   Inventory stayed 100 per event and serving pods stayed unchanged. Earlier
+   eight-slot runs confirmed queue-full rejections; their diagnostic history is
+   retained in the load guide. This single short pass does not establish a
+   production latency SLO, sustained capacity or readiness for higher stages.
+   Generator process RSS sampled 241.094 MiB and Kubernetes memory 228.059 MiB
+   against its 256 MiB limit. Post-run health checks and generator overhead
+   review are next before preparing a larger load.
    Higher stages are not started automatically.
    The first Booking write-baseline attempt failed before journal creation/writes; a read-only
    --preflight-only mode now reports the failing stage and command exit code.
