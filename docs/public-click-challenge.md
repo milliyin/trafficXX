@@ -7,14 +7,19 @@ or deployed yet. Real player records will be durable application data.
 
 ## Product scope
 
-The public product name is **ClickClash**. Automatic clickers may compete within
-an enforced request limit; manual-only play is not the competition policy.
-Exact per-player limits, burst allowances and the global admission ceiling
-remain to be selected and tested. Do not promise one account per human.
+The public product name is **ClickClash**. Automatic clickers may compete and
+generate heavy traffic; manual-only play is not the competition policy. The user wants
+people to push the service rather than selecting a low per-player limit.
+Whether to omit a per-player click limit remains to be clarified. A finite
+global admission ceiling, connection budget and operator pause are still
+proposed; do not interpret this preference as permission for unlimited costs.
+Do not promise one account per human.
 
 A small responsive React and TypeScript website offers unlimited-duration
 clicking, guest play, optional email sign-in, personal scores and a shared
-leaderboard. Both guests and accounts can rank. There is no countdown or round
+leaderboard. Guests can play, but an account is required to keep a public
+leaderboard entry. This supersedes the earlier guest-ranking preference.
+There is no countdown or round
 time limit. Scores accumulate as all-time totals with no scheduled resets.
 The server awards points only for
 accepted clicks. The interface distinguishes pending requests, accepted
@@ -103,6 +108,8 @@ Application sessions require secure, HttpOnly cookies, session expiry, logout,
 revocation and protection against cross-site request forgery. Guest-to-account
 linking requires the existing guest session and an authenticated account, with
 an atomic merge rule; clients cannot claim an arbitrary guest or account ID.
+Guest scores remain unranked until linked to an account. Clearing the browser
+session or changing devices cannot establish ownership of an unlinked guest.
 The UI labels guest and signed-in identities clearly. Sign-in alone is not
 proof that traffic is human.
 
@@ -165,8 +172,9 @@ of a user count or latency guarantee.
 Implementation begins with correctness, not an in-memory score placeholder.
 Deployment costs and connection budgets are reviewed against the existing
 Azure foundation before introducing new resources. The user has Azure
-sponsorship; remaining credits, expiry and an approved spending ceiling are
-not yet established. Sponsorship is not authorization for unlimited resource
+sponsorship, described as lasting five years; its exact expiry, remaining
+credits and an approved spending ceiling are not yet established.
+Sponsorship is not authorization for unlimited resource
 spending. No public endpoint, new
 cloud resource, account system or synthetic workload was created by this
 planning update.
