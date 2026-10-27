@@ -1,0 +1,45 @@
+# Separate local project: never reads private .env files when invoked as documented.
+name: clickclash-local
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: clickclash
+      POSTGRES_PASSWORD: local-only
+      POSTGRES_DB: clickclash
+    volumes: [clickclash-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U clickclash -d clickclash"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.clickclash
+    environment:
+      DATABASE_URL: postgresql://clickclash:local-only@db:5432/clickclash
+    command: [python, -m, trafficxx.clickclash_migrate]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.clickclash
+    environment:
+      DATABASE_URL: postgresql://clickclash:local-only@db:5432/clickclash
+      CLICKCLASH_ORIGIN: http://127.0.0.1:8088
+      CLICKCLASH_INSECURE_LOCAL: "1"
+      CLICKCLASH_POOL_MAX: "4"
+    ports: ["127.0.0.1:8088:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    read_only: true
+    tmpfs: [/tmp:size=32m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+volumes:
+  clickclash-data:

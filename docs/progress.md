@@ -1,11 +1,18 @@
 # Verified progress
 
 Updated **28 October 2026**. The latest verified load results are from
-27 October; the real public-product plan was added on 28 October.
+27 October; ClickClash source was implemented and tested locally on 28 October.
 This page summarises milestones; linked guides retain the full evidence and
 earlier checkpoints. It is not a live status page.
 
 ## Running and checked
+
+**ClickClash is implemented locally:** React/TypeScript game, all-time public
+leaderboard with promotions, guest play, email/generated-passphrase accounts,
+durable scoring and independent status-page source. Seventeen PostgreSQL
+integration tests and a real-browser desktop/mobile flow pass. Public Azure
+deployment, external probes and click-write capacity evidence remain pending.
+See [the app and release guide](clickclash.md).
 
 Latest result: **the full 500-user observer verification passed**, run
 `b2b01a0f2145`. All 500 users made 28,418 successful reads in 182.186 seconds,
@@ -82,13 +89,14 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
-- **Real public product planned, 28 October:** the user requested a click
+- **Real public product implemented locally, 28 October:** the user requested a click
   challenge with guests, sign-in, leaderboard and independent public status,
   using durable real-player data. The [implementation plan](public-click-challenge.md)
   defines transactional scoring, retry correctness, real/synthetic separation,
   identity, backup/restore and staged launch. No public app or new cloud
   resource is deployed yet. The proposed longer 500-user soak remains pending
-  while this product plan takes priority.
+  while ClickClash takes priority. Its [release guide](clickclash.md) records
+  the implemented app, local verification and remaining Cloud Shell steps.
 - **500-user observer cycle passed:** the corrected source-sample verification
   emitted `BROWSE_AUTOSCALING_DRILL_OK` with full workload, automatic scale-up
   and natural recovery under one observer. Its sampled resource/database and

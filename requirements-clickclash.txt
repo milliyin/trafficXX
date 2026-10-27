@@ -1,0 +1,3 @@
+-r requirements.txt
+argon2-cffi==25.1.0
+Pillow==12.3.0

@@ -6,6 +6,11 @@ we learn in [memeory.md](memeory.md).
 
 [Documentation website](https://milliyin.github.io/trafficXX/) | [Learning path](docs/getting-started.md) | [Latest results](docs/progress.md)
 
+**ClickClash:** the new React/FastAPI click game now runs locally with durable
+PostgreSQL scores, accounts, leaderboard promotions and independent status-page
+source. [Run it and prepare the Azure release](docs/clickclash.md). The public
+game has not been deployed yet; existing ticket workloads remain unchanged.
+
 ## Verified progress - updated 2026-10-24
 
 | Part | Implemented and verified |

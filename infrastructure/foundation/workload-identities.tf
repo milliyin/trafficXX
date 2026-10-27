@@ -1,9 +1,9 @@
 locals {
   workload_namespace = "trafficxx"
-  workload_accounts = toset([
+  workload_accounts = setunion(toset([
     "browse", "booking", "expiry", "publisher", "consumer", "operations",
     "migrator", "reconciler",
-  ])
+  ]), var.enable_clickclash ? toset(["clickclash"]) : toset([]))
 }
 
 resource "azurerm_user_assigned_identity" "workload" {

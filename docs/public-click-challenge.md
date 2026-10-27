@@ -2,8 +2,10 @@
 
 Design updated **28 October 2026**. This is the implementation plan for a real
 public service, requested after the completed 500-user Browse verification.
-The challenge, authentication and public status service are not implemented
-or deployed yet. Real player records will be durable application data.
+The first application, authentication and independent status-page source are
+now implemented and tested locally. Azure deployment and live monitoring are
+pending. See the [implementation and release guide](clickclash.md). Real player
+records use durable PostgreSQL storage; no public player records exist yet.
 
 ## Product scope
 
@@ -80,8 +82,9 @@ The browser never supplies a trusted score or player identity.
 
 Restarting or replacing an API pod must preserve accepted scores. Schema
 migrations are versioned; backups and an actual restore rehearsal are required
-before accepting public records. Raw receipts have bounded retention and
-aggregates are retained separately, with a published retention policy.
+before accepting public records. Bounded receipt retention and a published
+retention policy remain launch work; the first implementation retains UUID
+receipts indefinitely so old retries cannot increment scores again.
 
 ## Identity and public controls
 
@@ -176,9 +179,9 @@ Azure foundation before introducing new resources. The user has Azure
 sponsorship, described as lasting five years; its exact expiry, remaining
 credits and a spending ceiling are not established. The user asked to leave
 budget questions aside; do not repeat them or block local preparation on them.
-Keep deployment sizing explicit and bounded. No public endpoint, new
-cloud resource, account system or synthetic workload was created by this
-planning update.
+Keep deployment sizing explicit and bounded. Repository implementation has
+not created a public game endpoint or new Azure resources. Local verification
+uses only disposable accounts and databases.
 
 References: [OWASP password storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html),
 [current verified progress](progress.md), [system architecture](architecture.md).

@@ -1,0 +1,230 @@
+"""User-run Cloud Shell release. No Azure credential files are read or printed."""
+import argparse
+import hashlib
+import ipaddress
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+RG = 'trafficxx-lab-rg'
+NS = 'trafficxx'
+REGISTRY = 'trafficxxacre8708a85'
+SERVER = REGISTRY + '.azurecr.io'
+SUBSCRIPTION = '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'
+
+
+def call(args, payload=None):
+    result = subprocess.run(args, input=payload, text=True, capture_output=True, timeout=900)
+    if result.returncode:
+        # Azure/kubectl error payloads can contain credentials; expose operation only.
+        raise RuntimeError('Command failed: ' + args[0] + ' ' + args[1])
+    return result.stdout.strip()
+
+
+def context():
+    if call(['az', 'account', 'show', '--query', 'id', '-o', 'tsv']) != SUBSCRIPTION:
+        raise ValueError('Select the trafficXX sponsorship subscription')
+    if call(['kubectl', 'config', 'current-context']) != 'trafficxx-lab-aks':
+        raise ValueError('Select trafficxx-lab-aks')
+
+
+def metadata():
+    value = json.loads(call(['az', 'network', 'public-ip', 'show', '-g', RG, '-n', 'trafficxx-lab-clickclash-ip', '-o', 'json']))
+    host = value['dnsSettings']['fqdn']
+    if not re.fullmatch(r'clickclash-e8708a85(?:\.[a-z0-9-]+)?\.eastus\.(?:sysgen\.)?cloudapp\.azure\.com', host):
+        raise ValueError('Unexpected ClickClash hostname')
+    if value['location'] != 'eastus' or not ipaddress.ip_address(value['ipAddress']).is_global:
+        raise ValueError('Unexpected ClickClash public address')
+    identity = json.loads(call(['az', 'identity', 'show', '-g', RG, '-n', 'trafficxx-lab-clickclash', '-o', 'json']))
+    for key in ('clientId', 'principalId', 'tenantId'):
+        if not re.fullmatch(r'[0-9a-f-]{36}', identity[key]):
+            raise ValueError('Invalid identity metadata')
+    return host, value['ipAddress'], identity
+
+
+def registration_sql(identity):
+    sql = (ROOT / 'database/clickclash/001-initial.sql').read_text()
+    checksum = hashlib.sha256(sql.encode()).hexdigest()
+    return f"""-- Reviewed ClickClash-only registration. Run using the existing administrator helper.
+BEGIN;
+SELECT pg_advisory_xact_lock(8432001);
+DO $registration$
+DECLARE mapping record;
+BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='trafficxx-lab-clickclash') THEN
+    SELECT * INTO mapping FROM pg_catalog.pgaadauth_list_principals(false) WHERE rolname='trafficxx-lab-clickclash';
+    IF NOT FOUND OR mapping.objectid IS DISTINCT FROM '{identity['principalId']}'
+       OR mapping.tenantid IS DISTINCT FROM '{identity['tenantId']}' OR mapping.principaltype IS DISTINCT FROM 'service'
+       OR mapping.isadmin IS DISTINCT FROM 0 THEN
+      RAISE EXCEPTION 'Unexpected existing ClickClash role';
+    END IF;
+  ELSE
+    PERFORM pg_catalog.pgaadauth_create_principal_with_oid('trafficxx-lab-clickclash','{identity['principalId']}','service',false,false);
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='trafficxx-lab-clickclash' AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls OR rolreplication))
+     OR pg_has_role('trafficxx-lab-clickclash','azure_pg_admin','MEMBER') THEN
+    RAISE EXCEPTION 'ClickClash runtime cannot be an administrator';
+  END IF;
+END $registration$;
+COMMIT;
+\\connect trafficxx
+BEGIN;
+SELECT pg_advisory_xact_lock(8432001);
+CREATE TABLE IF NOT EXISTS public.clickclash_migrations(version text PRIMARY KEY, checksum text NOT NULL);
+DO $bootstrap$
+DECLARE old_checksum text;
+BEGIN
+  SELECT checksum INTO old_checksum FROM public.clickclash_migrations WHERE version='001-initial.sql';
+  IF FOUND THEN
+    IF old_checksum <> '{checksum}' THEN RAISE EXCEPTION 'ClickClash schema checksum changed'; END IF;
+  ELSE
+    EXECUTE $migration${sql}$migration$;
+    INSERT INTO public.clickclash_migrations VALUES ('001-initial.sql','{checksum}');
+  END IF;
+END $bootstrap$;
+GRANT CONNECT ON DATABASE trafficxx TO "trafficxx-lab-clickclash";
+GRANT USAGE ON SCHEMA clickclash TO "trafficxx-lab-clickclash";
+GRANT SELECT ON clickclash.players,clickclash.sessions,clickclash.receipts,clickclash.images,clickclash.control,clickclash.buckets,clickclash.reports TO "trafficxx-lab-clickclash";
+GRANT INSERT,UPDATE ON clickclash.players,clickclash.receipts TO "trafficxx-lab-clickclash";
+GRANT INSERT,UPDATE,DELETE ON clickclash.sessions,clickclash.images,clickclash.buckets,clickclash.reports TO "trafficxx-lab-clickclash";
+GRANT UPDATE(image_bytes) ON clickclash.control TO "trafficxx-lab-clickclash";
+DO $scope$
+BEGIN
+  IF has_schema_privilege('trafficxx-lab-clickclash','public','CREATE')
+     OR has_database_privilege('trafficxx-lab-clickclash','trafficxx','CREATE')
+     OR has_schema_privilege('trafficxx-lab-clickclash','clickclash','CREATE') THEN
+    RAISE EXCEPTION 'ClickClash cannot have DDL privileges';
+  END IF;
+END $scope$;
+COMMIT;
+SELECT 'CLICKCLASH_SCHEMA_AND_GRANTS_OK';
+"""
+
+
+def deployment(host, address, identity, image):
+    labels = {'app.kubernetes.io/name': 'clickclash'}
+    security = {'runAsNonRoot': True, 'runAsUser': 10001, 'runAsGroup': 10001, 'seccompProfile': {'type': 'RuntimeDefault'}}
+    container_security = {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}
+    objects = [
+        {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': {'name': 'clickclash', 'namespace': NS,
+          'annotations': {'azure.workload.identity/client-id': identity['clientId'], 'azure.workload.identity/tenant-id': identity['tenantId']}}, 'automountServiceAccountToken': False},
+        {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'metadata': {'name': 'clickclash', 'namespace': NS}, 'spec': {
+          'replicas': 2, 'revisionHistoryLimit': 3, 'selector': {'matchLabels': labels}, 'template': {
+            'metadata': {'labels': {**labels, 'azure.workload.identity/use': 'true'}}, 'spec': {
+              'serviceAccountName': 'clickclash', 'automountServiceAccountToken': False, 'nodeSelector': {'agentpool': 'apps'},
+              'topologySpreadConstraints': [{'maxSkew': 1, 'topologyKey': 'kubernetes.io/hostname', 'whenUnsatisfiable': 'ScheduleAnyway', 'labelSelector': {'matchLabels': labels}}],
+              'securityContext': security, 'containers': [{'name': 'app', 'image': image, 'ports': [{'containerPort': 8000}],
+                'env': [{'name': key, 'value': value} for key, value in {
+                  'DATABASE_AUTH_MODE': 'workload_identity', 'PGHOST': 'trafficxx-pg-e8708a85.postgres.database.azure.com',
+                  'PGDATABASE': 'trafficxx', 'PGUSER': 'trafficxx-lab-clickclash', 'CLICKCLASH_POOL_MAX': '4',
+                  'CLICKCLASH_ORIGIN': 'https://' + host, 'CLICKCLASH_TRUSTED_PROXY_NETWORK': '10.244.0.0/16'}.items()],
+                'securityContext': container_security, 'resources': {'requests': {'cpu': '100m', 'memory': '128Mi'}, 'limits': {'cpu': '1', 'memory': '512Mi'}},
+                'startupProbe': {'httpGet': {'path': '/readyz', 'port': 8000}, 'periodSeconds': 5, 'failureThreshold': 24},
+                'readinessProbe': {'httpGet': {'path': '/readyz', 'port': 8000}, 'periodSeconds': 10, 'timeoutSeconds': 5},
+                'livenessProbe': {'httpGet': {'path': '/healthz', 'port': 8000}, 'periodSeconds': 15}}]}}}},
+        {'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'clickclash', 'namespace': NS},
+          'spec': {'selector': labels, 'ports': [{'port': 8000, 'targetPort': 8000}]}},
+        {'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim', 'metadata': {'name': 'clickclash-certificates', 'namespace': NS},
+          'spec': {'accessModes': ['ReadWriteOnce'], 'storageClassName': 'managed-csi', 'resources': {'requests': {'storage': '5Gi'}}}},
+    ]
+    caddy = f"""{{
+  admin off
+  http_port 8080
+  https_port 8443
+}}
+{host} {{
+  request_body {{
+    max_size 1MB
+  }}
+  header Strict-Transport-Security "max-age=31536000"
+  reverse_proxy clickclash:8000 {{
+    header_up X-CC-Client-IP {{remote_host}}
+  }}
+}}
+:8085 {{
+  respond /healthz "ok" 200
+}}
+"""
+    objects.append({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'clickclash-gateway', 'namespace': NS}, 'data': {'Caddyfile': caddy}})
+    mounts = [{'name': 'certificates', 'mountPath': '/data'}, {'name': 'config', 'mountPath': '/etc/caddy', 'readOnly': True},
+              {'name': 'runtime', 'mountPath': '/runtime'}, {'name': 'temp', 'mountPath': '/tmp'}, {'name': 'runtime-config', 'mountPath': '/config'}]
+    gateway = {'name': 'gateway', 'image': 'caddy:2.11.7-alpine', 'securityContext': container_security,
+               'env': [{'name': 'XDG_DATA_HOME', 'value': '/data'}, {'name': 'XDG_CONFIG_HOME', 'value': '/config'}],
+               'volumeMounts': mounts, 'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'}, 'limits': {'cpu': '1', 'memory': '256Mi'}}}
+    objects.extend([
+        {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'metadata': {'name': 'clickclash-gateway', 'namespace': NS}, 'spec': {
+          'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': {'app': 'clickclash-gateway'}}, 'template': {
+            'metadata': {'labels': {'app': 'clickclash-gateway'}}, 'spec': {
+              'automountServiceAccountToken': False, 'nodeSelector': {'agentpool': 'apps'}, 'securityContext': {**security, 'fsGroup': 10001},
+              'volumes': [{'name': 'certificates', 'persistentVolumeClaim': {'claimName': 'clickclash-certificates'}},
+                {'name': 'config', 'configMap': {'name': 'clickclash-gateway'}}, {'name': 'runtime', 'emptyDir': {'sizeLimit': '64Mi'}},
+                {'name': 'temp', 'emptyDir': {'sizeLimit': '32Mi'}}, {'name': 'runtime-config', 'emptyDir': {'sizeLimit': '16Mi'}}],
+              'initContainers': [{**gateway, 'name': 'validate', 'command': ['/bin/sh', '-ec', 'cat /usr/bin/caddy > /runtime/caddy; chmod 0555 /runtime/caddy; /runtime/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile']}],
+              'containers': [{**gateway, 'command': ['/runtime/caddy', 'run', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'],
+                 'readinessProbe': {'httpGet': {'path': '/healthz', 'port': 8085}, 'periodSeconds': 5},
+                 'livenessProbe': {'httpGet': {'path': '/healthz', 'port': 8085}, 'periodSeconds': 15}}]}}}},
+        {'apiVersion': 'v1', 'kind': 'Service', 'metadata': {'name': 'clickclash-public', 'namespace': NS,
+          'annotations': {'service.beta.kubernetes.io/azure-load-balancer-resource-group': RG, 'service.beta.kubernetes.io/azure-pip-name': 'trafficxx-lab-clickclash-ip'}},
+          'spec': {'type': 'LoadBalancer', 'loadBalancerIP': address, 'selector': {'app': 'clickclash-gateway'},
+                   'ports': [{'name': 'http', 'port': 80, 'targetPort': 8080}, {'name': 'https', 'port': 443, 'targetPort': 8443}]}}
+    ])
+    return {'apiVersion': 'v1', 'kind': 'List', 'items': objects}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=['build', 'prepare', 'deploy', 'check'])
+    args = parser.parse_args()
+    context()
+    if args.action == 'build':
+        tag = 'clickclash-' + time.strftime('%Y%m%d%H%M%S', time.gmtime())
+        call(['az', 'acr', 'build', '--registry', REGISTRY, '--image', 'trafficxx:' + tag, '--file', 'Dockerfile.clickclash', str(ROOT)])
+        digest = call(['az', 'acr', 'repository', 'show', '--name', REGISTRY, '--image', 'trafficxx:' + tag, '--query', 'digest', '-o', 'tsv'])
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+            raise ValueError('Invalid image digest')
+        (ROOT / 'clickclash-image.txt').write_text(SERVER + '/trafficxx@' + digest + '\n')
+        print('CLICKCLASH_IMAGE_BUILD_OK')
+        return
+    host, address, identity = metadata()
+    if args.action == 'prepare':
+        target = ROOT / 'test-results/clickclash/azure-register.sql'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(registration_sql(identity))
+        print(json.dumps({'result': 'CLICKCLASH_SQL_PREPARED', 'review_file': str(target), 'url': 'https://' + host}))
+    elif args.action == 'deploy':
+        image = (ROOT / 'clickclash-image.txt').read_text().strip()
+        if not re.fullmatch(re.escape(SERVER) + r'/trafficxx@sha256:[0-9a-f]{64}', image):
+            raise ValueError('Build and save the reviewed image digest first')
+        call(['kubectl', 'apply', '-f', '-'], json.dumps(deployment(host, address, identity, image)))
+        for name in ('clickclash', 'clickclash-gateway'):
+            print('Waiting for deployment/' + name, flush=True)
+            call(['kubectl', 'rollout', 'status', 'deployment/' + name, '-n', NS, '--timeout=600s'])
+        print(json.dumps({'result': 'CLICKCLASH_DEPLOYED', 'url': 'https://' + host, 'tls_verified': False}))
+    else:
+        for path in ('/', '/readyz', '/api/leaderboard'):
+            with urllib.request.urlopen('https://' + host + path, timeout=20) as response:
+                body = response.read(262144)
+                if response.status != 200:
+                    raise ValueError('Public route unavailable')
+                if path == '/' and b'ClickClash' not in body:
+                    raise ValueError('Wrong public website')
+                if path == '/readyz' and json.loads(body).get('readiness') != 'ready':
+                    raise ValueError('Readiness unavailable')
+                if path == '/api/leaderboard' and not isinstance(json.loads(body).get('entries'), list):
+                    raise ValueError('Leaderboard unavailable')
+        print(json.dumps({'result': 'CLICKCLASH_HTTPS_OK', 'url': 'https://' + host, 'certificate_verified': True,
+                          'note': 'Public read routes only; browser signup/scoring and restore rehearsal remain release checks.'}))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'result': 'CLICKCLASH_RELEASE_FAILED', 'error_type': type(error).__name__,
+                          'note': 'Inspect deployment readiness and the reviewed operation. No existing services, credentials or scores are reset.'}))
+        sys.exit(1)

@@ -1,0 +1,58 @@
+name: ClickClash correctness
+on:
+  push:
+    branches: [main]
+    paths: ['trafficxx/clickclash*', 'trafficxx/data/**', 'database/clickclash/**', 'clickclash-web/**', 'clickclash_tests/**', 'requirements-clickclash.txt', 'Dockerfile.clickclash', '.github/workflows/clickclash.yml']
+  pull_request:
+    paths: ['trafficxx/clickclash*', 'trafficxx/data/**', 'database/clickclash/**', 'clickclash-web/**', 'clickclash_tests/**', 'requirements-clickclash.txt', 'Dockerfile.clickclash', '.github/workflows/clickclash.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: clickclash_test
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: clickclash_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U clickclash_test" --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      CLICKCLASH_TEST_DATABASE_URL: postgresql://clickclash_test:disposable-ci-only@127.0.0.1:5432/clickclash_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-clickclash.txt -r requirements-test.txt
+      - name: Real PostgreSQL transaction and account tests
+        run: python -m pytest clickclash_tests -q
+      - name: Build and test real browser flows
+        env:
+          DATABASE_URL: postgresql://clickclash_test:disposable-ci-only@127.0.0.1:5432/clickclash_test
+          CLICKCLASH_ORIGIN: http://127.0.0.1:8088
+          CLICKCLASH_INSECURE_LOCAL: '1'
+        run: |
+          cd clickclash-web
+          npm ci --no-fund --no-audit
+          npm run build
+          npx playwright install --with-deps chromium
+          cd ..
+          python -m trafficxx.clickclash_migrate
+          python -m uvicorn trafficxx.clickclash:app --host 127.0.0.1 --port 8088 --no-access-log &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/readyz >/dev/null; then break; fi
+            sleep 1
+          done
+          cd clickclash-web
+          npx playwright test
+      - name: Build the release image and verify packaged app imports
+        run: |
+          docker build -f Dockerfile.clickclash -t clickclash-ci .
+          docker run --rm --entrypoint python clickclash-ci -c "from trafficxx.clickclash import app, DIST; assert (DIST / 'index.html').is_file(); print('CLICKCLASH_IMAGE_IMPORT_OK')"

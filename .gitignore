@@ -20,3 +20,6 @@ operations-image.txt
 publisher-image.txt
 
 .venv-docs/
+clickclash-web/node_modules/
+clickclash-web/dist/
+clickclash-image.txt

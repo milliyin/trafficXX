@@ -1,0 +1,39 @@
+name: ClickClash external status
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: clickclash-status
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: vars.CLICKCLASH_PUBLIC_URL != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Probe the reviewed public origin
+        env:
+          TARGET: ${{ vars.CLICKCLASH_PUBLIC_URL }}
+        run: python3 scripts/probe-clickclash.py --url "$TARGET"
+      - name: Persist evidence and refresh independent Pages site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          from pathlib import Path
+          resource = 'repos/' + os.environ['GH_REPO'] + '/contents/docs/public-status/history.json'
+          current = json.loads(subprocess.check_output(['gh', 'api', resource]))
+          value = {'message': 'status: record external ClickClash checks', 'sha': current['sha'], 'branch': 'main',
+                   'content': base64.b64encode(Path('docs/public-status/history.json').read_bytes()).decode()}
+          subprocess.run(['gh', 'api', '--method', 'PUT', resource, '--input', '-'], input=json.dumps(value).encode(), stdout=subprocess.DEVNULL, check=True)
+          subprocess.run(['gh', 'workflow', 'run', 'docs.yml', '--ref', 'main'], check=True)
+          PY
