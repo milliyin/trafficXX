@@ -8,7 +8,7 @@ or deployed yet. Real player records will be durable application data.
 ## Product scope
 
 A small responsive website offers timed click rounds, guest play, optional
-GitHub sign-in, personal scores and a shared leaderboard. Visitors can join
+email sign-in, personal scores and a shared leaderboard. Visitors can join
 the same countdown and compete. The server awards points only for accepted
 clicks during an active round. The interface distinguishes pending requests,
 accepted scores, rate limiting and temporary unavailability.
@@ -37,7 +37,7 @@ large UI or additional microservices.
 
 ## Real-data correctness
 
-The initial data model separates players, provider identities, server sessions,
+The initial data model separates players, account credentials, server sessions,
 rounds, click receipts and per-player round scores. Score ordering and ties
 have explicit deterministic rules. Different players do not contend on one
 global score row.
@@ -61,15 +61,30 @@ aggregates are retained separately, with a published retention policy.
 ## Identity and public controls
 
 Guests receive an opaque server session and a public nickname. A guest session
-identifies a browser, not a verified human. GitHub sign-in provides a stable
-provider identity through the authorization-code flow with state and PKCE.
-Provider credentials stay server-side and application sessions use secure,
-HttpOnly cookies. Session expiry, logout and revocation are implemented.
+identifies a browser, not a verified human. Account signup accepts an email and
+generates a memorable passphrase, shown once in the browser for the player to
+save. Later sign-in uses that email and passphrase. There is no GitHub login,
+verification email, emailed password, verification code or password-reset flow.
 
-Guest-to-account linking requires verified possession of both identities and
+Generate five independently random words using a cryptographically secure
+generator and a vetted large word list. Do not derive passwords from names,
+email addresses or dates. Store only a salted Argon2id hash, never the plaintext
+passphrase. Signup must never replace an existing account's password or reveal
+its credentials. Rate-limit signup and login across replicas.
+
+The email is a private, unverified login identifier: it does not prove mailbox
+ownership or a player's identity. Only the public nickname appears on rankings.
+Before signup completes, clearly explain that losing the passphrase means losing
+access once the player is signed out or their session expires. Forgotten
+credentials do not delete records, release the email or permit another signup
+to take over the account. No recovery through email or operator reset is offered.
+
+Application sessions require secure, HttpOnly cookies, session expiry, logout,
+revocation and protection against cross-site request forgery. Guest-to-account
+linking requires the existing guest session and an authenticated account, with
 an atomic merge rule; clients cannot claim an arbitrary guest or account ID.
-The UI labels guest and signed-in identities clearly. Server-side rate limits
-are shared across replicas; sign-in alone is not proof that traffic is human.
+The UI labels guest and signed-in identities clearly. Sign-in alone is not
+proof that traffic is human.
 
 Round management, pause controls and incident publishing require operator
 authorization. Public users cannot start arbitrary generators, submit target
@@ -78,8 +93,8 @@ global admission budget bound public traffic. Scores advance only on server
 acceptance, and overload responses remain visible rather than becoming fake
 successful clicks. Public display names are validated and escaped.
 
-Only necessary profile information is stored. Logging excludes tokens, cookies
-and request headers containing credentials. Account deletion, guest cleanup
+Only necessary profile information is stored. Logging excludes passphrases,
+tokens, cookies and credentials in request bodies or headers. Account deletion, guest cleanup
 and public-name visibility have defined behavior before launch.
 
 ## Public status
@@ -120,7 +135,7 @@ of a user count or latency guarantee.
 | --- | --- |
 | 1. Durable scoring | Schema, transactional receipts/scores, guest sessions and integration checks for duplicates, concurrency, round close and restart survival. |
 | 2. Player experience | Responsive play page, shared countdown, server-confirmed score, leaderboard and clear overload/retry behavior. |
-| 3. Sign-in | GitHub integration, guest linking, session lifecycle, ownership checks and protected operator actions. |
+| 3. Sign-in | Email and generated memorable passphrases, one-time credential display, no recovery, guest linking, session lifecycle, ownership checks and protected operator actions. |
 | 4. Public release | Reviewed HTTPS gateway, scoped database identity, shared rate limits, backups/restore evidence and a small real-user launch. |
 | 5. Status and operation | Independent probes/history, public status and incident page, tested operator notifications. |
 | 6. Reliability evidence | Separate synthetic load, longer runs, controlled failure/recovery and observed data consistency before increasing budgets. |
@@ -128,8 +143,8 @@ of a user count or latency guarantee.
 Implementation begins with correctness, not an in-memory score placeholder.
 Deployment costs and connection budgets are reviewed against the existing
 Azure foundation before introducing new resources. No public endpoint, new
-cloud resource, OAuth registration or synthetic workload was created by this
+cloud resource, account system or synthetic workload was created by this
 planning update.
 
-References: [GitHub browser authorization](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
+References: [OWASP password storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html),
 [current verified progress](progress.md), [system architecture](architecture.md).
