@@ -6,6 +6,7 @@ from contextlib import ExitStack
 import importlib.util
 import io
 import json
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -37,6 +38,101 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_command_failure_reporting_uses_fixed_labels_and_never_payloads(self):
+        secret = 'private-output-never-print-this'
+        cases = [
+            (['kubectl', '--request-timeout=20s', 'get', '--raw',
+              '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'], 'read_pod_resource_metrics'),
+            (['kubectl', 'get', 'pods', secret], 'read_pods'),
+            (['kubectl', 'exec', secret], 'release_load_gate'),
+            (['kubectl', 'patch', 'job', secret], 'stop_owned_load_job'),
+            (['az', 'monitor', 'metrics', 'list', secret], 'read_azure_database_metrics'),
+            ([secret], 'unknown'), (secret, 'unknown')]
+        for command, label in cases:
+            error = subprocess.CalledProcessError(7, command, output=secret, stderr=secret)
+            row = scaling.failure_details(error)
+            self.assertEqual(row['command_operation'], label)
+            self.assertEqual(row['command_exit_code'], 7)
+            self.assertFalse(row['command_timed_out'])
+            self.assertNotIn(secret, json.dumps(row))
+        self.assertTrue(scaling.failure_details(subprocess.TimeoutExpired(['kubectl', 'get', 'job'], 20))['command_timed_out'])
+        self.assertIsNone(scaling.failure_details(ValueError(secret))['check'])
+        self.assertEqual(scaling.failure_details(ValueError('JOB_REPLACED'))['check'], 'JOB_REPLACED')
+
+    def test_cleanup_never_touches_terminal_or_replaced_jobs(self):
+        with patch.object(scaling.base, 'kube') as kube, patch.object(scaling.trial.users, 'stop_owned_job') as stop:
+            self.assertEqual(scaling.cleanup_load({'metadata': {'uid': 'owned'}}, 'job', terminal=True), 'already_terminal')
+            kube.assert_not_called()
+            stop.assert_not_called()
+            kube.return_value = json.dumps({'metadata': {'uid': 'foreign'}})
+            with self.assertRaisesRegex(ValueError, 'JOB_REPLACED'):
+                scaling.cleanup_load({'metadata': {'uid': 'owned'}}, 'job')
+            stop.assert_not_called()
+            kube.return_value = json.dumps({'metadata': {'uid': 'owned'}})
+            self.assertEqual(scaling.cleanup_load({'metadata': {'uid': 'owned'}}, 'job'), 'stop_requested')
+            stop.assert_called_once_with('owned', 'job')
+
+    def test_primary_observer_failure_survives_a_second_cleanup_failure(self):
+        primary = subprocess.CalledProcessError(1, ['kubectl', 'get', '--raw',
+            '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods'])
+        cleanup = subprocess.CalledProcessError(7, ['kubectl', 'patch', 'job', 'hidden-payload'])
+        def kube(*args, **kwargs):
+            if '--ignore-not-found' in args:
+                return ''
+            if args[:2] == ('get', 'job'):
+                return json.dumps({'metadata': {'uid': 'job'}, 'status': {}})
+            raise AssertionError(args)
+        with ExitStack() as stack:
+            for owner, name, kwargs in (
+                (scaling.trial, 'context', {}), (scaling.trial, 'no_active_load', {}),
+                (scaling.trial, 'health', {}), (scaling, 'database_pressure', {}),
+                (scaling, 'wait_baseline', {'return_value': app()}),
+                (scaling, 'owned_hpa', {'return_value': {'status': {'conditions': [
+                    {'type': 'ScalingActive', 'status': 'True'}]}}}),
+                (scaling, 'create_job', {'return_value': {'metadata': {'uid': 'job'}}}),
+                (scaling, 'deployment', {'return_value': app()}), (scaling, 'prometheus', {}),
+                (scaling.base, 'kube', {'side_effect': kube}),
+                (scaling.trial.users, 'metrics', {'side_effect': primary}),
+                (scaling, 'cleanup_load', {'side_effect': cleanup})):
+                stack.enter_context(patch.object(owner, name, **kwargs))
+            output = stack.enter_context(redirect_stdout(io.StringIO()))
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                scaling.drill(users=500, verify_early=True)
+            self.assertIs(caught.exception, primary)
+            context = primary.observer_context
+            self.assertEqual(context['stage'], 'read_resource_metrics')
+            self.assertEqual(context['load_cleanup'], 'failed')
+            self.assertEqual(context['job'], 'browse-users-500-autoscaling-pressure3-v2')
+            self.assertIn('BROWSE_AUTOSCALING_CLEANUP_FAILED', output.getvalue())
+            self.assertNotIn('hidden-payload', output.getvalue())
+
+    def test_verification_cli_is_explicit_and_cannot_raise_the_stage(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--verify-early']), \
+                patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
+                                          slower_ramp=False, earlier_scaling=False, verify_early=True)
+        for argv in (['drill', '--verify-early'], ['check', '--users', '500', '--verify-early'],
+                     ['drill', '--users', '500', '--verify-early', '--earlier-scaling']):
+            with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
+                    patch.object(scaling.trial, 'context') as context, \
+                    patch.object(sys, 'stderr', io.StringIO()), self.assertRaises(SystemExit):
+                scaling.main()
+            context.assert_not_called()
+
+    def test_main_exposes_command_operation_and_stage_without_raw_failure(self):
+        error = subprocess.CalledProcessError(9, ['az', 'monitor', 'metrics', 'list', 'private-argv'],
+                                             output='private-stdout', stderr='private-stderr')
+        error.observer_context = {'stage': 'observe_database_metrics', 'load_cleanup': 'stop_requested'}
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--verify-early']), \
+                patch.object(scaling, 'drill', side_effect=error), redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(scaling.main(), 1)
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['command_operation'], 'read_azure_database_metrics')
+        self.assertEqual(row['command_exit_code'], 9)
+        self.assertEqual(row['observer']['stage'], 'observe_database_metrics')
+        self.assertNotIn('private-', output.getvalue())
+
     def test_early_configuration_changes_one_field_and_resumes_without_repatch(self):
         for old in ('5', '3'):
             so = scaling.scaled_object(old)
@@ -90,7 +186,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                                          slower_ramp=False, earlier_scaling=True)
+                                          slower_ramp=False, earlier_scaling=True, verify_early=False)
         for argv in (['drill', '--earlier-scaling'], ['check', '--earlier-scaling'],
                      ['drill', '--users', '500', '--slower-ramp', '--earlier-scaling']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -359,12 +455,12 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=False,
-                                          earlier_scaling=False)
+                                          earlier_scaling=False, verify_early=False)
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--slower-ramp']), \
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=True,
-                                          earlier_scaling=False)
+                                          earlier_scaling=False, verify_early=False)
         for argv in (['drill', '--users', '1000'], ['check', '--users', '500'],
                      ['drill', '--users', '500', '--verification-run'], ['drill', '--slower-ramp']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -471,13 +567,15 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error, retry, verification, users, slower, early in (([3, 3, 3, 2], None, False, False, 250, False, False),
-                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False, False), ([3, 3, 3, 2], None, True, False, 250, False, False),
-                ([3, 3, 3, 2], None, False, True, 250, False, False), ([4, 4, 4, 2], None, False, False, 500, False, False),
-                ([4, 4, 4, 2], None, False, False, 500, True, False),
-                ([3, 3, 3, 2], None, False, False, 500, False, True)):
+        for scales, expected_error, retry, verification, users, slower, early, verify in (([3, 3, 3, 2], None, False, False, 250, False, False, False),
+                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False, False, False), ([3, 3, 3, 2], None, True, False, 250, False, False, False),
+                ([3, 3, 3, 2], None, False, True, 250, False, False, False), ([4, 4, 4, 2], None, False, False, 500, False, False, False),
+                ([4, 4, 4, 2], None, False, False, 500, True, False, False),
+                ([3, 3, 3, 2], None, False, False, 500, False, True, False),
+                ([4, 4, 4, 2], None, False, False, 500, False, False, True)):
             initial = app()
-            job_name = ('browse-users-500-autoscaling-pressure3' if early else
+            job_name = ('browse-users-500-autoscaling-pressure3-v2' if verify else
+                        'browse-users-500-autoscaling-pressure3' if early else
                         ('browse-users-500-autoscaling-ramp120' if slower else 'browse-users-500-autoscaling') if users == 500 else
                         scaling.JOB + ('-v3' if verification else '-v2' if retry else ''))
             pod_names = ['browse-a', 'browse-b', job_name + '-pod']
@@ -488,9 +586,9 @@ class Scaling(unittest.TestCase):
                 'users_with_requests': users, 'attempts': 21000, 'status_counts': {'200': 21000},
                 'errors': {}, 'elapsed_seconds': 180.1}
             if users == 500:
-                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower or early else 60,
+                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower or early or verify else 60,
                                think_seconds=2, max_workload_attempts=45000)
-            states = iter([False, False, True, True])
+            states = iter([False, False, True])
             def kube(*args, **kwargs):
                 if args[:2] == ('get', 'job'):
                     if '--ignore-not-found' in args:
@@ -537,12 +635,12 @@ class Scaling(unittest.TestCase):
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
                         scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                      slower_ramp=slower, earlier_scaling=early)
+                                      slower_ramp=slower, earlier_scaling=early, verify_early=verify)
                 else:
                     scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                  slower_ramp=slower, earlier_scaling=early)
+                                  slower_ramp=slower, earlier_scaling=early, verify_early=verify)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
-                    if early:
+                    if early or verify:
                         self.assertIn(job_name, output.getvalue())
                         self.assertIn('"pressure_target_per_pod": 3', output.getvalue())
                     if retry or verification:

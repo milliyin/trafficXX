@@ -548,9 +548,50 @@ does not guarantee every arrival pattern or establish isolated causality.
 and final application health. **Incomplete:** the original continuous
 resource/database/controller audit; there is no `BROWSE_AUTOSCALING_DRILL_OK`
 for this run. Final recovery cannot replace that audit. Next, identify the
-observer command failure, improve its safe diagnostic reporting, and prepare
-a distinct repeat of the same 500-user stage before any higher user count.
+observer command failure and repeat the same 500-user stage with the improved
+safe diagnostic reporting described below before any higher user count.
 Retain the existing Job and logs; do not delete it to reuse its name.
+
+### Prepared observer verification for the same 500-user profile
+
+The old output cannot identify which command failed. Source inspection found
+that the top-level handler omitted the operation and exit code, and a second
+error during cleanup could replace the original exception. These reporting
+defects are corrected; the cause of the historical external-command failure
+remains unknown. No command failures are ignored or automatically retried.
+
+Failures now report a fixed `command_operation` label, `command_exit_code`,
+`command_timed_out`, and an `observer` record containing the stage, run ID,
+Job, resource-gate state and accumulated sampled resources. Command arguments,
+stdout, stderr and headers are omitted. Cleanup uses the owned Job UID,
+reports its own failure separately, and preserves the primary exception.
+Already-observed terminal Jobs need no extra cleanup query. If stopping fails,
+the Job may continue until its existing deadline; inspect it before another run.
+
+With no other active load and healthy recovery, run in Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py drill --users 500 --verify-early
+```
+
+This creates only `browse-users-500-autoscaling-pressure3-v2`, preserving the
+completed first Job and its workload success. It requires the deployed
+pressure target 3, borrow-rate target 40, pool eight, queue 16, two-to-four pod
+bounds and unchanged immutable application image. It repeats the same
+120-second arrival ramp inside the scheduled 180-second window with two-second
+think time and a maximum of 45,000 requests. Generator resources, freshness,
+HTTP/pool/database stop conditions and bounded HPA metric-gap checks remain
+unchanged. No image build, scaling-policy change or higher user count is needed.
+
+Keep Cloud Shell open through natural recovery and retain the full output.
+Only `BROWSE_AUTOSCALING_DRILL_OK` from this distinct run completes the
+observer verification. If it fails, inspect the new stage/operation/cleanup
+fields and the preserved Job. `diagnose-500-verify` captures this v2 workload's
+historical pool counters, while `wait-idle` checks recovery after it is terminal.
+This repeat is prepared and tested locally; no live verification result has
+been supplied yet.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

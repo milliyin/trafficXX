@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import math
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -48,6 +49,59 @@ def require(condition, code):
 
 def emit(result, **values):
     print(json.dumps({'result': result, **values}), flush=True)
+
+
+def command_operation(command):
+    """Return only fixed operation labels, never argv, patches, tokens or output."""
+    if not isinstance(command, (list, tuple)) or not all(isinstance(v, str) for v in command):
+        return 'unknown'
+    args = list(command)
+    if args and args[0] == 'kubectl':
+        args = args[1:]
+        if args and args[0] == '--request-timeout=20s':
+            args = args[1:]
+        if args[:3] == ['get', '--raw', '/apis/metrics.k8s.io/v1beta1/namespaces/trafficxx/pods']:
+            return 'read_pod_resource_metrics'
+        for resource, label in (('deployment', 'deployment'), ('hpa', 'hpa'),
+                                ('scaledobject', 'scaledobject'), ('job', 'job'),
+                                ('jobs', 'jobs'), ('pods', 'pods'), ('node', 'node')):
+            if args[:2] == ['get', resource]:
+                return 'read_' + label
+        if args[:2] == ['patch', 'job']:
+            return 'stop_owned_load_job'
+        if args[:1] == ['exec']:
+            return 'release_load_gate'
+        if args[:1] == ['logs']:
+            return 'read_load_logs'
+        return 'other_kubectl_operation'
+    if args[:4] == ['az', 'monitor', 'metrics', 'list']:
+        return 'read_azure_database_metrics'
+    if args[:3] == ['az', 'account', 'show']:
+        return 'read_azure_subscription'
+    if args[:1] == ['bash']:
+        return 'application_health_check'
+    return 'unknown'
+
+
+def failure_details(error):
+    check = str(error) if isinstance(error, ValueError) else ''
+    return {'error_type': type(error).__name__,
+            'check': check if re.fullmatch(r'[A-Z][A-Z0-9_]{0,99}', check) else None,
+            'command_operation': command_operation(getattr(error, 'cmd', None)),
+            'command_exit_code': error.returncode if isinstance(error, subprocess.CalledProcessError) else None,
+            'command_timed_out': isinstance(error, subprocess.TimeoutExpired)}
+
+
+def cleanup_load(job, job_name, *, terminal=False):
+    if terminal:
+        return 'already_terminal'
+    state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
+    require(state['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
+    if any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
+           for c in state.get('status', {}).get('conditions', [])):
+        return 'already_terminal'
+    trial.users.stop_owned_job(job['metadata']['uid'], job_name)
+    return 'stop_requested'
 
 
 def scaled_object(pressure_target='5'):
@@ -435,11 +489,12 @@ def post_job_coverage(before, after, terminal_timestamp):
                 all(name in stamps and stamps[name] > terminal_timestamp for name in initial) if initial else None}
 
 
-def diagnose_500(*, slower_ramp=False, earlier_scaling=False):
+def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     trial.context()
     trial.no_active_load()
-    name = ('browse-users-500-autoscaling-pressure3' if earlier_scaling else
+    name = ('browse-users-500-autoscaling-pressure3-v2' if verify_early else
+            'browse-users-500-autoscaling-pressure3' if earlier_scaling else
             'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     start, end, window = diagnostic_window(job)
@@ -449,7 +504,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False):
             and outcome.get('users') == 500 and outcome.get('run_id') ==
             job['metadata'].get('labels', {}).get('trafficxx.io/run-id'), 'DIAGNOSTIC_RUN_MISMATCH')
     when = str(int(end.timestamp()))
-    require(not (slower_ramp or earlier_scaling) or outcome.get('start_ramp_seconds') == 120,
+    require(not (slower_ramp or earlier_scaling or verify_early) or outcome.get('start_ramp_seconds') == 120,
             'DIAGNOSTIC_RAMP_MISMATCH')
     # A final rejection may not be exported until the next scrape, after the
     # diagnostic Job has already become Failed. Retain peak-window alignment,
@@ -500,15 +555,20 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False):
                 outcome.get('max_workload_attempts') == 45000, 'HIGHER_STAGE_PACING_NOT_VERIFIED')
 
 
-def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False):
+def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
+          verify_early=False):
     require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
     require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
     require(not earlier_scaling or (users == 500 and not slower_ramp), 'CONFLICTING_DRILL_MODES')
+    require(not verify_early or (users == 500 and not any((retry_metric_gap, verification_run,
+                                                       slower_ramp, earlier_scaling))), 'CONFLICTING_DRILL_MODES')
+    earlier_scaling = earlier_scaling or verify_early
     pressure_target = '3' if earlier_scaling else '5'
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = ('browse-users-500-autoscaling-pressure3' if earlier_scaling else
+    job_name = ('browse-users-500-autoscaling-pressure3-v2' if verify_early else
+                'browse-users-500-autoscaling-pressure3' if earlier_scaling else
                 ('browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling') if users == 500 else
                 JOB + ('-v3' if verification_run else '-v2' if retry_metric_gap else ''))
     trial.context()
@@ -534,6 +594,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         samples, first_seen, resource_watch = {}, {}, trial.users.ResourceWatch()
         waiting_since = None
         metric_readiness = MetricReadiness()
+        stage, primary_error, job_terminal = 'create_load_job', None, False
         try:
             job = (create_job(app, run_id, job_name, users=500, slower_ramp=True) if slower_ramp else
                    create_job(app, run_id, job_name, users=500) if users == 500 else
@@ -544,17 +605,22 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  note='Real Browse GETs; no manual scale commands or inventory writes.')
             deadline = time.monotonic() + 480
             while True:
+                stage = 'observe_deployment'
                 current = deployment(app['metadata']['uid'])
                 require(trial.fingerprint(current['spec']['template']) == original, 'DEPLOYMENT_TEMPLATE_CHANGED')
                 ready = current.get('status', {}).get('readyReplicas', 0)
                 peak = max(peak, ready)
                 emit('BROWSE_SCALING_OBSERVATION', desired=current['spec']['replicas'], ready=ready,
                      resource_gate_released=released)
+                stage = 'observe_autoscaler'
                 metric_readiness.observe(owned_hpa(require_active=False, pressure_target=pressure_target), time.monotonic())
+                stage = 'observe_load_job'
                 state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 require(state['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
                 terminal = {r['type'] for r in state.get('status', {}).get('conditions', []) if r['status'] == 'True'}
+                job_terminal = bool(terminal & {'Complete', 'Failed'})
                 if 'Failed' in terminal:
+                    stage = 'read_failed_load_logs'
                     print(base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check'), flush=True)
                 require('Failed' not in terminal, 'LOAD_JOB_FAILED')
                 # A completed generator no longer has live container usage.
@@ -564,7 +630,9 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     break
                 # Source-timestamp freshness and sustained pressure use the same
                 # limits as earlier trials. New pods have bounded metrics warmup.
+                stage = 'read_resource_metrics'
                 payload = trial.users.metrics()
+                stage = 'read_observed_pods'
                 pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-o', 'json'))['items']
                 observed = [p for p in pods if not p['metadata'].get('deletionTimestamp') and
                             (p['metadata'].get('labels', {}).get('app.kubernetes.io/name') == 'trafficxx-browse'
@@ -588,6 +656,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     expected[name] = {'container': 'check' if is_generator else 'browse',
                                       'cpu': 1 if is_generator else .5, 'memory': 256}
                     first_seen.setdefault(name, time.monotonic())
+                stage = 'validate_resource_samples'
                 values = {}
                 for name, limits in expected.items():
                     try:
@@ -605,10 +674,12 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     else:
                         samples.setdefault(name, set()).add(values[name]['timestamp'])
                 if not released and generator and all(len(samples.get(name, set())) >= 2 for name in expected):
+                    stage = 'release_load_gate'
                     trial.users.release_gate(generator, run_id, job_name)
                     released = True
                     emit('BROWSE_SCALING_RESOURCE_GATE_RELEASED', run_id=run_id)
                 if released:
+                    stage = 'observe_pool_pressure'
                     waiting = scalar(query, 'max(' + M + 'waiting' + F + ')')
                     if waiting > 0:
                         waiting_since = waiting_since or time.monotonic()
@@ -617,10 +688,12 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                         waiting_since = None
                     check_pool_errors(query)
                 if time.monotonic() - last_database >= 60:
+                    stage = 'observe_database_metrics'
                     database_pressure()
                     last_database = time.monotonic()
                 require(time.monotonic() < deadline, 'LOAD_JOB_TIMEOUT')
                 time.sleep(5)
+            stage = 'validate_completed_workload'
             logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
             print(logs, flush=True)
             outcome = json.loads(logs.splitlines()[-1])
@@ -630,8 +703,11 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
             gaps = metric_readiness.summary()
             emit('BROWSE_SCALE_UP_OBSERVED', peak_ready_replicas=peak)
             # No manual replica restoration: success requires the actual controller to downscale.
+            stage = 'wait_natural_recovery'
             wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
+            stage = 'verify_final_health'
             trial.health()
+            stage = 'verify_final_database_metrics'
             database_pressure()
             require(trial.database_metrics(start), 'DATABASE_METRIC_SAMPLES_UNAVAILABLE')
             emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, users=users, ready_replicas_before=2,
@@ -641,18 +717,29 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  resources=resource_watch.summary(),
                  hpa_metric_observations=gaps,
                  latency_slo_tested=False, notification_delivery_configured=False)
+        except (Exception, KeyboardInterrupt) as error:
+            primary_error = error
+            error.observer_context = {'stage': stage, 'job': job_name, 'run_id': run_id,
+                                      'resource_gate_released': released, 'resources': resource_watch.summary()}
+            raise
         finally:
             if job is not None:
-                state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
-                if not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
-                           for c in state.get('status', {}).get('conditions', [])):
-                    trial.users.stop_owned_job(job['metadata']['uid'], job_name)
+                try:
+                    cleanup = cleanup_load(job, job_name, terminal=job_terminal)
+                    if primary_error is not None:
+                        primary_error.observer_context['load_cleanup'] = cleanup
+                except (Exception, KeyboardInterrupt) as cleanup_error:
+                    emit('BROWSE_AUTOSCALING_CLEANUP_FAILED', job=job_name, **failure_details(cleanup_error),
+                         note='Job may still run until its deadline. Keep the Job and inspect its status.')
+                    if primary_error is None:
+                        raise
+                    primary_error.observer_context['load_cleanup'] = 'failed'
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
-                                         'configure-early', 'diagnose-500-early'))
+                                         'configure-early', 'diagnose-500-early', 'diagnose-500-verify'))
     parser.add_argument('--users', type=int, choices=(250, 500), default=250,
                         help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -664,9 +751,11 @@ def main():
                        help='500 users only: compare a 120-second arrival ramp in a separate Job.')
     modes.add_argument('--earlier-scaling', action='store_true',
                        help='500 users only: require pressure target 3, retain the 120-second ramp.')
+    modes.add_argument('--verify-early', action='store_true',
+                       help='Repeat the same 500-user pressure-3 trial in a distinct v2 Job with observer diagnostics.')
     args = parser.parse_args()
     action = args.action
-    if (args.retry_metric_gap or args.verification_run or args.slower_ramp or args.earlier_scaling) and action != 'drill':
+    if (args.retry_metric_gap or args.verification_run or args.slower_ramp or args.earlier_scaling or args.verify_early) and action != 'drill':
         parser.error('drill modes require the drill action')
     if args.users != 250 and (action != 'drill' or args.retry_metric_gap or args.verification_run):
         parser.error('--users 500 requires drill without a 250-user retry mode')
@@ -674,12 +763,15 @@ def main():
         parser.error('--slower-ramp requires --users 500')
     if args.earlier_scaling and args.users != 500:
         parser.error('--earlier-scaling requires --users 500')
+    if args.verify_early and args.users != 500:
+        parser.error('--verify-early requires --users 500')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
             drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run,
-                  users=args.users, slower_ramp=args.slower_ramp, earlier_scaling=args.earlier_scaling)
+                  users=args.users, slower_ramp=args.slower_ramp, earlier_scaling=args.earlier_scaling,
+                  verify_early=args.verify_early)
         elif action == 'configure-early':
             configure_early()
         elif action == 'wait-idle':
@@ -690,14 +782,16 @@ def main():
             diagnose_500(slower_ramp=True)
         elif action == 'diagnose-500-early':
             diagnose_500(earlier_scaling=True)
+        elif action == 'diagnose-500-verify':
+            diagnose_500(verify_early=True)
         else:
             trial.context()
             with prometheus() as query:
                 wait_baseline(query)
         return 0
     except (Exception, KeyboardInterrupt) as error:
-        emit('BROWSE_AUTOSCALING_FAILED', action=action, error_type=type(error).__name__,
-             check=str(error) if isinstance(error, ValueError) else None,
+        emit('BROWSE_AUTOSCALING_FAILED', action=action, **failure_details(error),
+             observer=getattr(error, 'observer_context', None),
              note='Inspect the preserved Job/HPA/ScaledObject. No manual scale-down or SQL reset is performed.')
         return 1
 

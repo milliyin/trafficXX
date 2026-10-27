@@ -52,8 +52,11 @@ or establish sustained production capacity.
 
 - **Complete the 500-user observer audit:** the earlier-scaling workload
   passed, but its parent stopped with `CalledProcessError` after observing
-  three ready pods. Identify the failing command and improve safe diagnostics,
-  then repeat the same stage under a distinct Job name before increasing load.
+  three ready pods. Safe command/stage diagnostics and preservation of the
+  primary error during cleanup are implemented. A distinct same-profile repeat,
+  `drill --users 500 --verify-early`, is prepared; its live result is pending.
+  The historical failing command remains unknown. Complete the observer run
+  before increasing load.
   Separate four-to-two recovery passed; it does not replace the interrupted audit.
 - **Earlier 500-user failures retained:** the first ramped run stopped after
   40.795 seconds, with 338 users participating, 3,359 successful requests and
