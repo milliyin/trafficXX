@@ -583,12 +583,6 @@ function Play({
             Only clicks accepted by the server earn points. Refreshing won’t
             erase them.
           </p>
-          <hr />
-          <h3>Robots welcome.</h3>
-          <p>
-            Automatic clickers are allowed. Everyone shares a fixed server
-            capacity. When it’s full, excess requests are rejected.
-          </p>
           <a href="/" className="text-link">
             See who’s ahead ↗
           </a>
