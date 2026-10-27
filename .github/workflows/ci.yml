@@ -35,6 +35,7 @@ jobs:
           docker run --rm --mount "type=bind,source=$PWD/monitoring/prometheus,target=/rules,readonly" --workdir /rules --entrypoint /bin/promtool quay.io/prometheus/prometheus:v3.15.1 test rules browse-alerts.test.yml
           docker run --rm --mount "type=bind,source=$PWD/monitoring/prometheus,target=/rules,readonly" --workdir /rules --entrypoint /bin/promtool quay.io/prometheus/prometheus:v3.15.1 test rules booking-alerts.test.yml
           docker run --rm --mount "type=bind,source=$PWD/monitoring/prometheus,target=/rules,readonly" --workdir /rules --entrypoint /bin/promtool quay.io/prometheus/prometheus:v3.15.1 test rules browse-autoscaling.test.json
+          docker run --rm --mount "type=bind,source=$PWD/monitoring/prometheus,target=/rules,readonly" --workdir /rules --entrypoint /bin/promtool quay.io/prometheus/prometheus:v3.15.1 test rules browse-diagnostics.test.json
 
   database-tests:
     name: PostgreSQL correctness tests

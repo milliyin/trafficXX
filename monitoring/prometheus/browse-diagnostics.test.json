@@ -1,0 +1,25 @@
+{
+  "rule_files": [],
+  "evaluation_interval": "15s",
+  "tests": [
+    {
+      "name": "rejection_exported_after_job_termination",
+      "interval": "15s",
+      "input_series": [
+        {"series": "trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\",instance=\"a\"}", "values": "0x12 1x3"}
+      ],
+      "promql_expr_test": [
+        {
+          "expr": "sum(increase(trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\"}[180s] @ 180))",
+          "eval_time": "4m",
+          "exp_samples": [{"labels": "{}", "value": 0}]
+        },
+        {
+          "expr": "sum(increase(trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\"}[240s] @ 240))",
+          "eval_time": "4m",
+          "exp_samples": [{"labels": "{}", "value": 1}]
+        }
+      ]
+    }
+  ]
+}

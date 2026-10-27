@@ -216,13 +216,36 @@ python3 scripts/browse-autoscaling.py diagnose-500
 It requires the original Job to be terminal and matches its run ID to the
 stored result. It queries historical queue-full, timeout, closed-pool, borrow
 and connection-error counters, plus sampled healthy-target, occupancy, waiting
-and borrow-rate peaks. The window ends at that Job's terminal timestamp and
-includes its warmup and 60 seconds before its start. Prometheus `increase`
+and borrow-rate peaks. Peak queries end at that Job's terminal timestamp;
+counter queries extend 60 seconds past termination to include the next scrapes.
+Both include warmup and 60 seconds before the Job's start. Prometheus `increase`
 values are extrapolated estimates; missing samples remain null, not zero.
 The command creates no Job, makes no configuration or SQL changes and does
 not replay traffic. `BROWSE_500_DIAGNOSTICS_OK` means capture succeeded, not
 that the load passed. Historical samples are retained for the collector's
 configured retention period. Review this evidence before selecting a retry.
+
+The first diagnostic for this failed run used the exact terminal cutoff,
+14:50:30 UTC, and reported zero increases for every pool-error counter.
+Its sampled peaks were two healthy targets, zero waiting, nine busy/opening
+slots and a total one-minute borrow rate of 44.8/second. These measurements
+do not establish a queue-full cause or a complete 500-user capacity result.
+
+Code review identified a boundary issue: the 503 can happen after the last
+scrape before Job termination. Its cumulative rejection count may first be
+exported by the following scrape, outside the original diagnostic window.
+The corrected counter query ends at 14:51:30 UTC and checks for post-terminal
+samples from every instance visible at the cutoff. Peak queries retain their
+original cutoff, so later idle activity is not mixed into workload peaks.
+The original zero values therefore do not rule out a final unsampled-at-cutoff
+rejection. This is an observation fix, not proof of the actual 503 cause.
+
+Run the same read-only `diagnose-500` command after pulling the correction.
+Inspect `post_job_sample_coverage` alongside the counter estimates; absent
+instances or post-run samples leave evidence incomplete. A real Prometheus
+regression test reproduces a zero at the old cutoff and a rejection increase
+in the extended window. No load, application image or scaling policy change
+is required to retrieve the additional history.
 
 ## Failure or disconnect
 

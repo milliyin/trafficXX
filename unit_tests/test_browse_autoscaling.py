@@ -56,10 +56,25 @@ class Scaling(unittest.TestCase):
             scaling.diagnose_500()
         row = json.loads(output.getvalue())
         self.assertEqual(row['query_window_seconds'], 180)
+        self.assertEqual(row['counter_query_window_seconds'], 240)
+        self.assertEqual(row['post_terminal_observation_seconds'], 60)
         self.assertEqual(row['counter_increases']['queue_full_total'], 1.25)
         self.assertIsNone(row['counter_increases']['acquire_timeouts_total'])
-        self.assertEqual(len(expressions), 11)
-        self.assertTrue(all('@ 180' in expression for expression in expressions))
+        self.assertEqual(len(expressions), 13)
+        self.assertTrue(all('@ 240' in expression for expression in expressions[:7]))
+        self.assertTrue(all('@ 180' in expression for expression in expressions[7:11]))
+        self.assertIsNone(row['post_job_sample_coverage']['all_original_instances_sampled_after_terminal'])
+
+    def test_post_job_coverage_requires_every_original_instance_and_new_samples(self):
+        before = [{'metric': {'instance': name}} for name in ('a', 'b')]
+        def after(a, b):
+            return [{'metric': {'instance': name}, 'value': [240, stamp]} for name, stamp in (('a', a), ('b', b))]
+        key = 'all_original_instances_sampled_after_terminal'
+        self.assertTrue(scaling.post_job_coverage(before, after(195, 210), 180)[key])
+        self.assertFalse(scaling.post_job_coverage(before, after(180, 210), 180)[key])
+        self.assertFalse(scaling.post_job_coverage(before, after(195, 210)[:1], 180)[key])
+        with self.assertRaises(ValueError):
+            scaling.post_job_coverage(before, after(float('nan'), 210), 180)
 
     def test_historical_diagnostic_refuses_active_or_unbounded_jobs(self):
         with self.assertRaisesRegex(ValueError, 'NOT_TERMINAL'):

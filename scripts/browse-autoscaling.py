@@ -369,6 +369,19 @@ def optional_scalar(query, expression):
     return round(value, 6)
 
 
+def post_job_coverage(before, after, terminal_timestamp):
+    initial = {row['metric']['instance'] for row in before}
+    stamps = {}
+    for row in after:
+        instance, stamp = row['metric']['instance'], float(row['value'][1])
+        require(instance not in stamps and math.isfinite(stamp) and stamp >= 0,
+                'INVALID_DIAGNOSTIC_COVERAGE')
+        stamps[instance] = stamp
+    return {'instances_at_terminal': len(initial), 'instances_in_post_window': len(stamps),
+            'all_original_instances_sampled_after_terminal':
+                all(name in stamps and stamps[name] > terminal_timestamp for name in initial) if initial else None}
+
+
 def diagnose_500():
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     trial.context()
@@ -382,12 +395,17 @@ def diagnose_500():
             and outcome.get('users') == 500 and outcome.get('run_id') ==
             job['metadata'].get('labels', {}).get('trafficxx.io/run-id'), 'DIAGNOSTIC_RUN_MISMATCH')
     when = str(int(end.timestamp()))
+    # A final rejection may not be exported until the next scrape, after the
+    # diagnostic Job has already become Failed. Retain peak-window alignment,
+    # but give cumulative counters four scrape intervals to capture that tail.
+    counter_end = end + timedelta(seconds=60)
+    counter_when, counter_window = str(int(counter_end.timestamp())), window + 60
     with prometheus() as query:
         counters = {}
         for field in ('queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
                       'borrow_errors_total', 'connection_errors_total', 'connections_lost_total', 'bad_returns_total'):
             counters[field] = optional_scalar(query, 'sum(increase(' + M + field + F +
-                '[' + str(window) + 's] @ ' + when + '))')
+                '[' + str(counter_window) + 's] @ ' + counter_when + '))')
         peaks = {}
         for label, expression in (
                 ('healthy_targets', 'sum(up' + F + ')'),
@@ -396,14 +414,20 @@ def diagnose_500():
                 ('borrow_rate', 'sum(rate(' + M + 'borrows_total' + F + '[1m]))')):
             peaks[label] = optional_scalar(query, 'max_over_time((' + expression + ')[' +
                 str(window) + 's:15s] @ ' + when + ')')
+        coverage = post_job_coverage(query(M + 'borrows_total' + F + ' @ ' + when),
+            query('timestamp(' + M + 'borrows_total' + F + ' @ ' + counter_when + ')'), end.timestamp())
     current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
     emit('BROWSE_500_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
          job_start_utc=start.isoformat(), job_terminal_utc=end.isoformat(),
          query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
+         counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
+         post_terminal_observation_seconds=60, post_job_sample_coverage=coverage,
          workload=outcome, inventory_writes=False,
-         note='Read-only capture, not a load pass. Window includes Job warmup and 60 seconds before start; '
-              'Prometheus increases are extrapolated estimates, peaks are sampled, missing data is null.')
+         note='Read-only capture, not a load pass. Peaks end at Job termination; counters include 60 seconds '
+              'after termination to capture the next scrapes. Both include warmup and 60 seconds before start. '
+              'Check post-job coverage before interpreting zero counters. Increases are extrapolated estimates; '
+              'peaks are sampled and missing data is null.')
 
 
 def validate_load(outcome, run_id, users, released):
