@@ -627,8 +627,18 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
             'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     start, end, window = diagnostic_window(job)
-    logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
-    outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up)
+    log_capture = {'available': True}
+    try:
+        logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        if not faster_scale_up:
+            raise
+        # Metadata must independently prove this exact interrupted stage.
+        # Missing logs never permit a completed or unrecognized Job to pass.
+        outcome = diagnostic_outcome(job, '', allow_interrupted=True)
+        log_capture = {'available': False, **failure_details(error)}
+    else:
+        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up)
     when = str(int(end.timestamp()))
     require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up)
             or outcome.get('start_ramp_seconds') == 120,
@@ -673,7 +683,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
          query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
          counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
          post_terminal_observation_seconds=60, post_job_sample_coverage=coverage,
-         workload=outcome, inventory_writes=False, **extra,
+         workload=outcome, workload_log_capture=log_capture, inventory_writes=False, **extra,
          note='Read-only capture, not a load pass. Peaks end at Job termination; counters include 60 seconds '
               'after termination to capture the next scrapes. Both include warmup and 60 seconds before start. '
               'Check post-job coverage before interpreting zero counters. Increases are extrapolated estimates; '

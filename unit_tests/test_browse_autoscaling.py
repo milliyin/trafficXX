@@ -103,6 +103,45 @@ class Scaling(unittest.TestCase):
         self.assertEqual(row['waiting_samples_before_terminal'], {})
         self.assertNotIn('attempts', row['workload'])
 
+    def test_unavailable_logs_allow_only_metadata_proven_interrupted_step30_capture(self):
+        private = 'private-stdout-stderr-do-not-print'
+        command = ['kubectl', '--request-timeout=20s', 'logs', 'job/test']
+        exited = subprocess.CalledProcessError(1, command, output=private, stderr=private)
+        timed_out = subprocess.TimeoutExpired(command, 30, output=private, stderr=private)
+        for condition, reason, action, error, success in (
+                ('Failed', 'DeadlineExceeded', 'diagnose-500-step30', exited, True),
+                ('Failed', 'DeadlineExceeded', 'diagnose-500-step30', timed_out, True),
+                ('Complete', 'DeadlineExceeded', 'diagnose-500-step30', exited, False),
+                ('Failed', 'OtherReason', 'diagnose-500-step30', exited, False),
+                ('Failed', 'DeadlineExceeded', 'diagnose-500-verify', exited, False)):
+            job = {'metadata': {'uid': 'owned', 'name': 'browse-users-500-autoscaling-step30',
+                               'labels': {'trafficxx.io/run-id': 'a' * 12}},
+                'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                    {'type': condition, 'status': 'True', 'reason': reason,
+                     'lastTransitionTime': '1970-01-01T00:03:00Z'}]},
+                'spec': {'template': {'spec': {'containers': [{'name': 'check', 'args': ['a' * 12, '500', '120']}]}}}}
+            def kube(*args):
+                self.assertIn(args[0], ('get', 'logs'))
+                if args[0] == 'logs':
+                    raise error
+                return json.dumps(job)
+            with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                    patch.object(scaling.base, 'kube', side_effect=kube), \
+                    patch.object(scaling, 'prometheus') as connection, \
+                    patch.object(sys, 'argv', ['browse-autoscaling.py', action]), \
+                    redirect_stdout(io.StringIO()) as output:
+                connection.return_value.__enter__.return_value = lambda _: []
+                self.assertEqual(scaling.main(), 0 if success else 1)
+                if not success:
+                    connection.assert_not_called()
+            row = json.loads(output.getvalue())
+            self.assertNotIn(private, output.getvalue())
+            if success:
+                self.assertEqual(row['workload']['result'], 'BROWSE_SCALING_WORKLOAD_INTERRUPTED')
+                self.assertFalse(row['workload_log_capture']['available'])
+                self.assertEqual(row['workload_log_capture']['command_operation'], 'read_load_logs')
+                self.assertNotIn('errors', row['workload'])
+
     def test_fast_scale_up_changes_only_one_policy_field_and_resumes(self):
         for old in (60, 30):
             so = scaling.scaled_object('3', old)

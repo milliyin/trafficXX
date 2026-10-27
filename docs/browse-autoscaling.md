@@ -803,7 +803,22 @@ may reflect recovery; terminal time is not necessarily the exact stop time.
 Use these samples together with per-instance counters to assess the guard
 before a further comparison. No waiting threshold, safety stop, pool, queue
 or maximum replica limit has been changed in response to this interruption.
-Post-stop health and the historical capture are pending at this checkpoint.
+The user subsequently confirmed that the Job was Failed and recovery passed:
+four pods naturally returned to two, inventory remained 100 per demo event,
+Operations had no backlog or active alerts, and workers were healthy. Recovery
+database sample maxima were CPU 5.808%, memory 21.474% and 44 connections
+including idle sessions. The historical source-sample capture remains pending.
+
+The first historical capture attempt failed at `read_load_logs` with exit
+code one, matching the preceding failed `kubectl logs` attempt. The cause of
+log unavailability is not established. The diagnostic now permits Prometheus
+capture when log retrieval exits or times out **only** for the metadata-proven
+deadline-stopped step30 Job described above. It reports
+`workload_log_capture.available: false` and the safe operation/exit/timeout
+fields. Workload status remains interrupted with unknown HTTP counts/errors;
+unavailable logs never turn into a workload pass. Completed Jobs or other
+diagnostic modes retain their strict log requirements. No load or guard change
+is needed to retry this read-only capture after pulling the update.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

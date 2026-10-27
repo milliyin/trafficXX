@@ -10,8 +10,10 @@ Latest trial (`2bfd8b5fcf69`, 30-second scale-up period) reached four ready pods
 and was stopped by the observer's `SUSTAINED_POOL_WAITING` guard. The supplied
 output has no final workload summary, so HTTP counts and errors are unknown.
 A guard timing flaw was found: repeated reads of one 15-second scrape can
-satisfy its 10-second local-clock timer. Actual source-sample history and
-post-stop recovery are pending; the trial is not a pass.
+satisfy its 10-second local-clock timer. Post-stop recovery passed. Historical
+capture initially failed reading Job logs; the diagnostic now supports the
+metadata-proven interrupted Job without logs. Original source-sample history
+is still pending; the trial is not a pass.
 
 The preceding repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
 12,986 HTTP 200 responses and one `DATABASE_BUSY` HTTP 503. Four ready pods
