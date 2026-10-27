@@ -129,6 +129,59 @@ resource samples are printed. If no scale-up occurs, the drill does not pass;
 do not manually scale to manufacture evidence. No live autoscaling deployment
 or drill result has been supplied yet.
 
+## Next bounded stage: 500 paced users
+
+After the complete v3 pass, the user authorized a higher stage. The prepared
+command is:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py drill --users 500
+```
+
+This creates the separate, preserved Job `browse-users-500-autoscaling`.
+It reuses the existing immutable image and mounts the reviewed updated probe;
+no build, rollout, database upgrade or autoscaling-policy change is needed.
+Only this selected stage runs; 1,000 users are unsupported.
+
+| Parameter | 500-user stage |
+| --- | --- |
+| Users | 500, with every participant required for success |
+| Arrival ramp | 60 seconds inside the test window |
+| Total workload window | 180 seconds; users arriving near the end of the ramp have about 120 seconds remaining |
+| Think time | Two seconds after each request |
+| Workload cap | 45,000 GET attempts, at most 90 per user |
+| Generator budget | One CPU, 256 MiB; bound to an existing apps node |
+| App policy | Eight connections per pod, queue 16, HPA minimum two / maximum four |
+| Connection budget | 32 steady Browse connections at four pods; total lab planning budget 128 |
+| Mutations | No booking or inventory writes; no manual replica changes |
+
+The ramp gives reactive scaling time to respond; it does not guarantee that
+the current policy can absorb 500 users. This differs from the 250-user test's
+two-second arrival spread, so latency differences are not a controlled
+user-count-only comparison. Five hundred paced users are neither 500 RPS nor
+500 simultaneous requests. The staged duration includes the ramp.
+
+The same fresh-source resource gate, sampled CPU/memory stops, two-second
+request stop, pool-error and sustained-waiting checks, database pressure
+checks, 60-second cumulative HPA metric-gap bound, UID/template protection,
+and natural downscale proof remain. The generator budget has not been raised:
+the previous 250-user generator used about 41 MiB and 0.091 CPU in sampled
+metrics, but that is not a guarantee of 500-user generator headroom.
+
+Keep Cloud Shell open through the final result; allow 15-20 minutes. A pass
+requires all 500 users, matching HTTP 200 counts, no request errors, verified
+60-second arrival ramp and 45,000-attempt cap, at least three ready pods
+observed under the HPA, then natural return to two ready pods and final health
+and database observations. It reports `BROWSE_AUTOSCALING_DRILL_OK` with
+`users: 500` and the distinct Job name. There is **no live 500-user result yet**.
+
+On failure, inspect this Job and logs without starting another load. The
+observer attempts to stop only its own Job; the native 450-second deadline
+also bounds a disconnected generator. Once the load is terminal, use
+`python3 scripts/browse-autoscaling.py wait-idle` for read-only recovery.
+Do not delete previous Jobs or increase limits simply to obtain a pass.
+
 ## Failure or disconnect
 
 ### 27 October: corrected-observer verification passed

@@ -1,4 +1,4 @@
-"""In-cluster 250-paced-user Browse drill; service routing permits pod changes."""
+"""Bounded 250/500-paced-user Browse reads; service routing permits pod changes."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -15,14 +15,16 @@ URL = 'http://browse.trafficxx.svc.cluster.local'
 
 def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
     read.require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_RUN_ID')
-    read.require(users == 250 and duration == 180 and think == 2, 'UNSUPPORTED_DRILL')
+    read.require(type(users) is int and users in (250, 500) and duration == 180 and think == 2,
+                 'UNSUPPORTED_DRILL')
+    ramp_seconds = 60 if users == 500 else 2
     stop, lock = threading.Event(), threading.Lock()
     rows, failures, participants = [], Counter(), set()
     start = time.monotonic()
     deadline = start + duration
 
     def user(index):
-        if stop.wait(index * think / users):
+        if stop.wait(index * ramp_seconds / users):
             return
         for iteration in range(90):
             if stop.is_set() or time.monotonic() >= deadline:
@@ -49,6 +51,8 @@ def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
         list(executor.map(user, range(users)))
     result = {'result': 'BROWSE_SCALING_LOAD_OK' if not failures and len(participants) == users else 'BROWSE_SCALING_LOAD_FAILED',
         'run_id': run_id, 'users': users, 'users_with_requests': len(participants),
+        'scheduled_duration_seconds': duration, 'start_ramp_seconds': ramp_seconds,
+        'think_seconds': think, 'max_workload_attempts': users * 90,
         'attempts': len(rows), 'status_counts': dict(Counter(str(r[0]) for r in rows)), 'errors': dict(failures),
         'latency_ms': read.percentiles([r[1] for r in rows]) if rows else {},
         'elapsed_seconds': round(time.monotonic() - start, 3), 'inventory_writes': False,
@@ -64,7 +68,7 @@ if __name__ == '__main__':
         while not Path('/state/start').exists():
             read.require(time.monotonic() < deadline, 'RESOURCE_GATE_TIMEOUT')
             time.sleep(1)
-        result = run(sys.argv[1])
+        result = run(sys.argv[1], users=int(sys.argv[2]) if len(sys.argv) == 3 else 250)
         raise SystemExit(0 if result['result'] == 'BROWSE_SCALING_LOAD_OK' else 1)
     except Exception as error:
         print(json.dumps({'result': 'BROWSE_SCALING_LOAD_FAILED', 'error_type': type(error).__name__}), flush=True)

@@ -42,6 +42,13 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
+- **500-user stage prepared, not run:** after the v3 pass, the user authorized
+  the next stage. `drill --users 500` uses a separate Job, a 60-second arrival
+  ramp inside the 180-second read window and at most 45,000 GETs. Pool, replica,
+  generator resource budgets and stop conditions are unchanged. All 500 users
+  and the configured ramp must be verified; no automatic 1,000-user stage is
+  supported. See [the staged test and limits](browse-autoscaling.md#next-bounded-stage-500-paced-users).
+
 - **Complete autoscaling observer run passed:** v3 run `f807afdc2940`
   reported `BROWSE_AUTOSCALING_DRILL_OK`. All 250 users completed 21,129
   successful reads, with p95 159.051 ms and no request errors. The observer

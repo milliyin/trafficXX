@@ -285,7 +285,8 @@ def wait_until(function, seconds):
             time.sleep(5)
 
 
-def create_job(app, run_id, job_name=JOB):
+def create_job(app, run_id, job_name=JOB, *, users=250):
+    require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
     files = 'browse-scaling-' + run_id
     base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
     cm = base.kube('create', 'configmap', files, '-n', 'trafficxx',
@@ -303,7 +304,8 @@ def create_job(app, run_id, job_name=JOB):
              {'op': 'replace', 'path': '/spec/template/spec/volumes/0/configMap/name', 'value': files},
              {'op': 'replace', 'path': '/spec/template/spec/containers/0/image',
               'value': app['spec']['template']['spec']['containers'][0]['image']},
-             {'op': 'add', 'path': '/spec/template/spec/containers/0/args', 'value': [run_id]}]
+             {'op': 'add', 'path': '/spec/template/spec/containers/0/args',
+              'value': [run_id, str(users)]}]
     manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
         '--type=json', '--patch', json.dumps(patch), '-o', 'json')
     try:
@@ -345,9 +347,26 @@ def wait_idle():
          note='Post-run recovery only; not a replacement for the original continuous resource audit.')
 
 
-def drill(*, retry_metric_gap=False, verification_run=False):
+def validate_load(outcome, run_id, users, released):
+    require(outcome.get('result') == 'BROWSE_SCALING_LOAD_OK' and outcome.get('run_id') == run_id,
+            'LOAD_EVIDENCE_MISSING')
+    require(released and outcome.get('users_with_requests') == users and
+            180 <= outcome.get('elapsed_seconds', 0) <= 195 and
+            type(outcome.get('attempts')) is int and 1 <= outcome['attempts'] <= users * 90 and
+            not outcome.get('errors') and outcome.get('status_counts') == {'200': outcome['attempts']},
+            'INCOMPLETE_LOAD_EVIDENCE')
+    if users == 500:
+        require(outcome.get('users') == 500 and outcome.get('scheduled_duration_seconds') == 180 and
+                outcome.get('start_ramp_seconds') == 60 and outcome.get('think_seconds') == 2 and
+                outcome.get('max_workload_attempts') == 45000, 'HIGHER_STAGE_PACING_NOT_VERIFIED')
+
+
+def drill(*, retry_metric_gap=False, verification_run=False, users=250):
+    require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
-    job_name = JOB + ('-v3' if verification_run else '-v2' if retry_metric_gap else '')
+    require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
+    job_name = ('browse-users-500-autoscaling' if users == 500 else
+                JOB + ('-v3' if verification_run else '-v2' if retry_metric_gap else ''))
     trial.context()
     trial.no_active_load()
     require(not base.kube('get', 'job', job_name, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
@@ -358,7 +377,7 @@ def drill(*, retry_metric_gap=False, verification_run=False):
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
         app = wait_baseline(query)
-        if (retry_metric_gap or verification_run) and app['spec']['replicas'] != 2:
+        if (retry_metric_gap or verification_run or users == 500) and app['spec']['replicas'] != 2:
             emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
             app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
@@ -371,8 +390,10 @@ def drill(*, retry_metric_gap=False, verification_run=False):
         waiting_since = None
         metric_readiness = MetricReadiness()
         try:
-            job = create_job(app, run_id, job_name)
-            emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=job_name, users=250, seconds=180,
+            job = (create_job(app, run_id, job_name, users=500) if users == 500 else
+                   create_job(app, run_id, job_name))
+            emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=job_name, users=users, seconds=180,
+                 start_ramp_seconds=60 if users == 500 else 2, max_workload_attempts=users * 90,
                  note='Real Browse GETs; no manual scale commands or inventory writes.')
             deadline = time.monotonic() + 480
             while True:
@@ -456,12 +477,7 @@ def drill(*, retry_metric_gap=False, verification_run=False):
             logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
             print(logs, flush=True)
             outcome = json.loads(logs.splitlines()[-1])
-            require(outcome.get('result') == 'BROWSE_SCALING_LOAD_OK' and outcome.get('run_id') == run_id,
-                    'LOAD_EVIDENCE_MISSING')
-            require(released and outcome.get('users_with_requests') == 250 and
-                    180 <= outcome.get('elapsed_seconds', 0) <= 195 and
-                    1 <= outcome.get('attempts', 0) <= 22500 and not outcome.get('errors') and
-                    outcome.get('status_counts') == {'200': outcome['attempts']}, 'INCOMPLETE_LOAD_EVIDENCE')
+            validate_load(outcome, run_id, users, released)
             require(peak >= 3, 'NATURAL_SCALE_UP_NOT_OBSERVED')
             check_pool_errors(query)
             gaps = metric_readiness.summary()
@@ -471,7 +487,7 @@ def drill(*, retry_metric_gap=False, verification_run=False):
             trial.health()
             database_pressure()
             require(trial.database_metrics(start), 'DATABASE_METRIC_SAMPLES_UNAVAILABLE')
-            emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, ready_replicas_before=2,
+            emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, users=users, ready_replicas_before=2,
                  peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
                  resources=resource_watch.summary(),
                  hpa_metric_observations=gaps,
@@ -487,6 +503,8 @@ def drill(*, retry_metric_gap=False, verification_run=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle'))
+    parser.add_argument('--users', type=int, choices=(250, 500), default=250,
+                        help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--retry-metric-gap', action='store_true',
                         help='Use a distinct v2 Job, preserving the original stopped drill.')
@@ -496,11 +514,13 @@ def main():
     action = args.action
     if (args.retry_metric_gap or args.verification_run) and action != 'drill':
         parser.error('drill modes require the drill action')
+    if args.users != 250 and (action != 'drill' or args.retry_metric_gap or args.verification_run):
+        parser.error('--users 500 requires drill without a 250-user retry mode')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
-            drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run)
+            drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run, users=args.users)
         elif action == 'wait-idle':
             wait_idle()
         else:
