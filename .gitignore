@@ -10,6 +10,7 @@ test-results/
 *.tfstate.*
 *.tfplan
 *.tfvars
+*.tfvars.json
 *.tfbackend
 crash.log
 crash.*.log

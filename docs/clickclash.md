@@ -131,12 +131,21 @@ timeout flag without exposing raw command output. Building an image does not
 require AKS credentials; preparing/deploying/checking still require the exact
 lab cluster context.
 
-Persist `enable_clickclash = true` in your existing private foundation tfvars.
-Keep the existing KEDA/Grafana settings. Review a Terraform plan before apply;
-the opt-in creates a ClickClash managed identity/federation and public IP with
-the narrowly scoped AKS attachment role. Do not apply a plan that changes or
-destroys existing services unexpectedly. The public hostname comes from the
-reserved IP; it is not the Grafana hostname.
+For a fresh Cloud Shell checkout, generate the plan with:
+
+```bash
+python3 scripts/plan-clickclash.py
+```
+
+This reconnects to the existing `lab/foundation.tfstate` backend, checks the
+recorded subscription/administrator and existing resources, persists the
+ClickClash/Grafana/KEDA opt-ins in an ignored settings file, and passes those
+flags explicitly to Terraform. It never applies. It rejects unrelated creates,
+updates or deletes and prints only a safe summary plus the uniquely named
+saved plan path. Expect four additions: identity, federation, public IP and
+the narrowly scoped AKS attachment role. Existing managed resources must stay
+unchanged. Review the summary before applying that exact plan in Cloud Shell.
+The public hostname comes from the reserved IP; it is not the Grafana hostname.
 
 Once those resources exist:
 
