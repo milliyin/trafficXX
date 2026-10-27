@@ -193,6 +193,57 @@ class MetricReadiness:
                 'maximum_gap_seconds': round(self.maximum, 3)}
 
 
+class PoolWaitingWatch:
+    """Hold evidence comes from distinct source samples on the same instance."""
+    def __init__(self):
+        self.instances = {}
+        self.not_before = None
+
+    def observe(self, rows, now):
+        require(2 <= len(rows) <= 8, 'POOL_WAITING_SERIES_MISSING')
+        seen = set()
+        for row in rows:
+            instance = row.get('metric', {}).get('instance', '')
+            require(re.fullmatch(r'[A-Za-z0-9.\[\]:-]{1,150}', instance) is not None
+                    and instance not in seen, 'INVALID_POOL_WAITING_INSTANCE')
+            seen.add(instance)
+            samples = row.get('values')
+            require(isinstance(samples, list) and 0 < len(samples) <= 32, 'POOL_WAITING_SAMPLES_MISSING')
+            parsed, previous = [], -math.inf
+            for stamp, value in samples:
+                stamp, value = float(stamp), float(value)
+                require(math.isfinite(stamp) and previous < stamp <= now + 5
+                        and stamp >= now - 60 and math.isfinite(value) and value >= 0,
+                        'INVALID_POOL_WAITING_SAMPLE')
+                previous = stamp
+                parsed.append((stamp, value))
+            require(now - parsed[-1][0] <= 45, 'POOL_WAITING_SAMPLE_STALE')
+            for stamp, value in parsed:
+                if self.not_before is not None and stamp < self.not_before:
+                    continue
+                state = self.instances.get(instance)
+                if state is not None and stamp <= state['last']:
+                    require(stamp != state['last'] or value == state['value'], 'POOL_WAITING_SAMPLE_CHANGED')
+                    continue
+                if state is not None and state['value'] > 0:
+                    require(stamp - state['last'] <= 30, 'POOL_WAITING_SAMPLE_GAP')
+                since = (state['since'] if state is not None and state['value'] > 0 else stamp) if value > 0 else None
+                self.instances[instance] = {'last': stamp, 'value': value, 'since': since,
+                    'samples': (state['samples'] if state is not None else 0) + 1,
+                    'maximum': max(value, state['maximum'] if state is not None else 0)}
+                if since is not None:
+                    require(stamp - since < 10, 'SUSTAINED_POOL_WAITING')
+        # Missing/stale series are never replaced by a zero or a recovery.
+        require(set(self.instances) <= seen, 'POOL_WAITING_SERIES_MISSING')
+
+    def summary(self):
+        return {instance: {'distinct_source_samples': state['samples'], 'last_waiting': state['value'],
+                'last_source_timestamp_utc': datetime.fromtimestamp(state['last'], timezone.utc).isoformat(),
+                'positive_since_utc': datetime.fromtimestamp(state['since'], timezone.utc).isoformat()
+                    if state['since'] is not None else None, 'sampled_peak_waiting': state['maximum']}
+                for instance, state in self.instances.items()}
+
+
 def owned_hpa(*, require_active=True, pressure_target=None, scale_up_seconds=None):
     rows = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
     matches = [r for r in rows if r['spec']['scaleTargetRef'].get('name') == 'browse']
@@ -605,7 +656,8 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False):
         return outcome
     # Our stop shortens the deadline while retaining logs. Admit missing final
     # summaries only for the fixed, deadline-stopped step30 Job with exact args.
-    require(allow_interrupted and job['metadata'].get('name') == 'browse-users-500-autoscaling-step30'
+    require(allow_interrupted and job['metadata'].get('name') in (
+                'browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
     containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
@@ -617,11 +669,12 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False):
 
 
 def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False,
-                 faster_scale_up=False):
+                 faster_scale_up=False, verify_waiting_samples=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     trial.context()
     trial.no_active_load()
-    name = ('browse-users-500-autoscaling-step30' if faster_scale_up else
+    name = ('browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
+            'browse-users-500-autoscaling-step30' if faster_scale_up else
             'browse-users-500-autoscaling-pressure3-v2' if verify_early else
             'browse-users-500-autoscaling-pressure3' if earlier_scaling else
             'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
@@ -631,16 +684,16 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     try:
         logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        if not faster_scale_up:
+        if not (faster_scale_up or verify_waiting_samples):
             raise
         # Metadata must independently prove this exact interrupted stage.
         # Missing logs never permit a completed or unrecognized Job to pass.
         outcome = diagnostic_outcome(job, '', allow_interrupted=True)
         log_capture = {'available': False, **failure_details(error)}
     else:
-        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up)
+        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up or verify_waiting_samples)
     when = str(int(end.timestamp()))
-    require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up)
+    require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up or verify_waiting_samples)
             or outcome.get('start_ramp_seconds') == 120,
             'DIAGNOSTIC_RAMP_MISMATCH')
     # A final rejection may not be exported until the next scrape, after the
@@ -705,7 +758,7 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False):
 
 
 def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
-          verify_early=False, faster_scale_up=False):
+          verify_early=False, faster_scale_up=False, verify_waiting_samples=False):
     require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
@@ -715,11 +768,15 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                                                        slower_ramp, earlier_scaling))), 'CONFLICTING_DRILL_MODES')
     require(not faster_scale_up or (users == 500 and not any((retry_metric_gap, verification_run,
                             slower_ramp, earlier_scaling, verify_early))), 'CONFLICTING_DRILL_MODES')
+    require(not verify_waiting_samples or (users == 500 and not any((retry_metric_gap, verification_run,
+                    slower_ramp, earlier_scaling, verify_early, faster_scale_up))), 'CONFLICTING_DRILL_MODES')
+    faster_scale_up = faster_scale_up or verify_waiting_samples
     earlier_scaling = earlier_scaling or verify_early or faster_scale_up
     pressure_target = '3' if earlier_scaling else '5'
     scale_up_seconds = 30 if faster_scale_up else 60
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = ('browse-users-500-autoscaling-step30' if faster_scale_up else
+    job_name = ('browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
+                'browse-users-500-autoscaling-step30' if faster_scale_up else
                 'browse-users-500-autoscaling-pressure3-v2' if verify_early else
                 'browse-users-500-autoscaling-pressure3' if earlier_scaling else
                 ('browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling') if users == 500 else
@@ -745,7 +802,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         run_id = uuid4().hex[:12]
         peak, released, last_database = 2, False, time.monotonic()
         samples, first_seen, resource_watch = {}, {}, trial.users.ResourceWatch()
-        waiting_since = None
+        waiting_watch = PoolWaitingWatch()
         metric_readiness = MetricReadiness()
         stage, primary_error, job_terminal = 'create_load_job', None, False
         try:
@@ -832,15 +889,11 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     stage = 'release_load_gate'
                     trial.users.release_gate(generator, run_id, job_name)
                     released = True
+                    waiting_watch.not_before = time.time()
                     emit('BROWSE_SCALING_RESOURCE_GATE_RELEASED', run_id=run_id)
                 if released:
                     stage = 'observe_pool_pressure'
-                    waiting = scalar(query, 'max(' + M + 'waiting' + F + ')')
-                    if waiting > 0:
-                        waiting_since = waiting_since or time.monotonic()
-                        require(time.monotonic() - waiting_since < 10, 'SUSTAINED_POOL_WAITING')
-                    else:
-                        waiting_since = None
+                    waiting_watch.observe(query(M + 'waiting' + F + '[45s]'), time.time())
                     check_pool_errors(query)
                 if time.monotonic() - last_database >= 60:
                     stage = 'observe_database_metrics'
@@ -871,12 +924,14 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  start_ramp_seconds=120 if slower_ramp else 60 if users == 500 else 2,
                  peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
                  resources=resource_watch.summary(),
+                 pool_waiting_observations=waiting_watch.summary(),
                  hpa_metric_observations=gaps,
                  latency_slo_tested=False, notification_delivery_configured=False)
         except (Exception, KeyboardInterrupt) as error:
             primary_error = error
             error.observer_context = {'stage': stage, 'job': job_name, 'run_id': run_id,
-                                      'resource_gate_released': released, 'resources': resource_watch.summary()}
+                                      'resource_gate_released': released, 'resources': resource_watch.summary(),
+                                      'pool_waiting_observations': waiting_watch.summary()}
             raise
         finally:
             if job is not None:
@@ -896,7 +951,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
-                                         'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30'))
+                                         'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
+                                         'diagnose-500-sourcewait'))
     parser.add_argument('--users', type=int, choices=(250, 500), default=250,
                         help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -912,10 +968,12 @@ def main():
                        help='Repeat the same 500-user pressure-3 trial in a distinct v2 Job with observer diagnostics.')
     modes.add_argument('--faster-scale-up', action='store_true',
                        help='500 users only: compare one added pod per 30 seconds, same pressure-3 profile and 120-second ramp.')
+    modes.add_argument('--verify-waiting-samples', action='store_true',
+                       help='Repeat the 500-user step30 profile with the corrected per-instance source-sample guard.')
     args = parser.parse_args()
     action = args.action
     if any((args.retry_metric_gap, args.verification_run, args.slower_ramp, args.earlier_scaling,
-            args.verify_early, args.faster_scale_up)) and action != 'drill':
+            args.verify_early, args.faster_scale_up, args.verify_waiting_samples)) and action != 'drill':
         parser.error('drill modes require the drill action')
     if args.users != 250 and (action != 'drill' or args.retry_metric_gap or args.verification_run):
         parser.error('--users 500 requires drill without a 250-user retry mode')
@@ -927,13 +985,16 @@ def main():
         parser.error('--verify-early requires --users 500')
     if args.faster_scale_up and args.users != 500:
         parser.error('--faster-scale-up requires --users 500')
+    if args.verify_waiting_samples and args.users != 500:
+        parser.error('--verify-waiting-samples requires --users 500')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
             drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run,
                   users=args.users, slower_ramp=args.slower_ramp, earlier_scaling=args.earlier_scaling,
-                  verify_early=args.verify_early, faster_scale_up=args.faster_scale_up)
+                  verify_early=args.verify_early, faster_scale_up=args.faster_scale_up,
+                  verify_waiting_samples=args.verify_waiting_samples)
         elif action == 'configure-early':
             configure_early()
         elif action == 'configure-fast-scale-up':
@@ -952,6 +1013,8 @@ def main():
             diagnose_500(verify_early=True, distribution=True)
         elif action == 'diagnose-500-step30':
             diagnose_500(faster_scale_up=True, distribution=True)
+        elif action == 'diagnose-500-sourcewait':
+            diagnose_500(verify_waiting_samples=True, distribution=True)
         else:
             trial.context()
             with prometheus() as query:

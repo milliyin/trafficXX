@@ -38,6 +38,86 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    @staticmethod
+    def waiting_rows(a_stamp, a_value, b_stamp=None, b_value=0):
+        return [{'metric': {'instance': name}, 'values': [[stamp, str(value)]]}
+                for name, stamp, value in (('a', a_stamp, a_value), ('b', b_stamp or a_stamp, b_value))]
+
+    def test_same_positive_source_sample_never_advances_waiting_hold(self):
+        watch = scaling.PoolWaitingWatch()
+        for now in (166, 171, 176):
+            watch.observe(self.waiting_rows(165, 2), now)
+        self.assertEqual(watch.summary()['a']['distinct_source_samples'], 1)
+        watch.observe(self.waiting_rows(180, 0), 181)
+        self.assertIsNone(watch.summary()['a']['positive_since_utc'])
+
+    def test_distinct_positive_samples_on_same_instance_still_stop(self):
+        watch = scaling.PoolWaitingWatch()
+        watch.observe(self.waiting_rows(165, 2), 166)
+        with self.assertRaisesRegex(ValueError, 'SUSTAINED_POOL_WAITING'):
+            watch.observe(self.waiting_rows(180, 1), 181)
+        self.assertEqual(watch.summary()['a']['distinct_source_samples'], 2)
+
+    def test_queue_recovery_and_different_instances_do_not_share_a_hold(self):
+        watch = scaling.PoolWaitingWatch()
+        watch.observe(self.waiting_rows(165, 2), 166)
+        watch.observe(self.waiting_rows(180, 0, b_value=4), 181)
+        watch.observe(self.waiting_rows(195, 0), 196)
+        self.assertTrue(all(v['positive_since_utc'] is None for v in watch.summary().values()))
+
+    def test_reported_step30_tail_has_no_distinct_sustained_wait_on_one_instance(self):
+        rows = [{'metric': {'instance': 'a'}, 'values': [[19.909, '2'], [34.909, '0'], [49.909, '0']]},
+                {'metric': {'instance': 'b'}, 'values': [[14.984, '0'], [29.984, '0'], [44.984, '4']]}]
+        watch = scaling.PoolWaitingWatch()
+        watch.observe(rows, 55)
+        self.assertIsNone(watch.summary()['a']['positive_since_utc'])
+        self.assertEqual(watch.summary()['b']['last_waiting'], 4)
+
+    def test_waiting_guard_rejects_missing_stale_invalid_and_changed_samples(self):
+        for rows, now, code in (([], 166, 'SERIES_MISSING'),
+                (self.waiting_rows(100, 0), 146, 'SAMPLE_STALE'),
+                (self.waiting_rows(165, 'NaN'), 166, 'INVALID_POOL_WAITING_SAMPLE'),
+                (self.waiting_rows(165, -1), 166, 'INVALID_POOL_WAITING_SAMPLE')):
+            with self.assertRaisesRegex(ValueError, code):
+                scaling.PoolWaitingWatch().observe(rows, now)
+        watch = scaling.PoolWaitingWatch()
+        watch.observe(self.waiting_rows(165, 2), 166)
+        with self.assertRaisesRegex(ValueError, 'SAMPLE_CHANGED'):
+            watch.observe(self.waiting_rows(165, 0), 176)
+        with self.assertRaisesRegex(ValueError, 'SAMPLE_GAP'):
+            watch.observe(self.waiting_rows(200, 0), 201)
+        watch = scaling.PoolWaitingWatch()
+        initial = self.waiting_rows(165, 0) + [{'metric': {'instance': 'c'}, 'values': [[165, '0']]}]
+        watch.observe(initial, 166)
+        with self.assertRaisesRegex(ValueError, 'SERIES_MISSING'):
+            watch.observe(self.waiting_rows(180, 0), 181)
+
+    def test_pre_gate_history_does_not_start_a_new_workload_hold(self):
+        watch = scaling.PoolWaitingWatch()
+        watch.not_before = 181
+        # Both samples predate release of the workload gate.
+        rows = [{'metric': {'instance': name}, 'values': [[165, '2'], [180, '2']]}
+                for name in ('a', 'b')]
+        watch.observe(rows, 182)
+        self.assertEqual(watch.summary(), {})
+        watch.observe(self.waiting_rows(195, 1), 196)
+        self.assertEqual(watch.summary()['a']['distinct_source_samples'], 1)
+
+    def test_source_waiting_verification_cli_is_only_the_same_500_user_stage(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--verify-waiting-samples']), \
+                patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
+                slower_ramp=False, earlier_scaling=False, verify_early=False, faster_scale_up=False,
+                verify_waiting_samples=True)
+        for argv in (['drill', '--verify-waiting-samples'],
+                     ['drill', '--users', '500', '--verify-waiting-samples', '--faster-scale-up']):
+            with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
+                    patch.object(scaling.trial, 'context') as context, \
+                    patch.object(sys, 'stderr', io.StringIO()), self.assertRaises(SystemExit):
+                scaling.main()
+            context.assert_not_called()
+
     def test_waiting_history_uses_actual_source_samples_and_preserves_missing(self):
         end = datetime.fromtimestamp(180, timezone.utc)
         expressions = []
@@ -211,7 +291,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                slower_ramp=False, earlier_scaling=False, verify_early=False, faster_scale_up=True)
+                slower_ramp=False, earlier_scaling=False, verify_early=False, faster_scale_up=True, verify_waiting_samples=False)
         for argv in (['drill', '--faster-scale-up'], ['drill', '--users', '1000', '--faster-scale-up'],
                      ['drill', '--users', '500', '--faster-scale-up', '--verify-early']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -346,7 +426,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                                          slower_ramp=False, earlier_scaling=False, verify_early=True, faster_scale_up=False)
+                                          slower_ramp=False, earlier_scaling=False, verify_early=True, faster_scale_up=False, verify_waiting_samples=False)
         for argv in (['drill', '--verify-early'], ['check', '--users', '500', '--verify-early'],
                      ['drill', '--users', '500', '--verify-early', '--earlier-scaling']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -421,7 +501,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                                          slower_ramp=False, earlier_scaling=True, verify_early=False, faster_scale_up=False)
+                                          slower_ramp=False, earlier_scaling=True, verify_early=False, faster_scale_up=False, verify_waiting_samples=False)
         for argv in (['drill', '--earlier-scaling'], ['check', '--earlier-scaling'],
                      ['drill', '--users', '500', '--slower-ramp', '--earlier-scaling']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -690,12 +770,12 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=False,
-                                          earlier_scaling=False, verify_early=False, faster_scale_up=False)
+                                          earlier_scaling=False, verify_early=False, faster_scale_up=False, verify_waiting_samples=False)
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--slower-ramp']), \
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=True,
-                                          earlier_scaling=False, verify_early=False, faster_scale_up=False)
+                                          earlier_scaling=False, verify_early=False, faster_scale_up=False, verify_waiting_samples=False)
         for argv in (['drill', '--users', '1000'], ['check', '--users', '500'],
                      ['drill', '--users', '500', '--verification-run'], ['drill', '--slower-ramp']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -802,19 +882,22 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error, retry, verification, users, slower, early, verify, fast in (([3, 3, 3, 2], None, False, False, 250, False, False, False, False),
-                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False, False, False, False), ([3, 3, 3, 2], None, True, False, 250, False, False, False, False),
-                ([3, 3, 3, 2], None, False, True, 250, False, False, False, False), ([4, 4, 4, 2], None, False, False, 500, False, False, False, False),
-                ([4, 4, 4, 2], None, False, False, 500, True, False, False, False),
-                ([3, 3, 3, 2], None, False, False, 500, False, True, False, False),
-                ([4, 4, 4, 2], None, False, False, 500, False, False, True, False),
-                ([4, 4, 4, 2], None, False, False, 500, False, False, False, True)):
+        cases = (([3, 3, 3, 2], None, {}, scaling.JOB),
+                 ([2, 2, 2], 'NATURAL_SCALE_UP', {}, scaling.JOB),
+                 ([3, 3, 3, 2], None, {'retry_metric_gap': True}, scaling.JOB + '-v2'),
+                 ([3, 3, 3, 2], None, {'verification_run': True}, scaling.JOB + '-v3'),
+                 ([4, 4, 4, 2], None, {'users': 500}, 'browse-users-500-autoscaling'),
+                 ([4, 4, 4, 2], None, {'users': 500, 'slower_ramp': True}, 'browse-users-500-autoscaling-ramp120'),
+                 ([3, 3, 3, 2], None, {'users': 500, 'earlier_scaling': True}, 'browse-users-500-autoscaling-pressure3'),
+                 ([4, 4, 4, 2], None, {'users': 500, 'verify_early': True}, 'browse-users-500-autoscaling-pressure3-v2'),
+                 ([4, 4, 4, 2], None, {'users': 500, 'faster_scale_up': True}, 'browse-users-500-autoscaling-step30'),
+                 ([4, 4, 4, 2], None, {'users': 500, 'verify_waiting_samples': True}, 'browse-users-500-autoscaling-sourcewait'))
+        for scales, expected_error, options, job_name in cases:
+            users = options.get('users', 250)
+            retry, verification = options.get('retry_metric_gap'), options.get('verification_run')
+            slower, early, verify = options.get('slower_ramp'), options.get('earlier_scaling'), options.get('verify_early')
+            fast = options.get('faster_scale_up') or options.get('verify_waiting_samples')
             initial = app()
-            job_name = ('browse-users-500-autoscaling-step30' if fast else
-                        'browse-users-500-autoscaling-pressure3-v2' if verify else
-                        'browse-users-500-autoscaling-pressure3' if early else
-                        ('browse-users-500-autoscaling-ramp120' if slower else 'browse-users-500-autoscaling') if users == 500 else
-                        scaling.JOB + ('-v3' if verification else '-v2' if retry else ''))
             pod_names = ['browse-a', 'browse-b', job_name + '-pod']
             pods = [{'metadata': {'name': name, 'labels': ({'job-name': scaling.JOB} if i == 2 else
                     {'app.kubernetes.io/name': 'trafficxx-browse'})}} for i, name in enumerate(pod_names)]
@@ -867,15 +950,18 @@ class Scaling(unittest.TestCase):
                     (scaling, 'uuid4', {'return_value': Mock(hex='a' * 32)})):
                     stack.enter_context(patch.object(owner, name, **kwargs))
                 promise = stack.enter_context(patch.object(scaling, 'prometheus'))
-                promise.return_value.__enter__.return_value = lambda _: [{'value': [0, '0']}]
+                def query(expression):
+                    if expression == scaling.M + 'waiting' + scaling.F + '[45s]':
+                        return [{'metric': {'instance': name}, 'values': [[scaling.time.time(), '0']]}
+                                for name in ('a', 'b')]
+                    return [{'value': [0, '0']}]
+                promise.return_value.__enter__.return_value = query
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
-                        scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                      slower_ramp=slower, earlier_scaling=early, verify_early=verify, faster_scale_up=fast)
+                        scaling.drill(**options)
                 else:
-                    scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                  slower_ramp=slower, earlier_scaling=early, verify_early=verify, faster_scale_up=fast)
+                    scaling.drill(**options)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
                     if early or verify or fast:
                         self.assertIn(job_name, output.getvalue())

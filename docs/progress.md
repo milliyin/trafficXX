@@ -11,9 +11,11 @@ and was stopped by the observer's `SUSTAINED_POOL_WAITING` guard. The supplied
 output has no final workload summary, so HTTP counts and errors are unknown.
 A guard timing flaw was found: repeated reads of one 15-second scrape can
 satisfy its 10-second local-clock timer. Post-stop recovery passed. Historical
-capture initially failed reading Job logs; the diagnostic now supports the
-metadata-proven interrupted Job without logs. Original source-sample history
-is still pending; the trial is not a pass.
+capture subsequently showed zero pool-error increases with all four instances
+covered, and isolated positive queue samples on different pods. It does not
+establish a sustained per-pod queue or provide HTTP workload totals. The guard
+now uses distinct source timestamps per instance; a same-profile verification
+is prepared under a new Job name. Its live result is pending.
 
 The preceding repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
 12,986 HTTP 200 responses and one `DATABASE_BUSY` HTTP 503. Four ready pods
@@ -76,9 +78,10 @@ or establish sustained production capacity.
   repeat failed on one HTTP 503 after reaching four ready pods, rather than
   an external command error. Aggregate diagnostics confirmed queue-full rejection
   and natural recovery passed. The subsequent 30-second policy comparison
-  reached four ready pods but triggered the queue-waiting guard. Capture
-  `diagnose-500-step30` after the Job is terminal, inspect original sample
-  timestamps and verify recovery before changing the guard or generating load.
+  reached four ready pods but triggered the queue-waiting guard. Stored source
+  samples and recovery are now captured. The guard measurement is corrected;
+  `drill --users 500 --verify-waiting-samples` prepares the same-profile repeat
+  under a distinct Job name, with unchanged capacity and workload settings.
   No full 500-user observer pass is established.
   The historical failing command remains unknown. Complete the observer run
   before increasing load.

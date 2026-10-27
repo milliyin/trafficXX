@@ -807,7 +807,8 @@ The user subsequently confirmed that the Job was Failed and recovery passed:
 four pods naturally returned to two, inventory remained 100 per demo event,
 Operations had no backlog or active alerts, and workers were healthy. Recovery
 database sample maxima were CPU 5.808%, memory 21.474% and 44 connections
-including idle sessions. The historical source-sample capture remains pending.
+including idle sessions. The historical source-sample capture subsequently
+completed, as recorded below.
 
 The first historical capture attempt failed at `read_load_logs` with exit
 code one, matching the preceding failed `kubectl logs` attempt. The cause of
@@ -818,7 +819,65 @@ deadline-stopped step30 Job described above. It reports
 fields. Workload status remains interrupted with unknown HTTP counts/errors;
 unavailable logs never turn into a workload pass. Completed Jobs or other
 diagnostic modes retain their strict log requirements. No load or guard change
-is needed to retry this read-only capture after pulling the update.
+was needed to retry this read-only capture after pulling the update.
+
+### Step30 capture: no recorded pool errors; waiting measurement corrected
+
+The user supplied the historical capture for `2bfd8b5fcf69`. All seven
+pool-error counter increases were zero, with post-terminal source samples from
+all four instances. Sampled aggregate peaks were four healthy targets,
+waiting four, busy/opening 25 and borrow rate 153.044444/second. This does
+not establish zero HTTP errors: the workload summary and logs remain
+unavailable, and HTTP counts/participation/latencies remain unknown.
+
+Original samples on `10.244.3.249:8000` were waiting two at 17:59:19.909 UTC,
+then zero at 17:59:34.909 and 17:59:49.909. On `10.244.3.57:8000`, samples
+were zero through 17:59:29.984, then waiting four at 17:59:44.984. The two
+other instances had only zeros in their captured tails. The final positive
+sample has no later pre-terminal sample; that is not proof of immediate
+recovery. Neither instance has distinct positive samples establishing a
+sustained per-instance wait in this window. The observation is consistent
+with the guard's sampling flaw, not proof that the entire intended workload
+would have passed or that no actual queue persisted between scrapes.
+
+The corrected `PoolWaitingWatch` reads actual 45-second range-vector source
+samples rather than repeatedly timing an instant maximum using the observer's
+wall clock. It tracks each instance separately, ignores already-processed
+source timestamps, resets a hold on zero, and stops if distinct positive
+samples on the same instance span at least ten seconds. With 15-second
+scrapes, two successive positive samples normally suffice. This is evidence
+of sampled persistence, not continuous observation between samples.
+
+Missing/stale/invalid/changed samples fail explicitly; they are never replaced
+with zeros. Loss of a previously observed instance fails, as does a source
+gap over 30 seconds after a positive sample. Pre-workload-gate history cannot
+start a new workload hold. Reports include `pool_waiting_observations` with
+distinct sample counts, source timestamps, last values and positive-hold start
+times. The ten-second threshold and every HTTP, pool-error, resource,
+database, freshness and HPA metric-gap stop remain; the measurement changes.
+
+### Prepared source-sample guard verification
+
+The next verification changes no capacity or arrival setting. It uses the
+currently deployed pressure-three, borrow-40, one-pod-per-30-second scale-up
+profile, pool eight, queue 16 and two-to-four replicas. Run in Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py drill --users 500 --verify-waiting-samples
+```
+
+The fixed new Job is `browse-users-500-autoscaling-sourcewait`; the interrupted
+step30 Job and all prior evidence remain. It repeats 500 paced users,
+120-second arrivals inside the scheduled 180-second workload, two-second
+think time, 45,000-request cap and existing generator limits. No image rebuild
+or scaling reconfiguration is needed. Keep Cloud Shell open through natural
+recovery and retain the full output. Only a complete
+`BROWSE_AUTOSCALING_DRILL_OK` verifies this run; it is prepared, not passed.
+`diagnose-500-sourcewait` is its read-only historical capture, with the same
+strict metadata guards for a deadline-interrupted Job lacking logs. No higher
+user count follows automatically.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
