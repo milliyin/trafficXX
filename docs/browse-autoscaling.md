@@ -683,10 +683,73 @@ not exact workload request counts. Sampled peaks can miss short bursts.
 If historical data has expired, do not interpret missing samples as zero.
 
 This capture creates no Job, generates no HTTP workload, changes no policy
-and opens no SQL connection. Its output is needed before choosing between
-faster discovery/control response, routing investigation or a bounded capacity
-comparison. None of those changes is selected yet. The original successful
-500-user workload remains a single passing attempt; v2 remains a failed repeat.
+and opens no SQL connection. The original successful 500-user workload remains
+a single passing attempt; v2 remains a failed repeat. The subsequent
+per-instance result and selected timing comparison follow.
+
+### Per-instance result: rejection on an established instance
+
+The user-supplied distribution capture attributed the queue-full increase
+1.072727 to `10.244.3.249:8000`. Its sampled waiting peak was zero, showing
+why periodic samples cannot rule out a short full queue. It had 19 scrapes
+before termination and approximately 4,995 borrows in the extended window.
+The other established instance, `10.244.2.186:8000`, had 19 scrapes,
+approximately 4,914 borrows, sampled waiting four and no error increase.
+
+The added instance `10.244.3.209:8000` had two pre-terminal scrapes and
+approximately 1,140 borrows. `10.244.2.84:8000` had no pre-terminal scrape
+fields and approximately 1.81 borrows in the extended window. Borrow counts
+include readiness/other traffic and extrapolation; they are not an exact
+allocation of the 12,987 workload requests. Missing pre-terminal scrapes
+do not prove no traffic reached the fourth instance. Longer-lived instances
+also naturally have more time to accumulate borrows. This supports a
+scale-up timing comparison, not a proven load-balancer defect or a conclusion
+that four fully established pods cannot handle the steady workload.
+
+### Prepared comparison: one scale-up pod per 30 seconds
+
+The next bounded comparison changes only the scale-up policy's
+`periodSeconds` from 60 to 30. It permits one added pod per 30-second policy
+period when the metric recommendation calls for it; it does not guarantee
+pod readiness or a successful workload. Pressure target three, borrow target
+40, two-to-four replica bounds, pool eight, queue 16, scale-down stabilization
+300 seconds and one-pod-per-minute scale-down remain unchanged. The steady
+Browse connection cap stays 32 and the total planning budget stays 128.
+Extra pods may be used sooner, while DNS/scrape/control and startup delays
+still exist. No discovery, routing, SQL or image change is included.
+
+After healthy recovery with no active load, run in Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py configure-fast-scale-up &&
+python3 scripts/browse-autoscaling.py drill --users 500 --faster-scale-up
+```
+
+Configuration checks the reviewed pressure-three profile and ownership,
+waits for a naturally idle two-pod baseline, and uses UID/resource-version/
+whole-spec tests to replace only the scale-up period. It then waits for
+the native HPA's targets and complete behavior to reconcile. If a wait fails
+after patching, the policy may already be 30; rerun configuration to resume.
+It changes no application template and starts no load itself.
+
+The new fixed Job is `browse-users-500-autoscaling-step30`. It preserves
+the prior failed verification and repeats its 500 users, 120-second arrival
+ramp, scheduled 180-second window, two-second think time and 45,000-request
+cap. All HTTP/resource/pool/database/metric-gap stops and natural recovery
+requirements remain. The drill checks the native 30-second behavior before
+traffic and throughout observation. Older modes require their original
+60-second behavior, preventing an accidental comparison under a new policy.
+Read-only `check`/`wait-idle` accept either complete reviewed profile.
+Do not run the original `deploy` or `configure-early` to configure this trial.
+
+Keep Cloud Shell running through recovery and paste the full output. A
+failure is not permission for an overlapping load or higher user count;
+`diagnose-500-step30` is the read-only historical capture for this specific
+Job and includes per-instance data. No live result exists for this comparison
+yet. A full `BROWSE_AUTOSCALING_DRILL_OK` remains required before declaring
+the observer verification complete.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

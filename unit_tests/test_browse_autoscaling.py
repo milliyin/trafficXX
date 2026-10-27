@@ -38,6 +38,84 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_fast_scale_up_changes_only_one_policy_field_and_resumes(self):
+        for old in (60, 30):
+            so = scaling.scaled_object('3', old)
+            so['metadata'].update(uid='so', resourceVersion='19')
+            hpa = {'metadata': {'ownerReferences': [{'uid': 'so', 'controller': True}]}}
+            writes = []
+            def kube(*args):
+                if args[0] == 'patch':
+                    operations = json.loads(args[-1])
+                    self.assertEqual(operations[:3], [
+                        {'op': 'test', 'path': '/metadata/uid', 'value': 'so'},
+                        {'op': 'test', 'path': '/metadata/resourceVersion', 'value': '19'},
+                        {'op': 'test', 'path': '/spec', 'value': so['spec']}])
+                    self.assertEqual(operations[3:], [{'op': 'replace',
+                        'path': '/spec/advanced/horizontalPodAutoscalerConfig/behavior/scaleUp/policies/0/periodSeconds',
+                        'value': 30}])
+                    writes.append(args)
+                    return ''
+                self.assertEqual(args[:3], ('get', 'scaledobject', 'browse'))
+                return json.dumps(so)
+            with ExitStack() as stack:
+                for owner, name, kwargs in (
+                    (scaling.trial, 'context', {}), (scaling.trial, 'no_active_load', {}),
+                    (scaling.trial, 'health', {}), (scaling, 'database_pressure', {}),
+                    (scaling, 'wait_baseline', {'return_value': app()}),
+                    (scaling, 'owned_hpa', {'return_value': hpa}), (scaling, 'prometheus', {}),
+                    (scaling, 'deployment', {'return_value': app()}), (scaling, 'check', {}),
+                    (scaling.base, 'kube', {'side_effect': kube}),
+                    (scaling, 'wait_until', {'side_effect': lambda fn, _: fn()})):
+                    stack.enter_context(patch.object(owner, name, **kwargs))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                scaling.configure_fast_scale_up()
+            self.assertEqual(len(writes), int(old == 60))
+            self.assertIn('BROWSE_FAST_SCALE_UP_CONFIGURED', output.getvalue())
+        old, new = scaling.scaled_object('3'), scaling.scaled_object('3', 30)
+        old['spec']['advanced']['horizontalPodAutoscalerConfig']['behavior']['scaleUp']['policies'][0]['periodSeconds'] = 30
+        self.assertEqual(old, new)
+        for pressure, period in (('5', 30), ('3', 15), ('3', 120)):
+            with self.assertRaisesRegex(ValueError, 'UNREVIEWED_SCALING_PROFILE'):
+                scaling.scaled_object(pressure, period)
+
+    def test_fast_native_behavior_must_reconcile_without_changing_downscale_or_bounds(self):
+        so = scaling.scaled_object('3', 30)
+        so['metadata']['uid'] = 'so'
+        hpa = {'metadata': {'name': 'trafficxx-browse', 'ownerReferences': [{'uid': 'so', 'controller': True}]},
+            'spec': {'scaleTargetRef': {'name': 'browse'}, 'minReplicas': 2, 'maxReplicas': 4,
+                     'metrics': [{'type': 'External', 'external': {'metric': {'name': 's' + str(i) + '-prometheus'},
+                         'target': {'type': 'AverageValue', 'averageValue': value}}} for i, value in enumerate(('3', '40'))],
+                     'behavior': deepcopy(so['spec']['advanced']['horizontalPodAutoscalerConfig']['behavior'])},
+            'status': {'conditions': [{'type': 'ScalingActive', 'status': 'True'}]}}
+        def kube(*args):
+            return json.dumps({'items': [hpa]} if args[1] == 'hpa' else so)
+        with patch.object(scaling.base, 'kube', side_effect=kube):
+            scaling.owned_hpa(pressure_target='3', scale_up_seconds=30)
+            hpa['spec']['behavior']['scaleUp']['policies'][0]['periodSeconds'] = 60
+            with self.assertRaisesRegex(ValueError, 'NOT_RECONCILED'):
+                scaling.owned_hpa(pressure_target='3', scale_up_seconds=30)
+            with self.assertRaisesRegex(ValueError, 'POLICY_CHANGED'):
+                scaling.owned_hpa(pressure_target='3', scale_up_seconds=60)
+            hpa['spec']['behavior'] = deepcopy(so['spec']['advanced']['horizontalPodAutoscalerConfig']['behavior'])
+            so['spec']['advanced']['horizontalPodAutoscalerConfig']['behavior']['scaleDown']['stabilizationWindowSeconds'] = 60
+            with self.assertRaisesRegex(ValueError, 'POLICY_CHANGED'):
+                scaling.owned_hpa()
+
+    def test_fast_stage_cli_cannot_select_a_higher_user_count_or_conflicting_mode(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--faster-scale-up']), \
+                patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
+                slower_ramp=False, earlier_scaling=False, verify_early=False, faster_scale_up=True)
+        for argv in (['drill', '--faster-scale-up'], ['drill', '--users', '1000', '--faster-scale-up'],
+                     ['drill', '--users', '500', '--faster-scale-up', '--verify-early']):
+            with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
+                    patch.object(scaling.trial, 'context') as context, \
+                    patch.object(sys, 'stderr', io.StringIO()), self.assertRaises(SystemExit):
+                scaling.main()
+            context.assert_not_called()
+
     def test_instance_distribution_keeps_missing_distinct_from_zero(self):
         rows = {'errors': [{'metric': {'instance': '10.0.0.1:8000'}, 'value': [240, '1.1']}],
                 'borrows': [{'metric': {'instance': '10.0.0.1:8000'}, 'value': [240, '100']},
@@ -164,7 +242,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                                          slower_ramp=False, earlier_scaling=False, verify_early=True)
+                                          slower_ramp=False, earlier_scaling=False, verify_early=True, faster_scale_up=False)
         for argv in (['drill', '--verify-early'], ['check', '--users', '500', '--verify-early'],
                      ['drill', '--users', '500', '--verify-early', '--earlier-scaling']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -239,7 +317,7 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500,
-                                          slower_ramp=False, earlier_scaling=True, verify_early=False)
+                                          slower_ramp=False, earlier_scaling=True, verify_early=False, faster_scale_up=False)
         for argv in (['drill', '--earlier-scaling'], ['check', '--earlier-scaling'],
                      ['drill', '--users', '500', '--slower-ramp', '--earlier-scaling']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -508,12 +586,12 @@ class Scaling(unittest.TestCase):
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=False,
-                                          earlier_scaling=False, verify_early=False)
+                                          earlier_scaling=False, verify_early=False, faster_scale_up=False)
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--slower-ramp']), \
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
             drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=True,
-                                          earlier_scaling=False, verify_early=False)
+                                          earlier_scaling=False, verify_early=False, faster_scale_up=False)
         for argv in (['drill', '--users', '1000'], ['check', '--users', '500'],
                      ['drill', '--users', '500', '--verification-run'], ['drill', '--slower-ramp']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
@@ -620,14 +698,16 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error, retry, verification, users, slower, early, verify in (([3, 3, 3, 2], None, False, False, 250, False, False, False),
-                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False, False, False), ([3, 3, 3, 2], None, True, False, 250, False, False, False),
-                ([3, 3, 3, 2], None, False, True, 250, False, False, False), ([4, 4, 4, 2], None, False, False, 500, False, False, False),
-                ([4, 4, 4, 2], None, False, False, 500, True, False, False),
-                ([3, 3, 3, 2], None, False, False, 500, False, True, False),
-                ([4, 4, 4, 2], None, False, False, 500, False, False, True)):
+        for scales, expected_error, retry, verification, users, slower, early, verify, fast in (([3, 3, 3, 2], None, False, False, 250, False, False, False, False),
+                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False, False, False, False), ([3, 3, 3, 2], None, True, False, 250, False, False, False, False),
+                ([3, 3, 3, 2], None, False, True, 250, False, False, False, False), ([4, 4, 4, 2], None, False, False, 500, False, False, False, False),
+                ([4, 4, 4, 2], None, False, False, 500, True, False, False, False),
+                ([3, 3, 3, 2], None, False, False, 500, False, True, False, False),
+                ([4, 4, 4, 2], None, False, False, 500, False, False, True, False),
+                ([4, 4, 4, 2], None, False, False, 500, False, False, False, True)):
             initial = app()
-            job_name = ('browse-users-500-autoscaling-pressure3-v2' if verify else
+            job_name = ('browse-users-500-autoscaling-step30' if fast else
+                        'browse-users-500-autoscaling-pressure3-v2' if verify else
                         'browse-users-500-autoscaling-pressure3' if early else
                         ('browse-users-500-autoscaling-ramp120' if slower else 'browse-users-500-autoscaling') if users == 500 else
                         scaling.JOB + ('-v3' if verification else '-v2' if retry else ''))
@@ -639,7 +719,7 @@ class Scaling(unittest.TestCase):
                 'users_with_requests': users, 'attempts': 21000, 'status_counts': {'200': 21000},
                 'errors': {}, 'elapsed_seconds': 180.1}
             if users == 500:
-                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower or early or verify else 60,
+                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower or early or verify or fast else 60,
                                think_seconds=2, max_workload_attempts=45000)
             states = iter([False, False, True])
             def kube(*args, **kwargs):
@@ -688,14 +768,17 @@ class Scaling(unittest.TestCase):
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
                         scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                      slower_ramp=slower, earlier_scaling=early, verify_early=verify)
+                                      slower_ramp=slower, earlier_scaling=early, verify_early=verify, faster_scale_up=fast)
                 else:
                     scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users,
-                                  slower_ramp=slower, earlier_scaling=early, verify_early=verify)
+                                  slower_ramp=slower, earlier_scaling=early, verify_early=verify, faster_scale_up=fast)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
-                    if early or verify:
+                    if early or verify or fast:
                         self.assertIn(job_name, output.getvalue())
                         self.assertIn('"pressure_target_per_pod": 3', output.getvalue())
+                    if fast:
+                        self.assertIn('"scale_up_period_seconds": 30', output.getvalue())
+                        scaling.owned_hpa.assert_any_call(pressure_target='3', scale_up_seconds=30)
                     if retry or verification:
                         self.assertIn(job_name, output.getvalue())
                     # The third poll is already Job Complete. Live generator

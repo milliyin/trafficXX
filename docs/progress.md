@@ -10,9 +10,11 @@ Latest repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
 12,986 HTTP 200 responses and one `DATABASE_BUSY` HTTP 503. Four ready pods
 were observed before termination. Counters subsequently confirmed approximately
 one queue-full rejection, with no timeout or connection-error increases.
-Recovery to two healthy pods passed. A read-only per-instance capture is
-prepared to investigate pressure distribution and scrape visibility; no higher
-stage or capacity increase is prepared.
+Recovery to two healthy pods passed. Per-instance capture located the rejection
+on an established instance, with most recorded borrow activity on the two
+long-running instances and limited samples for the additions. A same-capacity
+comparison allowing one added pod per 30 rather than 60 seconds is prepared;
+its live result is pending. No higher user count is prepared.
 
 The preceding earlier-scaling comparison completed 28,347
 successful reads with all 500 participants and zero errors; p95 was 185.227 ms.
@@ -64,8 +66,10 @@ or establish sustained production capacity.
   primary error during cleanup are implemented. The distinct same-profile v2
   repeat failed on one HTTP 503 after reaching four ready pods, rather than
   an external command error. Aggregate diagnostics confirmed queue-full rejection
-  and natural recovery passed. Capture `diagnose-500-distribution` before
-  choosing a further change; retain the failed Job.
+  and natural recovery passed. Per-instance capture is complete; the next
+  prepared comparison changes only the scale-up step period to 30 seconds.
+  Retain the failed Job and require full workload/observer/recovery evidence
+  from the distinct comparison before increasing load.
   The historical failing command remains unknown. Complete the observer run
   before increasing load.
   Separate four-to-two recovery passed; it does not replace the interrupted audit.
