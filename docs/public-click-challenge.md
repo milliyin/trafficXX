@@ -1,4 +1,4 @@
-# Public click challenge and service status
+# ClickClash: public click challenge and service status
 
 Design updated **28 October 2026**. This is the implementation plan for a real
 public service, requested after the completed 500-user Browse verification.
@@ -6,6 +6,11 @@ The challenge, authentication and public status service are not implemented
 or deployed yet. Real player records will be durable application data.
 
 ## Product scope
+
+The public product name is **ClickClash**. Automatic clickers may compete within
+an enforced request limit; manual-only play is not the competition policy.
+Exact per-player limits, burst allowances and the global admission ceiling
+remain to be selected and tested. Do not promise one account per human.
 
 A small responsive React and TypeScript website offers unlimited-duration
 clicking, guest play, optional email sign-in, personal scores and a shared
@@ -159,7 +164,10 @@ of a user count or latency guarantee.
 
 Implementation begins with correctness, not an in-memory score placeholder.
 Deployment costs and connection budgets are reviewed against the existing
-Azure foundation before introducing new resources. No public endpoint, new
+Azure foundation before introducing new resources. The user has Azure
+sponsorship; remaining credits, expiry and an approved spending ceiling are
+not yet established. Sponsorship is not authorization for unlimited resource
+spending. No public endpoint, new
 cloud resource, account system or synthetic workload was created by this
 planning update.
 
