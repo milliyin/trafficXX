@@ -8,11 +8,11 @@ or deployed yet. Real player records will be durable application data.
 ## Product scope
 
 The public product name is **ClickClash**. Automatic clickers may compete and
-generate heavy traffic; manual-only play is not the competition policy. The user wants
-people to push the service rather than selecting a low per-player limit.
-Whether to omit a per-player click limit remains to be clarified. A finite
-global admission ceiling, connection budget and operator pause are still
-proposed; do not interpret this preference as permission for unlimited costs.
+generate heavy traffic; manual-only play is not the competition policy.
+There is no individual click cap. A finite global admission ceiling,
+connection budget and operator pause bound overall capacity. Excess requests
+are explicitly rejected and do not earn points. Exact global limits must be
+measured and selected before public launch.
 Do not promise one account per human.
 
 A small responsive React and TypeScript website offers unlimited-duration
@@ -115,8 +115,9 @@ proof that traffic is human.
 
 Game management, pause controls and incident publishing require operator
 authorization. Public users cannot start arbitrary generators, submit target
-URLs or change request budgets. Per-player request limits and a
-global admission budget bound public traffic. Scores advance only on server
+URLs or change request budgets. A global admission budget bounds public click
+traffic without an individual click cap. Signup and login retain separate
+abuse controls. Scores advance only on server
 acceptance, and overload responses remain visible rather than becoming fake
 successful clicks. Public display names and bio/ad content are validated and
 escaped. Any allowed destination link is a player promotion, not a URL the
@@ -173,9 +174,9 @@ Implementation begins with correctness, not an in-memory score placeholder.
 Deployment costs and connection budgets are reviewed against the existing
 Azure foundation before introducing new resources. The user has Azure
 sponsorship, described as lasting five years; its exact expiry, remaining
-credits and an approved spending ceiling are not yet established.
-Sponsorship is not authorization for unlimited resource
-spending. No public endpoint, new
+credits and a spending ceiling are not established. The user asked to leave
+budget questions aside; do not repeat them or block local preparation on them.
+Keep deployment sizing explicit and bounded. No public endpoint, new
 cloud resource, account system or synthetic workload was created by this
 planning update.
 
