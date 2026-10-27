@@ -856,11 +856,12 @@ distinct sample counts, source timestamps, last values and positive-hold start
 times. The ten-second threshold and every HTTP, pool-error, resource,
 database, freshness and HPA metric-gap stop remain; the measurement changes.
 
-### Prepared source-sample guard verification
+### Source-sample guard verification
 
-The next verification changes no capacity or arrival setting. It uses the
+The verification changed no capacity or arrival setting. It used the
 currently deployed pressure-three, borrow-40, one-pod-per-30-second scale-up
-profile, pool eight, queue 16 and two-to-four replicas. Run in Cloud Shell:
+profile, pool eight, queue 16 and two-to-four replicas. The following commands
+were used in Cloud Shell; the fixed Job now exists and should be retained:
 
 ```bash
 cd ~/trafficxx &&
@@ -874,10 +875,82 @@ step30 Job and all prior evidence remain. It repeats 500 paced users,
 think time, 45,000-request cap and existing generator limits. No image rebuild
 or scaling reconfiguration is needed. Keep Cloud Shell open through natural
 recovery and retain the full output. Only a complete
-`BROWSE_AUTOSCALING_DRILL_OK` verifies this run; it is prepared, not passed.
+`BROWSE_AUTOSCALING_DRILL_OK` verifies this run; that result was supplied as
+recorded below. Do not delete or replay this Job to create another experiment.
 `diagnose-500-sourcewait` is its read-only historical capture, with the same
 strict metadata guards for a deadline-interrupted Job lacking logs. No higher
 user count follows automatically.
+
+## 27 October: full 500-user observer verification passed
+
+Run `b2b01a0f2145`, Job `browse-users-500-autoscaling-sourcewait`, emitted
+both `BROWSE_SCALING_LOAD_OK` and `BROWSE_AUTOSCALING_DRILL_OK`. All 500
+participants completed 28,418 HTTP 200 responses with zero errors and no
+first failure. Elapsed workload time was 182.186 seconds. Latencies were:
+
+| Measure | Milliseconds |
+| --- | ---: |
+| p50 | 127.132 |
+| p95 | 171.568 |
+| p99 | 203.318 |
+| Maximum | 288.168 |
+
+This was the existing in-cluster Browse Service read workload: a scheduled
+180-second window, 120-second arrival ramp, two-second think time and a
+45,000-request cap. All 500 paced users were therefore present for roughly
+the final minute, not three minutes of 500 simultaneous HTTP requests. It
+generated no reservation writes and did not test an external ingress path,
+booking-write capacity or a production latency SLO.
+
+One observer verified a two-pod baseline, real automatic scale-up through
+three to four ready pods, and natural return to two ready pods. No manual
+scaling was used. The profile stayed at pressure target three, borrow-rate
+target 40, one added pod per 30-second policy period, pool eight, queue 16,
+and two-to-four replicas. The steady Browse connection cap remained 32,
+within the total planning budget of 128. HPA metric-gap count, total duration
+and maximum duration were all zero.
+
+The sampled resource summaries covered the generator and all four serving
+pods observed during scale-up:
+
+| Process / pod suffix | Distinct samples | Sampled max CPU cores | Sampled max memory MiB |
+| --- | ---: | ---: | ---: |
+| Original Browse pblw4 | 6 | 0.117695 | 74.816 |
+| Original Browse z9wkl | 6 | 0.108626 | 73.848 |
+| Added Browse 6vr8c | 3 | 0.123786 | 65.215 |
+| Added Browse bf5gq | 2 | 0.151891 | 64.918 |
+| Generator zpzrb | 5 | 0.193423 | 70.629 |
+
+CPU readings are collector-window averages and maxima are sampled. This
+bounded observer check does not establish continuous peaks. The source-time
+waiting watch processed 12, 12, six and four distinct samples across the
+four instances. Sampled waiting maxima were two, zero, one and one; every
+last value was zero, with no remaining positive hold. Brief queueing was
+observed and resolved without being mistaken for repeated fresh evidence.
+The sustained-wait and pool-error guards did not trigger.
+
+The final database observation window, 18:25:19 to 18:37:56 UTC, had 12
+minute-level samples per metric. Maxima were CPU 12.468%, memory 21.362%
+and 43 connections including idle sessions. It includes generator warmup,
+load and recovery; aggregation and publication lag can miss brief pressure.
+These observations do not establish database saturation or a hard capacity
+limit. The final five-minute recovery window separately had CPU maximum
+5.675%, memory 21.362% and 43 connections.
+
+Final health checks passed: both demo events retained 100 available tickets;
+Operations still reported 72 processed events, no pending/outstanding work,
+no active alerts and healthy workers. Historical publication failures remained
+four and the retained dead-letter audit count remained one. No external
+notification delivery was configured or tested.
+
+**This completes the bounded 500-user observer verification for the tested
+profile.** Earlier queue-full failures, the original successful workload with
+an interrupted observer, and the step30 guard interruption remain distinct
+historical outcomes. This successful run does not retroactively complete their
+audits, prove the exact cause of the original command failure, or isolate the
+effect of each change. Longer runs and repeated trials remain future work
+before a sustained-capacity or higher-user-count claim. No new load, larger
+budget or 1,000-user stage was prepared as part of this verification.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

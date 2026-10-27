@@ -24,22 +24,20 @@ results behind a system that holds tickets, moves events, and recovers from faul
 
 <div class="tx-milestone" markdown>
 
-**500 paced users. 28,347 successful reads. Zero errors.**
+**500 paced users. 28,418 successful reads. Zero errors.**
 
-A three-minute Browse workload passed on 27 October with a 120-second arrival
-ramp and p95 latency 185.227 ms. Earlier scaling brought a third ready pod
-online; a separate recovery check observed four pods naturally return to two.
-Final health and inventory checks passed. The monitoring script exited on a
-command error, leaving its continuous resource audit incomplete. This is a
-bounded workload result, not a fully verified drill or production SLO.
+A full Browse autoscaling drill passed on 27 October with a 120-second arrival
+ramp inside the scheduled three-minute workload and p95 latency 171.568 ms.
+The observer verified two-to-four-to-two ready pods, sampled resources,
+database observations, corrected per-pod queue measurements and final health.
+There were no HPA metric gaps, and inventory stayed unchanged. This is a
+bounded read experiment, not a production SLO or sustained capacity guarantee.
 
-A later repeat stopped on one HTTP 503 before all 500 users participated,
-despite four ready pods being observed. That failed repeat is retained in the
-experiment record; this milestone does not establish repeatable 500-user capacity.
-A subsequent faster-scale-up comparison was interrupted by a queue-waiting
-guard. Its source-sample timing is corrected; a verification repeat is pending.
+Earlier queue-full failures and the interrupted monitoring runs remain in the
+experiment record. This completed observer cycle verifies the current tested
+profile; longer runs and repeatability remain separate work.
 
-[Read the experiment and its limits](browse-autoscaling.md#500-user-earlier-scaling-workload-and-recovery-passed-observer-audit-incomplete)
+[Read the experiment and its limits](browse-autoscaling.md#27-october-full-500-user-observer-verification-passed)
 
 </div>
 
