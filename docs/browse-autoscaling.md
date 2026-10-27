@@ -175,7 +175,8 @@ requires all 500 users, matching HTTP 200 counts, no request errors, verified
 observed under the HPA, then natural return to two ready pods and final health
 and database observations. It reports `BROWSE_AUTOSCALING_DRILL_OK` with
 `users: 500` and the distinct Job name. The first live attempt stopped early,
-as recorded below; no 500-user pass has been established.
+as recorded below. A later earlier-scaling workload passed, with a separate
+recovery check; its continuous observer audit remains incomplete.
 
 On failure, inspect this Job and logs without starting another load. The
 observer attempts to stop only its own Job; the native 450-second deadline
@@ -474,14 +475,16 @@ python3 scripts/browse-autoscaling.py diagnose-500-slow
 python3 scripts/browse-autoscaling.py wait-idle
 ```
 
-The next prepared comparison changes **only the pool-pressure target from
+The subsequent comparison changed **only the pool-pressure target from
 5 to 3 per pod**. The borrow-rate target stays 40. Pools remain eight
 connections per pod, waiting queues remain 16, and replicas remain bounded
 at two to four: a steady Browse connection cap of 32 within the total
 planning budget of 128. Earlier scaling can consume extra pods sooner at
-moderate traffic. It is an experiment, with no live success recorded yet.
+moderate traffic. Its workload and separate recovery passed as recorded below;
+the complete observer audit remains unverified.
 
-After reviewing diagnostics and healthy recovery, run in Cloud Shell:
+The following commands were used after diagnostics and healthy recovery.
+The fixed Job now exists; inspect its logs rather than replaying these commands:
 
 ```bash
 git pull --ff-only origin main
@@ -509,7 +512,45 @@ required. No automatic higher stage or capacity increase is performed.
 
 If the comparison fails, retain its Job and capture it with
 `python3 scripts/browse-autoscaling.py diagnose-500-early`; use `wait-idle`
-after the load stops. A prepared comparison is not a load pass or latency SLO.
+after the load stops. A workload pass is not a complete observer audit or latency SLO.
+
+## 500-user earlier scaling: workload and recovery passed; observer audit incomplete
+
+Run `4940bd9ef3b8`, Job `browse-users-500-autoscaling-pressure3`, completed
+with all 500 participants, 28,347 HTTP 200 responses and zero errors.
+The workload lasted 182.187 seconds, with arrivals spread over 120 seconds
+inside the scheduled 180-second window and a two-second think time. Latencies
+were p50 131.767 ms, p95 185.227 ms, p99 226.088 ms and maximum 372.583 ms.
+These are paced readers, not 500 simultaneous requests or 500 requests/second.
+There were no inventory writes.
+
+The pressure-target change from 5 to 3 was confirmed live. Other reviewed
+limits stayed at pool eight, queue 16 and two-to-four pods. The observer
+recorded two ready pods, a third desired pod, then three ready pods. It then
+exited with `CalledProcessError`, without identifying the failing command in
+the supplied output. The exact cause is not established. The load Job
+continued, reached Complete 1/1 and emitted `BROWSE_SCALING_LOAD_OK`.
+
+A separate `wait-idle` invocation first refused while that Job was active.
+After completion, recovery observed four ready pods and then a natural return
+to two, emitting `BROWSE_AUTOSCALING_RECOVERY_OK`. Both demo events retained
+100 available tickets. Operations reported 72 processed events, zero pending
+or outstanding work, no active alerts, healthy workers, and unchanged
+historical publication-failure count four / dead-letter audit count one.
+
+The recovery five-minute database window had five samples per metric:
+maximum CPU 5.904%, memory 21.246% and 43 connections including idle sessions.
+This recovery window does not establish peak load-period database utilization.
+Earlier scaling was sufficient for this workload attempt; one passing trial
+does not guarantee every arrival pattern or establish isolated causality.
+
+**Verified:** workload success, observed scale-up, separate natural downscale
+and final application health. **Incomplete:** the original continuous
+resource/database/controller audit; there is no `BROWSE_AUTOSCALING_DRILL_OK`
+for this run. Final recovery cannot replace that audit. Next, identify the
+observer command failure, improve its safe diagnostic reporting, and prepare
+a distinct repeat of the same 500-user stage before any higher user count.
+Retain the existing Job and logs; do not delete it to reuse its name.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

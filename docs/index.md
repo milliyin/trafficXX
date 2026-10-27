@@ -24,15 +24,16 @@ results behind a system that holds tickets, moves events, and recovers from faul
 
 <div class="tx-milestone" markdown>
 
-**250 paced users. 21,129 successful reads. Zero errors.**
+**500 paced users. 28,347 successful reads. Zero errors.**
 
-A three-minute Browse verification passed on 27 October with p95 latency
-159.051 ms. Kubernetes scaled from two to three ready pods, then naturally
-returned to two. Sampled resources and final health checks passed; one HPA
-metric gap recovered in 16.78 seconds. Each pod uses eight database connections
-and 16 waiting slots. This is a bounded experiment, not a production SLO.
+A three-minute Browse workload passed on 27 October with a 120-second arrival
+ramp and p95 latency 185.227 ms. Earlier scaling brought a third ready pod
+online; a separate recovery check observed four pods naturally return to two.
+Final health and inventory checks passed. The monitoring script exited on a
+command error, leaving its continuous resource audit incomplete. This is a
+bounded workload result, not a fully verified drill or production SLO.
 
-[Read the experiment and its limits](browse-autoscaling.md#27-october-corrected-observer-verification-passed)
+[Read the experiment and its limits](browse-autoscaling.md#500-user-earlier-scaling-workload-and-recovery-passed-observer-audit-incomplete)
 
 </div>
 

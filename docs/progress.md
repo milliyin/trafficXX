@@ -6,12 +6,12 @@ earlier checkpoints. It is not a live status page.
 
 ## Running and checked
 
-Latest 500-user checkpoint: the slower 120-second ramp stopped after 75.85
-seconds with 315 participants, 5,714 HTTP 200 responses and one
-`DATABASE_BUSY` HTTP 503. A third pod was desired but not ready. Post-run
-diagnostics/recovery are requested. An earlier pressure-target comparison
-(5 to 3 per pod, unchanged connection/queue/replica limits) is prepared,
-not yet verified live. See the [comparison procedure](browse-autoscaling.md#500-user-slower-ramp-stopped-earlier-scaling-comparison-prepared).
+Latest 500-user checkpoint: the earlier-scaling comparison completed 28,347
+successful reads with all 500 participants and zero errors; p95 was 185.227 ms.
+Separate recovery checks observed four pods naturally return to two, healthy
+applications and unchanged inventory. The parent observer exited on a command
+error, so the continuous resource audit and full drill remain incomplete.
+See the [result and limits](browse-autoscaling.md#500-user-earlier-scaling-workload-and-recovery-passed-observer-audit-incomplete).
 
 | Area | Evidence |
 | --- | --- |
@@ -29,6 +29,7 @@ not yet verified live. See the [comparison procedure](browse-autoscaling.md#500-
 | 100-user single-query comparison | 2,804 successful reads in 60.100 seconds; zero errors; p95 201.078 ms; sampled generator peak process RSS 33.164 MiB. Fresh post-run health checks passed. |
 | 250-user temporary pool-eight trial | 6,986 successful reads in 60.144 seconds; zero errors; p95 191.658 ms; both pools restored to four and post-trial health verified. |
 | 250-user autoscaling verification | v3 completed 21,129 successful reads in 182.14 seconds, zero errors, p95 159.051 ms, automatic two-to-three-to-two ready pods; sampled resource and final health checks passed. One HPA metric gap recovered in 16.78 seconds. |
+| 500-user earlier-scaling workload | All 500 users completed 28,347 successful reads in 182.187 seconds, zero errors, p95 185.227 ms. Separate natural four-to-two recovery and health passed; continuous resource audit incomplete after an observer command error. |
 
 The fresh health checks after the restored 250-user trial reported both demo events still
 at 100 available tickets, healthy workers, no backlog, and no active alerts.
@@ -49,16 +50,22 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
-- **500-user attempt failed safely:** the first ramped run stopped after
+- **Complete the 500-user observer audit:** the earlier-scaling workload
+  passed, but its parent stopped with `CalledProcessError` after observing
+  three ready pods. Identify the failing command and improve safe diagnostics,
+  then repeat the same stage under a distinct Job name before increasing load.
+  Separate four-to-two recovery passed; it does not replace the interrupted audit.
+- **Earlier 500-user failures retained:** the first ramped run stopped after
   40.795 seconds, with 338 users participating, 3,359 successful requests and
   one HTTP 503. Two ready pods were still observed. Fresh follow-up checks
   showed healthy applications and no backlog or active alerts; the Job is
   retained. Extended historical diagnostics show roughly one queue-full
   rejection and failed borrow, with post-terminal samples from both pods and
-  no connection-error increases. A separate 120-second arrival-ramp comparison
-  is prepared with unchanged capacity and guards; its full 500-user population
-  lasts about the final minute of the same three-minute window. No 500-user
-  pass or 1,000-user stage is established. See [the record and comparison](browse-autoscaling.md#prepared-comparison-slower-arrival-unchanged-capacity).
+  no connection-error increases. The later 120-second ramp also stopped on one
+  queue-full rejection before the third pod became ready. Lowering the pressure
+  target from five to three preceded the successful workload recorded above.
+  No complete 500-user observer audit or 1,000-user stage is established.
+  See [the record and comparison](browse-autoscaling.md#prepared-comparison-slower-arrival-unchanged-capacity).
 
 - **Complete autoscaling observer run passed:** v3 run `f807afdc2940`
   reported `BROWSE_AUTOSCALING_DRILL_OK`. All 250 users completed 21,129
@@ -97,7 +104,8 @@ or establish sustained production capacity.
   to the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
   also passed, with its baseline restoration verified. Eight connections are
   selected and deployed for the new two-to-four-pod autoscaling profile.
-  No 500/1,000-user test ran.
+  A later 500-user workload and separate recovery passed as recorded above;
+  the full observer audit remains incomplete. No 1,000-user test ran.
 - **Capacity interpretation:** AKS East US and PostgreSQL Central US, cheap
   cached SQL and much longer client calls support investigating round-trip
   cost with bounded pool concurrency. The passing trial's three minute-level
