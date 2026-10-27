@@ -51,7 +51,8 @@ def main():
     if old.get('origin') != base:
         old = {}  # Never mix different deployment histories.
     history = old.get('history', [])[-287:]
-    history.append({'checked_at': stamp, 'ok': all(item['ok'] for item in current)})
+    history.append({'checked_at': stamp, 'ok': all(item['ok'] for item in current),
+                    'components': current})
     value = {'origin': base, 'started_at': old.get('started_at', stamp), 'checked_at': stamp,
              'components': current, 'history': history, 'note': 'Actual functional probe results; missing time is not assumed healthy. No authenticated login or click-write availability claim.'}
     args.output.parent.mkdir(parents=True, exist_ok=True)

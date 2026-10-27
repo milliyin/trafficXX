@@ -3,7 +3,9 @@
 Implemented **28 October 2026**. ClickClash is now a working React/TypeScript
 frontend and FastAPI/PostgreSQL application in this repository. It has been
 tested locally against disposable PostgreSQL, including real browser flows.
-The ClickClash Azure resources and public game have **not** been deployed.
+The user verified the Azure public deployment and trusted HTTPS read routes.
+The live logical restore rehearsal also passed; managed point-in-time recovery
+and ClickClash write-load capacity remain separate checks.
 The existing ticket services and their verified Browse benchmark are unchanged.
 
 ## What works
@@ -11,7 +13,7 @@ The existing ticket services and their verified Browse benchmark are unchanged.
 - `/`: public all-time leaderboard, ranked accounts, click totals, immediate
   bio/website/image promotions and report controls.
 - `/play`: unlimited-duration guest/account play, confirmed scores, pending
-  requests, retries using the original click ID, and optional automatic clicks.
+  requests and retries using the original click ID. There is no built-in auto-clicker.
 - `/account`: email signup, one-time five-word generated passphrase, login,
   logout, profile editing, image upload/removal and account deletion.
 - Guest play stays unranked until signup or authenticated account linking.
@@ -49,8 +51,11 @@ If a connection is interrupted after commit, retrying the original UUID resolves
 the uncertainty. The browser retains at most 64 unconfirmed IDs in session
 storage; losing this local retry list does not erase server-accepted scores.
 The UI limits in-flight browser requests to eight for bounded client memory;
-it does not impose a server-side individual click rate limit. Its built-in
-automatic mode sends up to ten requests/second and stops on errors.
+it does not impose a server-side individual click rate limit.
+
+Profile pictures are resized in the browser before upload (PNG, JPEG or WebP,
+up to 20 MB input). The backend still validates and re-encodes the bounded
+upload, strips metadata and enforces its shared image storage budget.
 
 Signup/login have separate shared and IP-based limits, plus bounded Argon2
 concurrency. The gateway overwrites the client-IP header and the application
@@ -220,7 +225,10 @@ a docs Pages refresh. Without that variable the job is skipped.
 
 Status is served at `https://milliyin.github.io/trafficXX/public-status/`.
 History starts at activation and retains 288 checks; each bar is an actual
-sample, not fabricated daily uptime. Evidence older than 15 minutes is unknown.
+sample, not fabricated daily uptime. Each service has its own history bars and
+recorded-check pass percentage. Missing component observations remain gray;
+older aggregate-only samples are not attributed to individual services.
+Evidence older than 15 minutes is unknown.
 GitHub schedules and Pages deploys may be delayed. The probe does not validate
 authenticated scoring, existing private ticket services, or send notifications.
 Authenticated write canaries, incident publishing and operator notifications

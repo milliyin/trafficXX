@@ -656,19 +656,6 @@ hr {
   border-top: 1px solid #cbd2bd;
   margin: 25px 0;
 }
-.auto-toggle {
-  display: block;
-  background: #f6f8ef;
-  padding: 12px;
-  font-size: 12px;
-  border-radius: 5px;
-}
-.auto-toggle small {
-  display: block;
-  font-size: 10px;
-  padding: 6px 0 0 23px;
-  color: #717461;
-}
 .text-link {
   display: block;
   margin-top: 24px;
@@ -853,6 +840,13 @@ hr {
 .uptime-bars .down {
   background: #cd816b;
 }
+.service-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); border:1px solid #d8ded3; margin:28px 0; }
+.service-card { min-width:0; padding:22px; border:1px solid #d8ded3; }
+.service-heading,.service-caption { display:flex; justify-content:space-between; gap:8px; }
+.service-heading span,.service-caption { font-size:11px; color:#626c59; }
+.service-card .uptime-bars { gap:2px; height:36px; margin:18px 0 8px; }
+.service-card .uptime-bars span { min-width:0; max-width:none; flex:1; }
+.uptime-bars .unknown { background:#d9ddd4; }
 @media (min-width: 1500px) {
   h1 {
     font-size: 74px;

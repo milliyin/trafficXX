@@ -42,6 +42,8 @@ const messages: Record<string, string> = {
   AUTH_BUSY: "Account processing is busy. Please try again in a moment.",
   INVALID_IMAGE: "Use a still PNG, JPEG or WebP, at most 2048 × 2048 pixels.",
   IMAGE_TOO_LARGE: "Choose an image smaller than 1 MB.",
+  REQUEST_TOO_LARGE: "This image is too large. Please choose a smaller image.",
+  IMAGE_STORAGE_FULL: "Image storage is full. Please try again later.",
   INVALID_WEBSITE: "Use a full http:// or https:// website address.",
   ACCOUNT_REQUIRED: "Create an account first.",
   SESSION_EXPIRED: "Your session expired. Please reload and sign in.",
@@ -99,6 +101,31 @@ function explain(error: unknown) {
     : error instanceof Error
       ? error.message
       : "Something went wrong.";
+}
+
+async function prepareImage(file: File): Promise<File> {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
+    throw new Error('Choose a PNG, JPEG or still WebP image.');
+  if (file.size > 20 * 1024 * 1024)
+    throw new Error('Choose an image smaller than 20 MB.');
+  const bitmap = await createImageBitmap(file);
+  try {
+    const ratio = Math.min(1, 960 / bitmap.width, 640 / bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * ratio));
+    canvas.height = Math.max(1, Math.round(bitmap.height * ratio));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Image preparation failed. Try another image.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(value => value ? resolve(value) : reject(new Error('Image preparation failed.')), 'image/webp', 0.8));
+    if (blob.size > 1_000_000) throw new Error('Please choose a simpler or smaller image.');
+    return new File([blob], 'promotion.webp', { type: 'image/webp' });
+  } finally {
+    bitmap.close();
+  }
 }
 
 function App() {
@@ -460,10 +487,8 @@ function Play({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(0);
   const [accepted, setAccepted] = useState(0);
-  const [auto, setAuto] = useState(false);
   const [uncertain, setUncertain] = useState<string[]>([]);
   const inFlight = useRef(0);
-  const clickRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!me) return;
     try {
@@ -506,21 +531,12 @@ function Play({
       setError("");
     } catch (e) {
       setError(explain(e));
-      setAuto(false);
       if (e instanceof ApiError && e.status < 500) remember(id, false);
     } finally {
       inFlight.current--;
       setPending(inFlight.current);
     }
   }
-  clickRef.current = () => {
-    void send();
-  };
-  useEffect(() => {
-    if (!auto) return;
-    const timer = setInterval(() => clickRef.current(), 100);
-    return () => clearInterval(timer);
-  }, [auto]);
   return (
     <section className="play-page">
       <div className="eyebrow">LESS TALK. MORE CLICK.</div>
@@ -573,15 +589,6 @@ function Play({
             Automatic clickers are allowed. Everyone shares a fixed server
             capacity. When it’s full, excess requests are rejected.
           </p>
-          <label className="auto-toggle">
-            <input
-              type="checkbox"
-              checked={auto}
-              disabled={!me || paused}
-              onChange={(e) => setAuto(e.target.checked)}
-            />{" "}
-            Try auto-clicking <small>10 requests/second from this tab</small>
-          </label>
           <a href="/" className="text-link">
             See who’s ahead ↗
           </a>
@@ -795,25 +802,27 @@ function Account({
                 accept="image/png,image/jpeg,image/webp"
                 disabled={busy}
                 onChange={async (e) => {
-                  const file = e.target.files?.[0];
+                  const input = e.currentTarget;
+                  const file = input.files?.[0];
                   if (!file) return;
                   setBusy(true);
                   try {
-                    await api("/profile/image", "PUT", file, me.csrf);
+                    const prepared = await prepareImage(file);
+                    await api("/profile/image", "PUT", prepared, me.csrf);
                     await reloadMe();
                     setError("");
                   } catch (error) {
                     setError(explain(error));
                   } finally {
                     setBusy(false);
-                    e.target.value = "";
+                    input.value = "";
                   }
                 }}
               />
             </label>
             <p className="form-note">
-              PNG, JPEG or still WebP. Up to 1 MB and 2048 × 2048 pixels. We
-              resize and remove metadata.
+              PNG, JPEG or WebP up to 20 MB. We resize your picture before
+              uploading and remove metadata. {busy && 'Saving your changes…'}
             </p>
             {me.image_url && (
               <button
@@ -981,7 +990,7 @@ function Status() {
   const [data, setData] = useState<{
     checked_at: string;
     components: { name: string; ok: boolean }[];
-    history: { checked_at: string; ok: boolean }[];
+    history: { checked_at: string; ok: boolean; components?: { name: string; ok: boolean }[] }[];
   } | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -1033,26 +1042,29 @@ function Status() {
           : "Monitoring history starts when external checks are enabled."}
       </p>
       {error && <p>{error}</p>}
-      {data?.components.map((component) => (
-        <div className="component" key={component.name}>
-          <strong>{component.name}</strong>
-          <span>
-            {stale ? "Unknown" : component.ok ? "Operational" : "Unavailable"}
-          </span>
-        </div>
-      ))}
-      <h2>Check history</h2>
-      <div className="uptime-bars">
-        {data?.history.slice(-90).map((check, index) => (
-          <span
-            key={index}
-            className={check.ok ? "ok" : "down"}
-            title={
-              new Date(check.checked_at).toLocaleString() +
-              (check.ok ? " — passed" : " — failed")
-            }
-          />
-        ))}
+      <div className="service-grid">
+        {(data?.components.length ? data.components : [
+          {name: 'Website', ok: false}, {name: 'Click API readiness', ok: false}, {name: 'Leaderboard', ok: false},
+        ]).map(component => {
+          const checks = data?.history.slice(-90) || [];
+          const observations = checks.map(check => check.components?.find(item => item.name === component.name));
+          const known = observations.filter(item => item !== undefined);
+          const passed = known.filter(item => item.ok).length;
+          return <article className="service-card" key={component.name}>
+            <div className="service-heading"><strong>{component.name}</strong>
+              <span>{stale ? 'Unknown' : component.ok ? 'Operational' : 'Unavailable'}</span></div>
+            <div className="uptime-bars" aria-label={component.name + ' recorded checks'}>
+              {Array.from({length: 90}, (_, index) => {
+                const position = index - (90 - checks.length);
+                const check = checks[position];
+                const observation = observations[position];
+                return <span key={index} className={!observation ? 'unknown' : observation.ok ? 'ok' : 'down'}
+                  title={check ? new Date(check.checked_at).toLocaleString() + (observation ? observation.ok ? ' — passed' : ' — failed' : ' — no component evidence') : 'No check recorded'} />;
+              })}
+            </div>
+            <div className="service-caption"><span>Earlier checks</span><span>{known.length ? (100 * passed / known.length).toFixed(2) + '% checks passed' : 'No checks yet'}</span><span>Latest</span></div>
+          </article>;
+        })}
       </div>
       <p className="form-note">
         Each bar is an actual recorded check, not a day of assumed uptime.
