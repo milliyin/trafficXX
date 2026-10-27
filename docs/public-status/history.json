@@ -1,28 +1,49 @@
 {
   "origin": "https://clickclash-e8708a85.f4c9crh8e7adc8bw.eastus.sysgen.cloudapp.azure.com",
   "started_at": "2026-10-27T20:44:19.751112+00:00",
-  "checked_at": "2026-10-27T20:44:19.751112+00:00",
+  "checked_at": "2026-10-27T20:47:23.531654+00:00",
   "components": [
     {
       "name": "Website",
       "ok": true,
-      "latency_ms": 33.0
+      "latency_ms": 31.7
     },
     {
       "name": "Click API readiness",
       "ok": true,
-      "latency_ms": 144.6
+      "latency_ms": 149.8
     },
     {
       "name": "Leaderboard",
       "ok": true,
-      "latency_ms": 212.7
+      "latency_ms": 221.5
     }
   ],
   "history": [
     {
       "checked_at": "2026-10-27T20:44:19.751112+00:00",
       "ok": true
+    },
+    {
+      "checked_at": "2026-10-27T20:47:23.531654+00:00",
+      "ok": true,
+      "components": [
+        {
+          "name": "Website",
+          "ok": true,
+          "latency_ms": 31.7
+        },
+        {
+          "name": "Click API readiness",
+          "ok": true,
+          "latency_ms": 149.8
+        },
+        {
+          "name": "Leaderboard",
+          "ok": true,
+          "latency_ms": 221.5
+        }
+      ]
     }
   ],
   "note": "Actual functional probe results; missing time is not assumed healthy. No authenticated login or click-write availability claim."
