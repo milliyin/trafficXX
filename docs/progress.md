@@ -1,6 +1,7 @@
 # Verified progress
 
-Updated **27 October 2026** from user-supplied deployment and diagnostic results.
+Updated **28 October 2026**. The latest verified load results are from
+27 October; the real public-product plan was added on 28 October.
 This page summarises milestones; linked guides retain the full evidence and
 earlier checkpoints. It is not a live status page.
 
@@ -81,6 +82,13 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
+- **Real public product planned, 28 October:** the user requested a click
+  challenge with guests, sign-in, leaderboard and independent public status,
+  using durable real-player data. The [implementation plan](public-click-challenge.md)
+  defines transactional scoring, retry correctness, real/synthetic separation,
+  identity, backup/restore and staged launch. No public app or new cloud
+  resource is deployed yet. The proposed longer 500-user soak remains pending
+  while this product plan takes priority.
 - **500-user observer cycle passed:** the corrected source-sample verification
   emitted `BROWSE_AUTOSCALING_DRILL_OK` with full workload, automatic scale-up
   and natural recovery under one observer. Its sampled resource/database and

@@ -75,6 +75,7 @@ nav:
       - Learning path: getting-started.md
       - Verified progress: progress.md
       - System design: architecture.md
+      - Public challenge plan: public-click-challenge.md
       - Local development: local-development.md
       - Documentation site: documentation-site.md
   - Azure foundation:
