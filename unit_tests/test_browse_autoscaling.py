@@ -287,9 +287,13 @@ class Scaling(unittest.TestCase):
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500']), \
                 patch.object(scaling, 'drill') as drill:
             self.assertEqual(scaling.main(), 0)
-            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500)
+            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=False)
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--slower-ramp']), \
+                patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            drill.assert_called_once_with(retry_metric_gap=False, verification_run=False, users=500, slower_ramp=True)
         for argv in (['drill', '--users', '1000'], ['check', '--users', '500'],
-                     ['drill', '--users', '500', '--verification-run']):
+                     ['drill', '--users', '500', '--verification-run'], ['drill', '--slower-ramp']):
             with patch.object(sys, 'argv', ['browse-autoscaling.py', *argv]), \
                     patch.object(scaling.trial, 'context') as context, \
                     patch.object(sys, 'stderr', io.StringIO()), self.assertRaises(SystemExit):
@@ -313,17 +317,30 @@ class Scaling(unittest.TestCase):
             return 200, seated if 'demo-seated' in url else general
         # Execute every user and request with fake waits and time. This tests
         # scheduling/caps only; it is not real load or a latency measurement.
-        with patch.object(probe, 'ThreadPoolExecutor') as executor, \
-                patch.object(probe.threading, 'Event', Event), \
-                patch.object(probe.time, 'monotonic', return_value=0), redirect_stdout(io.StringIO()):
-            executor.return_value.__enter__.return_value.map.side_effect = lambda fn, ids: [fn(i) for i in ids]
-            result = probe.run('a' * 12, users=500, http=http)
-        self.assertEqual(result['attempts'], 45000)
-        self.assertEqual(result['users_with_requests'], 500)
-        self.assertEqual(result['status_counts'], {'200': 45000})
-        self.assertEqual(result['start_ramp_seconds'], 60)
-        self.assertAlmostEqual(waits[499 * 91], 59.88)
-        executor.assert_called_once_with(max_workers=500)
+        for ramp in (60, 120):
+            waits.clear()
+            with patch.object(probe, 'ThreadPoolExecutor') as executor, \
+                    patch.object(probe.threading, 'Event', Event), \
+                    patch.object(probe.time, 'monotonic', return_value=0), redirect_stdout(io.StringIO()):
+                executor.return_value.__enter__.return_value.map.side_effect = lambda fn, ids: [fn(i) for i in ids]
+                result = probe.run('a' * 12, users=500, ramp_seconds=ramp, http=http)
+            self.assertEqual(result['attempts'], 45000)
+            self.assertEqual(result['users_with_requests'], 500)
+            self.assertEqual(result['status_counts'], {'200': 45000})
+            self.assertEqual(result['start_ramp_seconds'], ramp)
+            self.assertAlmostEqual(waits[499 * 91], 499 * ramp / 500)
+            executor.assert_called_once_with(max_workers=500)
+
+    def test_slow_ramp_must_be_verified_and_cannot_change_arbitrary_pacing(self):
+        row = {'result': 'BROWSE_SCALING_LOAD_OK', 'run_id': 'a' * 12, 'users': 500,
+            'users_with_requests': 500, 'scheduled_duration_seconds': 180, 'elapsed_seconds': 182,
+            'start_ramp_seconds': 120, 'think_seconds': 2, 'max_workload_attempts': 45000,
+            'attempts': 28000, 'status_counts': {'200': 28000}, 'errors': {}}
+        scaling.validate_load(row, 'a' * 12, 500, True, slower_ramp=True)
+        with self.assertRaisesRegex(ValueError, 'PACING_NOT_VERIFIED'):
+            scaling.validate_load(row, 'a' * 12, 500, True)
+        with self.assertRaises(ValueError):
+            probe.run('a' * 12, users=500, ramp_seconds=90, http=Mock())
 
     def test_500_job_receives_exact_user_count_without_raising_resource_limits(self):
         initial = app()
@@ -347,6 +364,11 @@ class Scaling(unittest.TestCase):
         self.assertFalse(any('/resources' in p['path'] for p in patches))
         self.assertEqual(next(p['value'] for p in patches if p['path'] == '/metadata/name'),
                          'browse-users-500-autoscaling')
+        patches.clear()
+        with patch.object(scaling.base, 'kube', side_effect=kube):
+            scaling.create_job(initial, 'a' * 12, 'browse-users-500-autoscaling-ramp120', users=500, slower_ramp=True)
+        self.assertEqual(next(p['value'] for p in patches if p['path'].endswith('/args')), ['a' * 12, '500', '120'])
+        self.assertFalse(any('/resources' in p['path'] for p in patches))
 
     def test_native_paced_threads_stop_on_http_error(self):
         # Shortened clock fixture, real ThreadPoolExecutor, no cluster claims.
@@ -376,11 +398,12 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error, retry, verification, users in (([3, 3, 3, 2], None, False, False, 250),
-                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250), ([3, 3, 3, 2], None, True, False, 250),
-                ([3, 3, 3, 2], None, False, True, 250), ([4, 4, 4, 2], None, False, False, 500)):
+        for scales, expected_error, retry, verification, users, slower in (([3, 3, 3, 2], None, False, False, 250, False),
+                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False, 250, False), ([3, 3, 3, 2], None, True, False, 250, False),
+                ([3, 3, 3, 2], None, False, True, 250, False), ([4, 4, 4, 2], None, False, False, 500, False),
+                ([4, 4, 4, 2], None, False, False, 500, True)):
             initial = app()
-            job_name = ('browse-users-500-autoscaling' if users == 500 else
+            job_name = (('browse-users-500-autoscaling-ramp120' if slower else 'browse-users-500-autoscaling') if users == 500 else
                         scaling.JOB + ('-v3' if verification else '-v2' if retry else ''))
             pod_names = ['browse-a', 'browse-b', job_name + '-pod']
             pods = [{'metadata': {'name': name, 'labels': ({'job-name': scaling.JOB} if i == 2 else
@@ -390,7 +413,7 @@ class Scaling(unittest.TestCase):
                 'users_with_requests': users, 'attempts': 21000, 'status_counts': {'200': 21000},
                 'errors': {}, 'elapsed_seconds': 180.1}
             if users == 500:
-                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=60,
+                outcome.update(users=500, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower else 60,
                                think_seconds=2, max_workload_attempts=45000)
             states = iter([False, False, True, True])
             def kube(*args, **kwargs):
@@ -438,9 +461,9 @@ class Scaling(unittest.TestCase):
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
-                        scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users)
+                        scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users, slower_ramp=slower)
                 else:
-                    scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users)
+                    scaling.drill(retry_metric_gap=retry, verification_run=verification, users=users, slower_ramp=slower)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
                     if retry or verification:
                         self.assertIn(job_name, output.getvalue())
@@ -458,6 +481,8 @@ class Scaling(unittest.TestCase):
                 scaling.drill(users=500, verification_run=True)
             with self.assertRaisesRegex(ValueError, 'UNSUPPORTED_USER_COUNT'):
                 scaling.drill(users=1000)
+            with self.assertRaisesRegex(ValueError, 'UNSUPPORTED_RAMP'):
+                scaling.drill(slower_ramp=True)
             context.assert_not_called()
 
 

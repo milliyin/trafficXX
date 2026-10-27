@@ -46,9 +46,12 @@ or establish sustained production capacity.
   40.795 seconds, with 338 users participating, 3,359 successful requests and
   one HTTP 503. Two ready pods were still observed. Fresh follow-up checks
   showed healthy applications and no backlog or active alerts; the Job is
-  retained. A read-only, Job-aligned pool diagnostic is prepared before
-  choosing a retry. The cause is not yet confirmed and no 500-user pass or
-  1,000-user stage is established. See [the record and diagnostics](browse-autoscaling.md#first-500-user-attempt-stopped-on-http-503).
+  retained. Extended historical diagnostics show roughly one queue-full
+  rejection and failed borrow, with post-terminal samples from both pods and
+  no connection-error increases. A separate 120-second arrival-ramp comparison
+  is prepared with unchanged capacity and guards; its full 500-user population
+  lasts about the final minute of the same three-minute window. No 500-user
+  pass or 1,000-user stage is established. See [the record and comparison](browse-autoscaling.md#prepared-comparison-slower-arrival-unchanged-capacity).
 
 - **Complete autoscaling observer run passed:** v3 run `f807afdc2940`
   reported `BROWSE_AUTOSCALING_DRILL_OK`. All 250 users completed 21,129

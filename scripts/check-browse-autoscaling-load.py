@@ -13,11 +13,14 @@ import read_probe as read
 URL = 'http://browse.trafficxx.svc.cluster.local'
 
 
-def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
+def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=read.read_url):
     read.require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_RUN_ID')
     read.require(type(users) is int and users in (250, 500) and duration == 180 and think == 2,
                  'UNSUPPORTED_DRILL')
-    ramp_seconds = 60 if users == 500 else 2
+    if ramp_seconds is None:
+        ramp_seconds = 60 if users == 500 else 2
+    read.require(type(ramp_seconds) is int and
+                 (ramp_seconds in (60, 120) if users == 500 else ramp_seconds == 2), 'UNSUPPORTED_RAMP')
     stop, lock = threading.Event(), threading.Lock()
     rows, failures, participants, first_failure = [], Counter(), set(), []
     start = time.monotonic()
@@ -76,7 +79,8 @@ if __name__ == '__main__':
         while not Path('/state/start').exists():
             read.require(time.monotonic() < deadline, 'RESOURCE_GATE_TIMEOUT')
             time.sleep(1)
-        result = run(sys.argv[1], users=int(sys.argv[2]) if len(sys.argv) == 3 else 250)
+        result = run(sys.argv[1], users=int(sys.argv[2]) if len(sys.argv) >= 3 else 250,
+                     ramp_seconds=int(sys.argv[3]) if len(sys.argv) == 4 else None)
         raise SystemExit(0 if result['result'] == 'BROWSE_SCALING_LOAD_OK' else 1)
     except Exception as error:
         print(json.dumps({'result': 'BROWSE_SCALING_LOAD_FAILED', 'error_type': type(error).__name__}), flush=True)

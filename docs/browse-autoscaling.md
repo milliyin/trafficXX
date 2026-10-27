@@ -247,6 +247,44 @@ regression test reproduces a zero at the old cutoff and a rejection increase
 in the extended window. No load, application image or scaling policy change
 is required to retrieve the additional history.
 
+The extended live diagnostic subsequently reported queue-full and borrow-error
+increases of **1.039573 each**, with zero timeout, closed-pool, connection-error,
+lost-connection and bad-return increases. Both original instances had samples
+after Job termination. The fractional figure is Prometheus extrapolation,
+consistent with roughly one rejection; the two counters can describe the same
+failed borrow and must not be added as two separate failures. This is evidence
+of a queue-full rejection consistent with the lone HTTP 503. The instantaneous
+queue spike was not visible in the 15-second sampled peak. It does not show
+database server saturation or prove precisely why scaling had not yet reacted.
+
+### Prepared comparison: slower arrival, unchanged capacity
+
+The next bounded comparison changes only the arrival ramp, from 60 to **120
+seconds**, while keeping the same 180-second workload window. All 500 users
+must participate; the full population is therefore present for approximately
+the final **60 seconds**, instead of about 120 seconds in the original plan.
+This tests a slower traffic arrival pattern, not a fix for the original faster
+ramp or a stronger sustained-load claim.
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py drill --users 500 --slower-ramp
+```
+
+The distinct Job is `browse-users-500-autoscaling-ramp120`. Both failed-run
+evidence and the prior 250-user passes are preserved. The same eight
+connections per pod, 16 waiting slots, two-four replica bounds, scaling
+thresholds, one CPU / 256 MiB generator, 45,000-attempt ceiling and failure
+guards remain. No application build or deployment is needed. The parent
+requires the actual 120-second ramp in the result, zero request errors,
+observed automatic scale-up and natural return to two pods with healthy
+post-run checks. There is no live slower-ramp result yet and success is not
+guaranteed. Keep Cloud Shell running for the final result.
+
+If this comparison fails, keep its Job and use the read-only
+`python3 scripts/browse-autoscaling.py diagnose-500-slow` command for that
+specific run; `diagnose-500` continues to inspect the original 60-second ramp.
+
 ## Failure or disconnect
 
 ### 27 October: corrected-observer verification passed
