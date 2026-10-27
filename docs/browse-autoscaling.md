@@ -456,6 +456,61 @@ remove that annotation and run the checker. Keep both earlier comparison
 journals; their four-connection rollback commands belong to those completed
 trials and must not be used to undo this new autoscaling policy.
 
+## 500-user slower ramp: stopped; earlier scaling comparison prepared
+
+The 120-second arrival trial (`60787ecc1b0b`, Job
+`browse-users-500-autoscaling-ramp120`) stopped after 75.85 seconds, with
+315 participants and 5,715 requests: 5,714 HTTP 200 responses and one HTTP 503.
+The first failure reported `DATABASE_BUSY` in 29.502 ms. At the latest
+observation the controller wanted three pods, but only two were ready.
+This is a failed partial run, not a 500-user pass. The fast rejection and
+pending third pod support investigating earlier scaling; they do not prove
+database saturation or establish the exact rejection category without counters.
+
+Capture this run and confirm recovery first:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-500-slow
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+The next prepared comparison changes **only the pool-pressure target from
+5 to 3 per pod**. The borrow-rate target stays 40. Pools remain eight
+connections per pod, waiting queues remain 16, and replicas remain bounded
+at two to four: a steady Browse connection cap of 32 within the total
+planning budget of 128. Earlier scaling can consume extra pods sooner at
+moderate traffic. It is an experiment, with no live success recorded yet.
+
+After reviewing diagnostics and healthy recovery, run in Cloud Shell:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py configure-early &&
+python3 scripts/browse-autoscaling.py drill --users 500 --earlier-scaling
+```
+
+Configuration refuses active load, foreign ownership, paused autoscaling or
+unreviewed policy. It waits for two naturally ready pods and healthy metrics,
+then uses UID/resource-version/spec tests to patch only the pressure threshold.
+It waits for the native HPA targets to become 3 and 40. If reconciliation times
+out, the threshold may already be 3; rerun `configure-early` to resume safely.
+It creates no load, modifies no application template and requires no image build.
+Read-only `check` and `wait-idle` accept either complete reviewed profile.
+The new drill requires target 3; older drill modes require target 5, preventing
+an accidental comparison with a different policy. The original `deploy` action
+still installs target 5 and should not be used for this comparison.
+
+The new fixed Job is `browse-users-500-autoscaling-pressure3`, preserving both
+previous failed Jobs. Its 120-second arrival ramp, 180-second total workload,
+two-second think time, request cap and resource/latency/error/database guards
+are unchanged from the preceding trial. All 500 participants, zero request
+errors, actual ready-pod scale-up and natural return to two ready pods remain
+required. No automatic higher stage or capacity increase is performed.
+
+If the comparison fails, retain its Job and capture it with
+`python3 scripts/browse-autoscaling.py diagnose-500-early`; use `wait-idle`
+after the load stops. A prepared comparison is not a load pass or latency SLO.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

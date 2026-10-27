@@ -50,9 +50,10 @@ def emit(result, **values):
     print(json.dumps({'result': result, **values}), flush=True)
 
 
-def scaled_object():
+def scaled_object(pressure_target='5'):
+    require(pressure_target in ('3', '5'), 'UNREVIEWED_PRESSURE_TARGET')
     row = json.loads((ROOT / 'kubernetes/apps/browse-autoscaling.json').read_text())
-    for name, query, threshold in (('pool-pressure', PRESSURE, '5'), ('borrow-rate', BORROWS, '40')):
+    for name, query, threshold in (('pool-pressure', PRESSURE, pressure_target), ('borrow-rate', BORROWS, '40')):
         row['spec']['triggers'].append({'type': 'prometheus', 'name': name, 'metricType': 'AverageValue',
             'metadata': {'serverAddress': 'http://prometheus.trafficxx-monitoring.svc.cluster.local:9090',
                          'query': query, 'threshold': threshold, 'ignoreNullValues': 'false'}})
@@ -135,20 +136,71 @@ class MetricReadiness:
                 'maximum_gap_seconds': round(self.maximum, 3)}
 
 
-def owned_hpa(*, require_active=True):
+def owned_hpa(*, require_active=True, pressure_target=None):
     rows = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
     matches = [r for r in rows if r['spec']['scaleTargetRef'].get('name') == 'browse']
     require(len(matches) == 1 and matches[0]['metadata']['name'] == 'trafficxx-browse', 'EXPECTED_KEDA_HPA')
     so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
     require(not any(k.startswith('autoscaling.keda.sh/paused') for k in so['metadata'].get('annotations', {})),
             'AUTOSCALING_PAUSED')
-    require(contains(so['spec'], scaled_object()['spec']), 'AUTOSCALING_POLICY_CHANGED')
+    targets = (pressure_target,) if pressure_target is not None else ('5', '3')
+    require(any(contains(so['spec'], scaled_object(t)['spec']) for t in targets), 'AUTOSCALING_POLICY_CHANGED')
     require(any(r.get('uid') == so['metadata']['uid'] and r.get('controller')
                 for r in matches[0]['metadata'].get('ownerReferences', [])), 'FOREIGN_HPA')
     require(matches[0]['spec']['minReplicas'] == 2 and matches[0]['spec']['maxReplicas'] == 4,
             'HPA_BOUNDS_CHANGED')
+    if pressure_target is not None:
+        require_hpa_targets(matches[0], pressure_target)
     require(not require_active or metric_active(matches[0]), 'HPA_METRIC_NOT_ACTIVE')
     return matches[0]
+
+
+def require_hpa_targets(hpa, pressure_target):
+    metrics = hpa['spec'].get('metrics', [])
+    targets = {m['external']['metric']['name']: m['external']['target']
+               for m in metrics if m.get('type') == 'External'}
+    require(len(metrics) == 2 and targets == {
+        's0-prometheus': {'type': 'AverageValue', 'averageValue': pressure_target},
+        's1-prometheus': {'type': 'AverageValue', 'averageValue': '40'}}, 'HPA_TARGET_NOT_RECONCILED')
+
+
+def configure_early():
+    """Change only the reviewed pressure threshold; safely resume after reconciliation delays."""
+    trial.context()
+    trial.no_active_load()
+    trial.health()
+    database_pressure()
+    with prometheus() as query:
+        app = wait_baseline(query)
+        if app['spec']['replicas'] != 2:
+            app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
+        owned_hpa()
+        so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
+        require(not any(k.startswith('autoscaling.keda.sh/paused')
+                        for k in so['metadata'].get('annotations', {})), 'AUTOSCALING_PAUSED')
+        old = so['spec']['triggers'][0]['metadata']['threshold']
+        require(old in ('5', '3') and contains(so['spec'], scaled_object(old)['spec']),
+                'AUTOSCALING_POLICY_CHANGED')
+        # Check ownership again against the exact snapshot being patched.
+        hpa = owned_hpa()
+        require(any(r.get('uid') == so['metadata']['uid'] and r.get('controller')
+                    for r in hpa['metadata'].get('ownerReferences', [])), 'FOREIGN_HPA')
+        if old == '5':
+            operations = [
+                {'op': 'test', 'path': '/metadata/uid', 'value': so['metadata']['uid']},
+                {'op': 'test', 'path': '/metadata/resourceVersion', 'value': so['metadata']['resourceVersion']},
+                {'op': 'test', 'path': '/spec', 'value': so['spec']},
+                {'op': 'replace', 'path': '/spec/triggers/0/metadata/threshold', 'value': '3'}]
+            base.kube('patch', 'scaledobject', 'browse', '-n', 'trafficxx', '--type=json',
+                      '-p', json.dumps(operations))
+        def reconciled():
+            return owned_hpa(pressure_target='3')
+        wait_until(reconciled, 180)
+        deployment(app['metadata']['uid'])
+        check(query)
+    emit('BROWSE_EARLY_SCALING_CONFIGURED', pressure_target_per_pod=3, borrow_rate_target_per_pod=40,
+         min_replicas=2, max_replicas=4, pool_per_pod=8, queue_per_pod=16,
+         inventory_writes=False, note='Earlier scaling may use extra pods sooner. No load was started.')
 
 
 def contains(actual, expected):
@@ -383,11 +435,12 @@ def post_job_coverage(before, after, terminal_timestamp):
                 all(name in stamps and stamps[name] > terminal_timestamp for name in initial) if initial else None}
 
 
-def diagnose_500(*, slower_ramp=False):
+def diagnose_500(*, slower_ramp=False, earlier_scaling=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     trial.context()
     trial.no_active_load()
-    name = 'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling'
+    name = ('browse-users-500-autoscaling-pressure3' if earlier_scaling else
+            'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     start, end, window = diagnostic_window(job)
     logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
@@ -396,7 +449,8 @@ def diagnose_500(*, slower_ramp=False):
             and outcome.get('users') == 500 and outcome.get('run_id') ==
             job['metadata'].get('labels', {}).get('trafficxx.io/run-id'), 'DIAGNOSTIC_RUN_MISMATCH')
     when = str(int(end.timestamp()))
-    require(not slower_ramp or outcome.get('start_ramp_seconds') == 120, 'DIAGNOSTIC_RAMP_MISMATCH')
+    require(not (slower_ramp or earlier_scaling) or outcome.get('start_ramp_seconds') == 120,
+            'DIAGNOSTIC_RAMP_MISMATCH')
     # A final rejection may not be exported until the next scrape, after the
     # diagnostic Job has already become Failed. Retain peak-window alignment,
     # but give cumulative counters four scrape intervals to capture that tail.
@@ -446,12 +500,16 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False):
                 outcome.get('max_workload_attempts') == 45000, 'HIGHER_STAGE_PACING_NOT_VERIFIED')
 
 
-def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False):
+def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False):
     require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
     require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
-    job_name = (('browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling') if users == 500 else
+    require(not earlier_scaling or (users == 500 and not slower_ramp), 'CONFLICTING_DRILL_MODES')
+    pressure_target = '3' if earlier_scaling else '5'
+    slower_ramp = slower_ramp or earlier_scaling
+    job_name = ('browse-users-500-autoscaling-pressure3' if earlier_scaling else
+                ('browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling') if users == 500 else
                 JOB + ('-v3' if verification_run else '-v2' if retry_metric_gap else ''))
     trial.context()
     trial.no_active_load()
@@ -468,6 +526,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
             app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
         require(app['spec']['replicas'] == 2, 'START_WITH_TWO_REPLICAS')
+        owned_hpa(pressure_target=pressure_target)
         start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         original = trial.fingerprint(app['spec']['template'])
         run_id = uuid4().hex[:12]
@@ -480,6 +539,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                    create_job(app, run_id, job_name, users=500) if users == 500 else
                    create_job(app, run_id, job_name))
             emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=job_name, users=users, seconds=180,
+                 pressure_target_per_pod=int(pressure_target),
                  start_ramp_seconds=120 if slower_ramp else 60 if users == 500 else 2, max_workload_attempts=users * 90,
                  note='Real Browse GETs; no manual scale commands or inventory writes.')
             deadline = time.monotonic() + 480
@@ -490,7 +550,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                 peak = max(peak, ready)
                 emit('BROWSE_SCALING_OBSERVATION', desired=current['spec']['replicas'], ready=ready,
                      resource_gate_released=released)
-                metric_readiness.observe(owned_hpa(require_active=False), time.monotonic())
+                metric_readiness.observe(owned_hpa(require_active=False, pressure_target=pressure_target), time.monotonic())
                 state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 require(state['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
                 terminal = {r['type'] for r in state.get('status', {}).get('conditions', []) if r['status'] == 'True'}
@@ -575,6 +635,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
             database_pressure()
             require(trial.database_metrics(start), 'DATABASE_METRIC_SAMPLES_UNAVAILABLE')
             emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, users=users, ready_replicas_before=2,
+                 pressure_target_per_pod=int(pressure_target),
                  start_ramp_seconds=120 if slower_ramp else 60 if users == 500 else 2,
                  peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
                  resources=resource_watch.summary(),
@@ -590,7 +651,8 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow'))
+    parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
+                                         'configure-early', 'diagnose-500-early'))
     parser.add_argument('--users', type=int, choices=(250, 500), default=250,
                         help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -600,26 +662,34 @@ def main():
                        help='Use a distinct v3 Job to verify the corrected observer end to end.')
     modes.add_argument('--slower-ramp', action='store_true',
                        help='500 users only: compare a 120-second arrival ramp in a separate Job.')
+    modes.add_argument('--earlier-scaling', action='store_true',
+                       help='500 users only: require pressure target 3, retain the 120-second ramp.')
     args = parser.parse_args()
     action = args.action
-    if (args.retry_metric_gap or args.verification_run or args.slower_ramp) and action != 'drill':
+    if (args.retry_metric_gap or args.verification_run or args.slower_ramp or args.earlier_scaling) and action != 'drill':
         parser.error('drill modes require the drill action')
     if args.users != 250 and (action != 'drill' or args.retry_metric_gap or args.verification_run):
         parser.error('--users 500 requires drill without a 250-user retry mode')
     if args.slower_ramp and args.users != 500:
         parser.error('--slower-ramp requires --users 500')
+    if args.earlier_scaling and args.users != 500:
+        parser.error('--earlier-scaling requires --users 500')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
             drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run,
-                  users=args.users, slower_ramp=args.slower_ramp)
+                  users=args.users, slower_ramp=args.slower_ramp, earlier_scaling=args.earlier_scaling)
+        elif action == 'configure-early':
+            configure_early()
         elif action == 'wait-idle':
             wait_idle()
         elif action == 'diagnose-500':
             diagnose_500()
         elif action == 'diagnose-500-slow':
             diagnose_500(slower_ramp=True)
+        elif action == 'diagnose-500-early':
+            diagnose_500(earlier_scaling=True)
         else:
             trial.context()
             with prometheus() as query:

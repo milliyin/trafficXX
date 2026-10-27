@@ -6,6 +6,13 @@ earlier checkpoints. It is not a live status page.
 
 ## Running and checked
 
+Latest 500-user checkpoint: the slower 120-second ramp stopped after 75.85
+seconds with 315 participants, 5,714 HTTP 200 responses and one
+`DATABASE_BUSY` HTTP 503. A third pod was desired but not ready. Post-run
+diagnostics/recovery are requested. An earlier pressure-target comparison
+(5 to 3 per pod, unchanged connection/queue/replica limits) is prepared,
+not yet verified live. See the [comparison procedure](browse-autoscaling.md#500-user-slower-ramp-stopped-earlier-scaling-comparison-prepared).
+
 | Area | Evidence |
 | --- | --- |
 | Azure foundation | AKS, ACR, private PostgreSQL, networking, and workload identities provisioned. |
