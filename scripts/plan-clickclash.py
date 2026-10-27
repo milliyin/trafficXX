@@ -1,5 +1,6 @@
 """Cloud Shell plan only: reuse the existing backend and reject unrelated changes."""
 import json
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -63,7 +64,14 @@ def review(plan):
             'new_resources': sorted(additions)}
 
 
-def main():
+def main(argv=()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--blob', action='store_true', help='Plan private banner storage additions only')
+    args = parser.parse_args(argv)
+    if args.blob:
+        ADDITIONS.clear()
+        ADDITIONS.update({'azurerm_storage_account.clickclash[0]', 'azurerm_storage_container.clickclash[0]',
+                          'azurerm_role_assignment.clickclash_blobs[0]', 'azurerm_role_definition.clickclash_blobs[0]'})
     def az(*args):
         return call(['az', *args], 'azure_' + args[0])
     if az('account', 'show', '--query', 'id', '-o', 'tsv') != SUBSCRIPTION:
@@ -100,10 +108,15 @@ def main():
     # existing user settings file or rely on opt-in defaults after a shell reset.
     settings = FOUNDATION / 'clickclash-enabled.auto.tfvars.json'
     features = {'enable_clickclash': True, 'enable_browse_keda': True, 'enable_grafana_public_endpoint': True}
+    if args.blob:
+        features['enable_clickclash_blob'] = True
     if settings.is_symlink():
         raise ValueError('SETTINGS_SYMLINK_REFUSED')
     if settings.exists():
-        if json.loads(settings.read_text()) != features:
+        old_features = json.loads(settings.read_text())
+        if args.blob and old_features == {key: value for key, value in features.items() if key != 'enable_clickclash_blob'}:
+            settings.write_text(json.dumps(features, indent=2) + '\n')
+        elif old_features != features:
             raise ValueError('EXISTING_CLICKCLASH_SETTINGS_DIFFER')
     else:
         with settings.open('x') as handle:
@@ -113,7 +126,8 @@ def main():
     print('Planning ClickClash additions; preserving Grafana and KEDA...', flush=True)
     terraform('terraform_plan', 'plan', '-input=false', '-out=' + plan_name,
               '-var=enable_clickclash=true', '-var=enable_browse_keda=true',
-              '-var=enable_grafana_public_endpoint=true')
+              '-var=enable_grafana_public_endpoint=true',
+              *(['-var=enable_clickclash_blob=true'] if args.blob else []))
     report = review(json.loads(terraform('terraform_plan_review', 'show', '-json', plan_name)))
     if report['result'] != 'CLICKCLASH_PLAN_ONLY_OK':
         print(json.dumps(report))
@@ -125,7 +139,7 @@ def main():
 
 if __name__ == '__main__':
     try:
-        sys.exit(main())
+        sys.exit(main(sys.argv[1:]))
     except PlanFailure as error:
         print(json.dumps({'result': 'CLICKCLASH_PLAN_FAILED', 'operation': error.operation, 'exit_code': error.code}))
         sys.exit(1)

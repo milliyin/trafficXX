@@ -97,6 +97,8 @@ def metadata():
 def registration_sql(identity):
     sql = (ROOT / 'database/clickclash/001-initial.sql').read_text()
     checksum = hashlib.sha256(sql.encode()).hexdigest()
+    extra_sql = (ROOT / 'database/clickclash/002-blob-banners.sql').read_text(encoding='utf-8')
+    extra_checksum = hashlib.sha256(extra_sql.encode()).hexdigest()
     return f"""-- Reviewed ClickClash-only registration. Run using the existing administrator helper.
 BEGIN;
 SELECT pg_advisory_xact_lock(8432001);
@@ -134,11 +136,23 @@ BEGIN
     INSERT INTO public.clickclash_migrations VALUES ('001-initial.sql','{checksum}');
   END IF;
 END $bootstrap$;
+DO $blob_migration$
+DECLARE old_checksum text;
+BEGIN
+  SELECT checksum INTO old_checksum FROM public.clickclash_migrations WHERE version='002-blob-banners.sql';
+  IF FOUND THEN
+    IF old_checksum <> '{extra_checksum}' THEN RAISE EXCEPTION 'ClickClash blob migration checksum changed'; END IF;
+  ELSE
+    EXECUTE $migration${extra_sql}$migration$;
+    INSERT INTO public.clickclash_migrations VALUES ('002-blob-banners.sql','{extra_checksum}');
+  END IF;
+END $blob_migration$;
 GRANT CONNECT ON DATABASE trafficxx TO "trafficxx-lab-clickclash";
 GRANT USAGE ON SCHEMA clickclash TO "trafficxx-lab-clickclash";
 GRANT SELECT ON clickclash.players,clickclash.sessions,clickclash.receipts,clickclash.images,clickclash.control,clickclash.buckets,clickclash.reports TO "trafficxx-lab-clickclash";
 GRANT INSERT,UPDATE ON clickclash.players,clickclash.receipts TO "trafficxx-lab-clickclash";
 GRANT INSERT,UPDATE,DELETE ON clickclash.sessions,clickclash.images,clickclash.buckets,clickclash.reports TO "trafficxx-lab-clickclash";
+GRANT SELECT,INSERT,UPDATE,DELETE ON clickclash.image_blobs TO "trafficxx-lab-clickclash";
 GRANT UPDATE(image_bytes) ON clickclash.control TO "trafficxx-lab-clickclash";
 DO $scope$
 BEGIN
@@ -169,7 +183,8 @@ def deployment(host, address, identity, image):
                 'env': [{'name': key, 'value': value} for key, value in {
                   'DATABASE_AUTH_MODE': 'workload_identity', 'PGHOST': 'trafficxx-pg-e8708a85.postgres.database.azure.com',
                   'PGDATABASE': 'trafficxx', 'PGUSER': 'trafficxx-lab-clickclash', 'CLICKCLASH_POOL_MAX': '4',
-                  'CLICKCLASH_ORIGIN': 'https://' + host, 'CLICKCLASH_TRUSTED_PROXY_NETWORK': '10.244.0.0/16'}.items()],
+                  'CLICKCLASH_ORIGIN': 'https://' + host, 'CLICKCLASH_TRUSTED_PROXY_NETWORK': '10.244.0.0/16',
+                  'CLICKCLASH_BLOB_ACCOUNT_URL': 'https://trafficxxcce8708a85.blob.core.windows.net'}.items()],
                 'securityContext': container_security, 'resources': {'requests': {'cpu': '100m', 'memory': '128Mi'}, 'limits': {'cpu': '1', 'memory': '512Mi'}},
                 'startupProbe': {'httpGet': {'path': '/readyz', 'port': 8000}, 'periodSeconds': 5, 'failureThreshold': 24},
                 'readinessProbe': {'httpGet': {'path': '/readyz', 'port': 8000}, 'periodSeconds': 10, 'timeoutSeconds': 5},
@@ -233,9 +248,23 @@ def private_stage(manifests):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': items}
 
 
+def storage_preflight():
+    account = json.loads(call(['az', 'storage', 'account', 'show', '-g', RG, '-n', 'trafficxxcce8708a85',
+        '--query', '{keys:allowSharedKeyAccess,public:allowBlobPublicAccess,tls:minimumTlsVersion,https:enableHttpsTrafficOnly,blob:primaryEndpoints.blob}', '-o', 'json']))
+    if (account.get('keys') is not False or account.get('public') is not False
+            or account.get('tls') not in ('TLS1_2', 'TLS1_3') or account.get('https') is not True
+            or account.get('blob') != 'https://trafficxxcce8708a85.blob.core.windows.net/'):
+        raise ValueError('Unsafe banner storage configuration')
+    url = ('https://management.azure.com/subscriptions/' + SUBSCRIPTION + '/resourceGroups/' + RG
+           + '/providers/Microsoft.Storage/storageAccounts/trafficxxcce8708a85/blobServices/default/containers/banners?api-version=2023-05-01')
+    access = call(['az', 'rest', '--method', 'get', '--url', url, '--query', 'properties.publicAccess', '-o', 'tsv'])
+    if access.lower() not in ('none', ''):
+        raise ValueError('Banner container must be private')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'stage', 'deploy', 'check'])
+    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'stage', 'deploy', 'check', 'migrate-blobs', 'check-blobs', 'cleanup-blobs'])
     args = parser.parse_args()
     context(require_cluster=args.action not in ('doctor', 'build'))
     if args.action == 'doctor':
@@ -257,12 +286,21 @@ def main():
         print('CLICKCLASH_IMAGE_BUILD_OK')
         return
     host, address, identity = metadata()
+    if args.action in ('migrate-blobs', 'check-blobs', 'cleanup-blobs'):
+        operation = {'migrate-blobs': 'migrate', 'check-blobs': 'check', 'cleanup-blobs': 'cleanup'}[args.action]
+        # Existing serving pod identity only. Cleanup is dry-run from this release helper.
+        result = call(['kubectl', 'exec', '-n', NS, 'deployment/clickclash', '-c', 'app', '--',
+                       'python', '-m', 'trafficxx.clickclash_blob_maintenance', operation])
+        value = json.loads(result)
+        print(json.dumps({key: value[key] for key in ('result', 'moved', 'remaining', 'verified', 'legacy_remaining', 'candidates', 'removed', 'dry_run', 'next_cursor') if key in value}))
+        return
     if args.action == 'prepare':
         target = ROOT / 'test-results/clickclash/azure-register.sql'
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(registration_sql(identity))
         print(json.dumps({'result': 'CLICKCLASH_SQL_PREPARED', 'review_file': str(target), 'url': 'https://' + host}))
     elif args.action in ('stage', 'deploy'):
+        storage_preflight()
         image = (ROOT / 'clickclash-image.txt').read_text().strip()
         if not re.fullmatch(re.escape(SERVER) + r'/trafficxx@sha256:[0-9a-f]{64}', image):
             raise ValueError('Build and save the reviewed image digest first')

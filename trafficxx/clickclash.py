@@ -5,6 +5,7 @@ import ipaddress
 import os
 from pathlib import Path
 import secrets
+from threading import BoundedSemaphore
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -17,8 +18,10 @@ from psycopg import Error, errors
 
 from trafficxx.database_pool import DatabasePool
 from trafficxx import clickclash_security as security
+from trafficxx import clickclash_blobs as blobs
 
 database = DatabasePool('clickclash', 'CLICKCLASH_POOL_MAX')
+IMAGE_SLOTS = BoundedSemaphore(2)
 COOKIE = 'cc_session'
 DUMMY_HASH = security.hasher.hash(secrets.token_urlsafe(32))
 DIST = Path(__file__).resolve().parent.parent / 'clickclash-web' / 'dist'
@@ -37,6 +40,14 @@ def public_player(row):
         'account': row['email'] is not None, 'image_url': f"/api/images/{row['id']}" if row.get('has_image') else None}
 
 
+def board_player(row):
+    row = dict(row)
+    visible = row.pop('has_image')
+    version = row.pop('image_digest')
+    row['image_url'] = f"/api/images/{row['id']}?v={version}" if visible else None
+    return row
+
+
 def session(conn, request, write=False):
     token = request.cookies.get(COOKIE, '')
     if not token or len(token) > 100:
@@ -46,8 +57,10 @@ def session(conn, request, write=False):
                        'WHERE s.token_hash=%s AND s.expires_at > clock_timestamp()', (digest(token),)).fetchone()
     if not row or row['merged_into'] or row['banned']:
         fail('SESSION_EXPIRED', 401)
-    if write and not secrets.compare_digest(request.headers.get('x-cc-csrf', ''), row['csrf']):
-        fail('CSRF_INVALID', 403)
+    if write:
+        csrf = request.headers.get('x-cc-csrf', '')
+        if not csrf.isascii() or len(csrf) > 100 or not secrets.compare_digest(csrf, row['csrf']):
+            fail('CSRF_INVALID', 403)
     return row
 
 
@@ -106,6 +119,7 @@ async def lifespan(app):
     try:
         with database.connection() as conn:
             conn.execute('SELECT id FROM clickclash.control WHERE id').fetchone()
+            conn.execute('SELECT player_id FROM clickclash.image_blobs LIMIT 0')
         yield
     finally:
         database.close()
@@ -138,6 +152,11 @@ async def boundaries(request, call_next):
 @app.exception_handler(Error)
 async def unavailable(request, error):
     return JSONResponse({'detail': {'code': 'DATABASE_UNAVAILABLE'}}, status_code=503, headers={'Retry-After': '1'})
+
+
+@app.exception_handler(blobs.StorageUnavailable)
+async def storage_unavailable(request, error):
+    return JSONResponse({'detail': {'code': 'IMAGE_STORAGE_UNAVAILABLE'}}, status_code=503)
 
 
 @app.exception_handler(RequestValidationError)
@@ -204,7 +223,8 @@ def guest(request: Request, response: Response):
 def me(request: Request):
     with database.connection() as conn:
         row = session(conn, request)
-        row['has_image'] = conn.execute('SELECT 1 FROM clickclash.images WHERE player_id=%s', (row['id'],)).fetchone() is not None
+        row['has_image'] = conn.execute('SELECT 1 FROM clickclash.images WHERE player_id=%s UNION ALL '
+                                       'SELECT 1 FROM clickclash.image_blobs WHERE player_id=%s', (row['id'], row['id'])).fetchone() is not None
         return public_player(row) | {'csrf': row['csrf']}
 
 
@@ -220,7 +240,10 @@ def signup(data: Signup, request: Request, response: Response):
         with database.connection() as conn:
             row = session(conn, request, write=True)
             player = conn.execute('SELECT * FROM clickclash.players WHERE id=%s FOR UPDATE', (row['id'],)).fetchone()
-            if player['email'] or player['merged_into']:
+            session(conn, request, write=True)
+            if player['banned'] or player['merged_into']:
+                fail('SESSION_EXPIRED', 401)
+            if player['email']:
                 fail('ALREADY_REGISTERED', 409)
             conn.execute('UPDATE clickclash.players SET email=%s,password_hash=%s,nickname=%s WHERE id=%s',
                          (address, encoded, data.nickname.strip(), row['id']))
@@ -246,7 +269,9 @@ def login(data: Login, request: Request, response: Response):
                               ([guest['id'], target['id']],)).fetchall()
         by_id = {p['id']: p for p in locked}
         source, destination = by_id[guest['id']], by_id[target['id']]
-        if destination['banned'] or source['merged_into']:
+        session(conn, request, write=True)
+        if (destination['banned'] or source['banned'] or source['merged_into']
+                or destination['email'] != address or destination['password_hash'] != target['password_hash']):
             fail('SESSION_EXPIRED', 401)
         if source['id'] != destination['id'] and source['email'] is None:
             conn.execute('UPDATE clickclash.players SET score=score+%s WHERE id=%s', (source['score'], target['id']))
@@ -281,6 +306,7 @@ def click(data: Click, request: Request):
         else:
             fail('SERVER_AT_CAPACITY', 503)
         owner = conn.execute('SELECT * FROM clickclash.players WHERE id=%s FOR UPDATE', (player['id'],)).fetchone()
+        session(conn, request, write=True)
         if owner['merged_into'] or owner['banned']:
             fail('SESSION_EXPIRED', 401)
         if conn.execute('SELECT paused FROM clickclash.control WHERE id').fetchone()['paused']:
@@ -304,15 +330,18 @@ def leaderboard(offset: int = 0):
         fail('INVALID_PAGE', 422)
     with database.connection() as conn:
         rows = conn.execute('SELECT p.id,p.nickname,p.score,p.ad_hidden, '
+                            'coalesce((SELECT digest FROM clickclash.image_blobs b WHERE b.player_id=p.id), '
+                            '(SELECT digest FROM clickclash.images i WHERE i.player_id=p.id)) AS image_digest, '
                             "CASE WHEN p.ad_hidden THEN '' ELSE p.bio END AS bio, "
                             "CASE WHEN p.ad_hidden THEN '' ELSE p.website END AS website, "
-                            '(NOT p.ad_hidden AND EXISTS(SELECT 1 FROM clickclash.images i WHERE i.player_id=p.id)) AS has_image '
+                            '(NOT p.ad_hidden AND (EXISTS(SELECT 1 FROM clickclash.images i WHERE i.player_id=p.id) '
+                            'OR EXISTS(SELECT 1 FROM clickclash.image_blobs b WHERE b.player_id=p.id))) AS has_image '
                             'FROM clickclash.players p WHERE email IS NOT NULL AND merged_into IS NULL AND NOT banned '
                             'ORDER BY score DESC,created_at,id LIMIT 25 OFFSET %s', (offset,)).fetchall()
         totals = conn.execute('SELECT count(*) AS players,coalesce(sum(score),0) AS clicks '
                               'FROM clickclash.players WHERE email IS NOT NULL AND merged_into IS NULL AND NOT banned').fetchone()
         paused = conn.execute('SELECT paused FROM clickclash.control WHERE id').fetchone()['paused']
-    return {'entries': [{**row, 'image_url': f"/api/images/{row['id']}" if row.pop('has_image') else None} for row in rows],
+    return {'entries': [board_player(row) for row in rows],
             'totals': totals, 'paused': paused, 'offset': offset}
 
 
@@ -324,6 +353,8 @@ def profile(data: Profile, request: Request):
         fail('INVALID_NICKNAME', 422)
     with database.connection() as conn:
         player = session(conn, request, write=True)
+        conn.execute('SELECT id FROM clickclash.players WHERE id=%s FOR UPDATE', (player['id'],))
+        session(conn, request, write=True)
         conn.execute('UPDATE clickclash.players SET nickname=%s,bio=%s,website=%s WHERE id=%s',
                      (name, data.bio.strip(), link, player['id']))
     return {'saved': True}
@@ -335,6 +366,7 @@ async def upload_image(request: Request):
     from starlette.concurrency import run_in_threadpool
     raw = await request.body()
     def save():
+        auth_admission(request, 'image')
         with database.connection() as conn:
             player = session(conn, request, write=True)
             if not player['email']:
@@ -342,24 +374,46 @@ async def upload_image(request: Request):
             encoded = security.image(raw)
             # Shared storage budget, so arbitrary upload volume cannot fill the DB.
             conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
+            # Recheck session after serializing image/account mutations.
+            player = session(conn, request, write=True)
+            stored = conn.execute('SELECT * FROM clickclash.image_blobs WHERE player_id=%s', (player['id'],)).fetchone()
             previous = conn.execute('SELECT octet_length(content) AS size FROM clickclash.images WHERE player_id=%s', (player['id'],)).fetchone()
-            delta = len(encoded) - (previous['size'] if previous else 0)
+            delta = len(encoded) - (stored['byte_size'] if stored else 0) - (previous['size'] if previous else 0)
             updated = conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes+%s '
                                    'WHERE id AND image_bytes+%s <= 104857600 RETURNING id', (delta, delta)).fetchone()
             if not updated:
                 fail('IMAGE_STORAGE_FULL', 503)
-            conn.execute('INSERT INTO clickclash.images VALUES (%s,%s,%s) ON CONFLICT(player_id) '
-                         'DO UPDATE SET content=excluded.content,digest=excluded.digest',
-                         (player['id'], encoded, hashlib.sha256(encoded).hexdigest()))
+            if blobs.enabled():
+                blob_name, digest_value = blobs.put(player['id'], encoded)
+                conn.execute('INSERT INTO clickclash.image_blobs VALUES (%s,%s,%s,%s) ON CONFLICT(player_id) '
+                             'DO UPDATE SET blob_name=excluded.blob_name,digest=excluded.digest,byte_size=excluded.byte_size',
+                             (player['id'], blob_name, digest_value, len(encoded)))
+                conn.execute('DELETE FROM clickclash.images WHERE player_id=%s', (player['id'],))
+            else:
+                if stored:
+                    fail('IMAGE_STORAGE_UNAVAILABLE', 503)  # Never silently downgrade a migrated record.
+                conn.execute('INSERT INTO clickclash.images VALUES (%s,%s,%s) ON CONFLICT(player_id) '
+                             'DO UPDATE SET content=excluded.content,digest=excluded.digest',
+                             (player['id'], encoded, hashlib.sha256(encoded).hexdigest()))
         return {'saved': True}
-    return await run_in_threadpool(save)
+    if not IMAGE_SLOTS.acquire(blocking=False):
+        fail('IMAGE_UPLOAD_BUSY', 503)
+    try:
+        return await run_in_threadpool(save)
+    finally:
+        IMAGE_SLOTS.release()
 
 
 @app.get('/api/images/{player_id}')
 def get_image(player_id: UUID):
     with database.connection() as conn:
+        stored = conn.execute('SELECT b.* FROM clickclash.image_blobs b JOIN clickclash.players p ON p.id=b.player_id '
+                              'WHERE b.player_id=%s AND NOT p.ad_hidden AND NOT p.banned AND p.email IS NOT NULL', (player_id,)).fetchone()
         row = conn.execute('SELECT i.* FROM clickclash.images i JOIN clickclash.players p ON p.id=i.player_id '
                            'WHERE i.player_id=%s AND NOT p.ad_hidden AND NOT p.banned AND p.email IS NOT NULL', (player_id,)).fetchone()
+    if stored:
+        content = blobs.read(stored['blob_name'], player_id, stored['digest'])
+        return Response(content, media_type='image/webp', headers={'Cache-Control': 'no-store'})
     if not row:
         fail('IMAGE_NOT_FOUND', 404)
     return Response(bytes(row['content']), media_type='image/webp',
@@ -371,9 +425,13 @@ def remove_image(request: Request):
     with database.connection() as conn:
         player = session(conn, request, write=True)
         conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
+        session(conn, request, write=True)
+        stored = conn.execute('DELETE FROM clickclash.image_blobs WHERE player_id=%s RETURNING byte_size', (player['id'],)).fetchone()
         previous = conn.execute('DELETE FROM clickclash.images WHERE player_id=%s RETURNING octet_length(content) AS size', (player['id'],)).fetchone()
         if previous:
             conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (previous['size'],))
+        if stored:
+            conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (stored['byte_size'],))
     return {'removed': True}
 
 
@@ -382,10 +440,14 @@ def delete_account(request: Request):
     with database.connection() as conn:
         player = session(conn, request, write=True)
         conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
+        session(conn, request, write=True)
+        stored = conn.execute('DELETE FROM clickclash.image_blobs WHERE player_id=%s RETURNING byte_size', (player['id'],)).fetchone()
         conn.execute('SELECT id FROM clickclash.players WHERE id=%s FOR UPDATE', (player['id'],))
         removed = conn.execute('DELETE FROM clickclash.images WHERE player_id=%s RETURNING octet_length(content) AS size', (player['id'],)).fetchone()
         if removed:
             conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (removed['size'],))
+        if stored:
+            conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (stored['byte_size'],))
         conn.execute("UPDATE clickclash.players SET email=NULL,password_hash=NULL,nickname='Deleted player',"
                      "bio='',website='',score=0,banned=true WHERE id=%s", (player['id'],))
         conn.execute('DELETE FROM clickclash.reports WHERE reporter=%s OR target=%s', (player['id'], player['id']))

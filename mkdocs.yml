@@ -77,6 +77,7 @@ nav:
       - System design: architecture.md
       - Public challenge plan: public-click-challenge.md
       - ClickClash app and release: clickclash.md
+      - ClickClash banner storage and security: clickclash-storage-security.md
       - Local development: local-development.md
       - Documentation site: documentation-site.md
   - Azure foundation:

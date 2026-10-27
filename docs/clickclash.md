@@ -10,6 +10,9 @@ The existing ticket services and their verified Browse benchmark are unchanged.
 
 ## What works
 
+For the private Blob Storage migration, failure handling and security review,
+see [banner storage and security](clickclash-storage-security.md).
+
 - `/`: public all-time leaderboard, ranked accounts, click totals, immediate
   bio/website/image promotions and report controls.
   A player's name, picture and promotion link to their website in a new tab

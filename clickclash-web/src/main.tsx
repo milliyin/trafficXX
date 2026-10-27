@@ -28,7 +28,12 @@ function PromotionLink({entry, className, children}: {
   className: string;
   children: React.ReactNode;
 }) {
-  return entry.website && !entry.ad_hidden ? (
+  let safeWebsite = false;
+  try {
+    const url = new URL(entry.website);
+    safeWebsite = ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  } catch { /* Missing or invalid websites are plain text. */ }
+  return safeWebsite && !entry.ad_hidden ? (
     <a className={className + ' promotion-link'} href={entry.website}
       target="_blank" rel="ugc sponsored nofollow noopener noreferrer"
       aria-label={"Visit " + entry.nickname + "'s website"}>
@@ -57,6 +62,9 @@ const messages: Record<string, string> = {
   IMAGE_TOO_LARGE: "Choose an image smaller than 1 MB.",
   REQUEST_TOO_LARGE: "This image is too large. Please choose a smaller image.",
   IMAGE_STORAGE_FULL: "Image storage is full. Please try again later.",
+  IMAGE_STORAGE_UNAVAILABLE: "Image storage is temporarily unavailable. Your previous banner is safe. Please try again.",
+  IMAGE_UPLOAD_BUSY: "Image uploads are busy. Please try again in a moment.",
+  DATABASE_UNAVAILABLE: "The service is temporarily unavailable. Please try again shortly.",
   INVALID_WEBSITE: "Use a full http:// or https:// website address.",
   ACCOUNT_REQUIRED: "Create an account first.",
   SESSION_EXPIRED: "Your session expired. Please reload and sign in.",

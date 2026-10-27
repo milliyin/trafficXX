@@ -29,7 +29,7 @@ class ReleaseDiagnostics(unittest.TestCase):
             (root/'clickclash-image.txt').write_text(module.SERVER+'/trafficxx@sha256:'+'a'*64)
             with patch.object(module, 'ROOT', root), patch.object(module, 'context'), \
                  patch.object(module, 'metadata', return_value=('clickclash.example.com','20.1.2.3',{'clientId':'fixture','tenantId':'fixture'})), \
-                 patch.object(module, 'call', side_effect=fake), patch.object(module.sys, 'argv', ['release', 'stage']), patch('sys.stdout',output):
+                 patch.object(module, 'call', side_effect=fake), patch.object(module, 'storage_preflight'), patch.object(module.sys, 'argv', ['release', 'stage']), patch('sys.stdout',output):
                 module.main()
         self.assertEqual(len(applied), 3)
         self.assertTrue(all(item['metadata']['name']=='clickclash' for item in applied))

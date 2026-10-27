@@ -26,7 +26,7 @@ def schema():
 @pytest.fixture(autouse=True)
 def clean(schema):
     with connect() as conn:
-        conn.execute('TRUNCATE clickclash.reports,clickclash.receipts,clickclash.images,clickclash.sessions,'
+        conn.execute('TRUNCATE clickclash.image_blobs,clickclash.reports,clickclash.receipts,clickclash.images,clickclash.sessions,'
                      'clickclash.players,clickclash.buckets,clickclash.operator_audit CASCADE')
         conn.execute('UPDATE clickclash.control SET paused=false,requests_per_second=1000,concurrent_writes=16,image_bytes=0 WHERE id')
     yield

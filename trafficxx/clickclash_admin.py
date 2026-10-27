@@ -24,6 +24,9 @@ def main():
                 conn.execute('DELETE FROM clickclash.sessions WHERE player_id=%s', (args.player,))
         elif args.action == 'remove-ad':
             conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
+            stored = conn.execute('DELETE FROM clickclash.image_blobs WHERE player_id=%s RETURNING byte_size', (args.player,)).fetchone()
+            if stored:
+                conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (stored['byte_size'],))
             removed = conn.execute('DELETE FROM clickclash.images WHERE player_id=%s RETURNING octet_length(content) AS size', (args.player,)).fetchone()
             if removed:
                 conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id', (removed['size'],))

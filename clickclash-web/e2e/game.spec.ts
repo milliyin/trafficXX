@@ -1,6 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from 'node:fs';
 
+test('public profiles render as text and unsafe websites are not links', async ({page}) => {
+  await page.route('**/api/me', route => route.fulfill({status:401,json:{detail:{code:'SESSION_REQUIRED'}}}));
+  await page.route('**/api/leaderboard*', route => route.fulfill({json:{
+    entries:[{id:'untrusted-profile', nickname:'<img src=x onerror=alert(1)>', score:1,
+      bio:'<script>alert(1)</script>', website:'javascript:alert(1)', ad_hidden:false, image_url:null}],
+    totals:{players:1,clicks:1}, paused:false, offset:0,
+  }}));
+  await page.goto('/');
+  await expect(page.getByText('<img src=x onerror=alert(1)>', {exact:true})).toBeVisible();
+  await expect(page.getByText('<script>alert(1)</script>', {exact:true})).toBeVisible();
+  await expect(page.locator('.board-row a')).toHaveCount(0);
+  await expect(page.locator('.board-row script,.board-row img')).toHaveCount(0);
+});
+
 test('status pages separate measured failures from missing history', async ({page}) => {
   const stamp = new Date().toISOString();
   const components = [{name: 'Website', ok: true}, {name: 'Click API readiness', ok: true}, {name: 'Leaderboard', ok: true}];
