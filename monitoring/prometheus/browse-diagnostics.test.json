@@ -29,6 +29,19 @@
           ]
         }
       ]
+    },
+    {
+      "name": "one_waiting_sample_can_be_repeated_by_observer_polls",
+      "interval": "15s",
+      "input_series": [
+        {"series": "trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\",instance=\"a\"}", "values": "0x10 2 0x4"}
+      ],
+      "promql_expr_test": [
+        {"expr": "sum(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"} @ 166))", "eval_time": "4m", "exp_samples": [{"labels": "{}", "value": 165}]},
+        {"expr": "sum(timestamp(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"} @ 176))", "eval_time": "4m", "exp_samples": [{"labels": "{}", "value": 165}]},
+        {"expr": "sum(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"} @ 176)", "eval_time": "4m", "exp_samples": [{"labels": "{}", "value": 2}]},
+        {"expr": "sum(trafficxx_browse_pool_waiting{job=\"trafficxx-browse-pool\"} @ 180)", "eval_time": "4m", "exp_samples": [{"labels": "{}", "value": 0}]}
+      ]
     }
   ]
 }

@@ -38,6 +38,71 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_waiting_history_uses_actual_source_samples_and_preserves_missing(self):
+        end = datetime.fromtimestamp(180, timezone.utc)
+        expressions = []
+        def query(expression):
+            expressions.append(expression)
+            return [{'metric': {'instance': 'a'}, 'values': [[150, '0'], [165, '2'], [180, '0']]}]
+        result = scaling.waiting_history(query, end)
+        self.assertEqual(expressions, [scaling.M + 'waiting' + scaling.F + '[90s] @ 180'])
+        self.assertEqual([r['waiting'] for r in result['a']], [0, 2, 0])
+        self.assertEqual(result['a'][1]['source_timestamp_utc'], '1970-01-01T00:02:45+00:00')
+        self.assertEqual(scaling.waiting_history(lambda _: [], end), {})
+        for values in ([[90, '1']], [[181, '1']], [[165, '1'], [165, '1']], [[165, 'NaN']]):
+            with self.assertRaisesRegex(ValueError, 'INVALID_WAITING_HISTORY_SAMPLE'):
+                scaling.waiting_history(lambda _: [{'metric': {'instance': 'a'}, 'values': values}], end)
+
+    def test_interrupted_diagnostic_requires_deadline_failure_and_exact_owned_stage_args(self):
+        job = {'metadata': {'name': 'browse-users-500-autoscaling-step30',
+                            'labels': {'trafficxx.io/run-id': 'a' * 12}},
+               'status': {'conditions': [{'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded'}]},
+               'spec': {'template': {'spec': {'containers': [
+                   {'name': 'check', 'args': ['a' * 12, '500', '120']} ]}}}}
+        marker = json.dumps({'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES'})
+        row = scaling.diagnostic_outcome(job, marker, allow_interrupted=True)
+        self.assertEqual(row['result'], 'BROWSE_SCALING_WORKLOAD_INTERRUPTED')
+        self.assertFalse(row['final_workload_summary_available'])
+        self.assertNotIn('attempts', row)
+        self.assertNotIn('errors', row)
+        with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_RUN_MISMATCH'):
+            scaling.diagnostic_outcome(job, marker)
+        for mutate in (
+            lambda j: j['status']['conditions'][0].update(type='Complete'),
+            lambda j: j['status']['conditions'][0].update(reason='Other'),
+            lambda j: j['metadata'].update(name='other-job'),
+            lambda j: j['spec']['template']['spec']['containers'][0].update(args=['a' * 12, '1000', '120'])):
+            wrong = deepcopy(job)
+            mutate(wrong)
+            with self.assertRaises(ValueError):
+                scaling.diagnostic_outcome(wrong, marker, allow_interrupted=True)
+        with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_RUN_MISMATCH'):
+            scaling.diagnostic_outcome(job, json.dumps({'result': 'BROWSE_SCALING_LOAD_OK', 'users': 500,
+                                                       'run_id': 'b' * 12}), allow_interrupted=True)
+
+    def test_deadline_stopped_step30_capture_needs_no_final_workload_summary(self):
+        job = {'metadata': {'uid': 'owned', 'name': 'browse-users-500-autoscaling-step30',
+                            'labels': {'trafficxx.io/run-id': 'a' * 12}},
+            'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                {'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded',
+                 'lastTransitionTime': '1970-01-01T00:03:00Z'}]},
+            'spec': {'template': {'spec': {'containers': [{'name': 'check', 'args': ['a' * 12, '500', '120']}]}}}}
+        def kube(*args):
+            self.assertIn(args[0], ('get', 'logs'))
+            self.assertIn('browse-users-500-autoscaling-step30', ' '.join(args))
+            return json.dumps({'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES'} if args[0] == 'logs' else job)
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'prometheus') as connection, \
+                patch.object(sys, 'argv', ['browse-autoscaling.py', 'diagnose-500-step30']), \
+                redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = lambda _: []
+            self.assertEqual(scaling.main(), 0)
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['workload']['result'], 'BROWSE_SCALING_WORKLOAD_INTERRUPTED')
+        self.assertEqual(row['waiting_samples_before_terminal'], {})
+        self.assertNotIn('attempts', row['workload'])
+
     def test_fast_scale_up_changes_only_one_policy_field_and_resumes(self):
         for old in (60, 30):
             so = scaling.scaled_object('3', old)

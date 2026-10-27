@@ -570,6 +570,52 @@ def instance_distribution(query, expressions):
             for instance in sorted(instances)}
 
 
+def waiting_history(query, end):
+    """Actual stored samples, not subquery resampling or observer wall-clock reads."""
+    rows = query(M + 'waiting' + F + '[90s] @ ' + str(int(end.timestamp())))
+    require(len(rows) <= 8, 'UNEXPECTED_WAITING_HISTORY_INSTANCES')
+    result = {}
+    for row in rows:
+        instance = row.get('metric', {}).get('instance', '')
+        require(re.fullmatch(r'[A-Za-z0-9.\[\]:-]{1,150}', instance) is not None
+                and instance not in result, 'INVALID_DIAGNOSTIC_INSTANCE')
+        samples = row.get('values', [])
+        require(len(samples) <= 32, 'UNEXPECTED_WAITING_HISTORY_SAMPLES')
+        values, previous = [], -math.inf
+        for stamp, value in samples:
+            stamp, value = float(stamp), float(value)
+            require(math.isfinite(stamp) and previous < stamp and end.timestamp() - 90 < stamp <= end.timestamp()
+                    and math.isfinite(value) and value >= 0, 'INVALID_WAITING_HISTORY_SAMPLE')
+            previous = stamp
+            values.append({'source_timestamp_utc': datetime.fromtimestamp(stamp, timezone.utc).isoformat(),
+                           'waiting': value})
+        result[instance] = values
+    return result
+
+
+def diagnostic_outcome(job, logs, *, allow_interrupted=False):
+    try:
+        outcome = json.loads(logs.splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        outcome = {}
+    run_id = job['metadata'].get('labels', {}).get('trafficxx.io/run-id')
+    require(isinstance(run_id, str) and re.fullmatch(r'[0-9a-f]{12}', run_id), 'DIAGNOSTIC_RUN_MISMATCH')
+    if isinstance(outcome, dict) and outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK'):
+        require(outcome.get('users') == 500 and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
+        return outcome
+    # Our stop shortens the deadline while retaining logs. Admit missing final
+    # summaries only for the fixed, deadline-stopped step30 Job with exact args.
+    require(allow_interrupted and job['metadata'].get('name') == 'browse-users-500-autoscaling-step30'
+            and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
+                    for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
+    containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+    require(len(containers) == 1 and containers[0].get('name') == 'check'
+            and containers[0].get('args') == [run_id, '500', '120'], 'INTERRUPTED_JOB_ARGUMENTS_MISMATCH')
+    return {'result': 'BROWSE_SCALING_WORKLOAD_INTERRUPTED', 'run_id': run_id,
+            'users': 500, 'start_ramp_seconds': 120, 'final_workload_summary_available': False,
+            'note': 'Deadline-stopped Job without a final summary. HTTP counts, errors and participation are unknown.'}
+
+
 def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False,
                  faster_scale_up=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
@@ -582,10 +628,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     start, end, window = diagnostic_window(job)
     logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
-    outcome = json.loads(logs.splitlines()[-1])
-    require(outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK')
-            and outcome.get('users') == 500 and outcome.get('run_id') ==
-            job['metadata'].get('labels', {}).get('trafficxx.io/run-id'), 'DIAGNOSTIC_RUN_MISMATCH')
+    outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up)
     when = str(int(end.timestamp()))
     require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up)
             or outcome.get('start_ramp_seconds') == 120,
@@ -619,6 +662,10 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                 'and other traffic, not just workload HTTP requests. Counter tails include 60 seconds after terminal; '
                 'peaks and scrape counts end at terminal. New/missing series are null; sampled peaks can miss bursts. '
                 'Current configuration is not historical endpoint or routing evidence.')
+            extra['waiting_samples_before_terminal'] = waiting_history(query, end)
+            extra['waiting_history_note'] = ('Actual stored source samples from the final 90 seconds before Job terminal. '
+                'Not observer poll timestamps or proof of continuously queued requests between scrapes. '
+                'Samples after the stop request may include recovery; missing history is not zero waiting.')
     current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
     emit('BROWSE_500_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],

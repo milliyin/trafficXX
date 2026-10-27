@@ -6,15 +6,22 @@ earlier checkpoints. It is not a live status page.
 
 ## Running and checked
 
-Latest repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
+Latest trial (`2bfd8b5fcf69`, 30-second scale-up period) reached four ready pods
+and was stopped by the observer's `SUSTAINED_POOL_WAITING` guard. The supplied
+output has no final workload summary, so HTTP counts and errors are unknown.
+A guard timing flaw was found: repeated reads of one 15-second scrape can
+satisfy its 10-second local-clock timer. Actual source-sample history and
+post-stop recovery are pending; the trial is not a pass.
+
+The preceding repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
 12,986 HTTP 200 responses and one `DATABASE_BUSY` HTTP 503. Four ready pods
 were observed before termination. Counters subsequently confirmed approximately
 one queue-full rejection, with no timeout or connection-error increases.
 Recovery to two healthy pods passed. Per-instance capture located the rejection
 on an established instance, with most recorded borrow activity on the two
 long-running instances and limited samples for the additions. A same-capacity
-comparison allowing one added pod per 30 rather than 60 seconds is prepared;
-its live result is pending. No higher user count is prepared.
+comparison allowing one added pod per 30 rather than 60 seconds was then run
+and interrupted as recorded above. No higher user count is prepared.
 
 The preceding earlier-scaling comparison completed 28,347
 successful reads with all 500 participants and zero errors; p95 was 185.227 ms.
@@ -66,10 +73,11 @@ or establish sustained production capacity.
   primary error during cleanup are implemented. The distinct same-profile v2
   repeat failed on one HTTP 503 after reaching four ready pods, rather than
   an external command error. Aggregate diagnostics confirmed queue-full rejection
-  and natural recovery passed. Per-instance capture is complete; the next
-  prepared comparison changes only the scale-up step period to 30 seconds.
-  Retain the failed Job and require full workload/observer/recovery evidence
-  from the distinct comparison before increasing load.
+  and natural recovery passed. The subsequent 30-second policy comparison
+  reached four ready pods but triggered the queue-waiting guard. Capture
+  `diagnose-500-step30` after the Job is terminal, inspect original sample
+  timestamps and verify recovery before changing the guard or generating load.
+  No full 500-user observer pass is established.
   The historical failing command remains unknown. Complete the observer run
   before increasing load.
   Separate four-to-two recovery passed; it does not replace the interrupted audit.

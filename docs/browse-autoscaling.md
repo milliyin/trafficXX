@@ -706,7 +706,7 @@ also naturally have more time to accumulate borrows. This supports a
 scale-up timing comparison, not a proven load-balancer defect or a conclusion
 that four fully established pods cannot handle the steady workload.
 
-### Prepared comparison: one scale-up pod per 30 seconds
+### Comparison: one scale-up pod per 30 seconds
 
 The next bounded comparison changes only the scale-up policy's
 `periodSeconds` from 60 to 30. It permits one added pod per 30-second policy
@@ -718,7 +718,8 @@ Browse connection cap stays 32 and the total planning budget stays 128.
 Extra pods may be used sooner, while DNS/scrape/control and startup delays
 still exist. No discovery, routing, SQL or image change is included.
 
-After healthy recovery with no active load, run in Cloud Shell:
+The following commands were used after healthy recovery. The fixed Job now
+exists; retain it rather than replaying these creation commands:
 
 ```bash
 cd ~/trafficxx &&
@@ -747,9 +748,62 @@ Do not run the original `deploy` or `configure-early` to configure this trial.
 Keep Cloud Shell running through recovery and paste the full output. A
 failure is not permission for an overlapping load or higher user count;
 `diagnose-500-step30` is the read-only historical capture for this specific
-Job and includes per-instance data. No live result exists for this comparison
-yet. A full `BROWSE_AUTOSCALING_DRILL_OK` remains required before declaring
-the observer verification complete.
+Job and includes per-instance data. The live trial was interrupted by a guard
+as recorded next. A full `BROWSE_AUTOSCALING_DRILL_OK` remains required before
+declaring the observer verification complete.
+
+### Step30 trial stopped by queue-waiting guard; source timing investigation
+
+The live configuration change was confirmed: pressure three, borrow target
+40, one added pod per 30 seconds, two-to-four replicas, pool eight and queue
+16. Run `2bfd8b5fcf69`, Job `browse-users-500-autoscaling-step30`, released
+its resource gate and observed two, three and then four ready pods. The parent
+stopped with `SUSTAINED_POOL_WAITING`, stage `observe_pool_pressure`, and
+cleanup `stop_requested`. This is not a command error. The supplied output
+contains no final workload summary; request counts, participation, latencies
+and HTTP errors cannot be inferred from the parent stop reason.
+
+Partial sampled resource maxima were: original pods CPU 0.085937 / 0.07945
+cores and memory 74.398 / 73.270 MiB; added pods CPU 0.135291 / 0.136171 and
+memory 64.707 / 64.039 MiB; generator CPU 0.117058 and memory 61.914 MiB.
+There were respectively five, five, three, one and four distinct samples.
+The output does not complete the workload/recovery audit or establish peaks.
+
+Source inspection found the waiting guard starts a local wall-clock timer
+whenever `max(pool_waiting)` is positive and stops after ten seconds of
+positive reads. Prometheus scrapes every 15 seconds, so several observer
+polls can reuse one source sample. The guard therefore does not establish
+ten seconds of continuously queued requests. A real Prometheus regression
+fixture demonstrates polls at times 166 and 176 both reading a positive
+sample timestamped 165, followed by zero at 180. This proves the timing
+flaw is possible, not that this particular stop was a false alarm.
+
+First inspect the terminal Job/logs and verify natural recovery. Once no
+load is active, pull the diagnostic update and capture the existing run:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py diagnose-500-step30 &&
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+The read-only capture now supports this fixed Job if it is Failed with
+`DeadlineExceeded`, the run-ID label matches and its sole `check` container
+has exact arguments `[run_id, "500", "120"]`. If no final workload summary
+exists, it reports `BROWSE_SCALING_WORKLOAD_INTERRUPTED` with unknown HTTP
+counts/errors/participation, never a manufactured pass or zero errors. Jobs
+still running, mismatched stages or completed Jobs without summaries are
+refused. Existing valid workload summaries retain their strict run-ID checks.
+
+`waiting_samples_before_terminal` contains actual source timestamps and gauge
+values from the final 90 seconds before Job termination, without subquery
+resampling. Missing history remains missing. Samples after the stop request
+may reflect recovery; terminal time is not necessarily the exact stop time.
+Use these samples together with per-instance counters to assess the guard
+before a further comparison. No waiting threshold, safety stop, pool, queue
+or maximum replica limit has been changed in response to this interruption.
+Post-stop health and the historical capture are pending at this checkpoint.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
