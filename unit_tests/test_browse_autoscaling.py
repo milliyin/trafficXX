@@ -38,6 +38,59 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_instance_distribution_keeps_missing_distinct_from_zero(self):
+        rows = {'errors': [{'metric': {'instance': '10.0.0.1:8000'}, 'value': [240, '1.1']}],
+                'borrows': [{'metric': {'instance': '10.0.0.1:8000'}, 'value': [240, '100']},
+                            {'metric': {'instance': '10.0.0.2:8000'}, 'value': [240, '0']}]}
+        result = scaling.instance_distribution(lambda expression: rows[expression],
+                                               {'queue_full': 'errors', 'borrows': 'borrows'})
+        self.assertEqual(result['10.0.0.1:8000'], {'queue_full': 1.1, 'borrows': 100})
+        self.assertEqual(result['10.0.0.2:8000'], {'queue_full': None, 'borrows': 0})
+        self.assertEqual(scaling.instance_distribution(lambda _: [], {'missing': 'query'}), {})
+        for invalid in ([rows['errors'][0], rows['errors'][0]],
+                        [{'metric': {'instance': 'bad\nlabel'}, 'value': [240, '1']}],
+                        [{'metric': {'instance': 'a'}, 'value': [240, 'NaN']}]):
+            with self.assertRaises(ValueError):
+                scaling.instance_distribution(lambda _: invalid, {'test': 'query'})
+
+    def test_distribution_queries_preserve_tail_and_peak_alignment(self):
+        expressions = scaling.distribution_expressions(294, '1000', 354, '1060')
+        self.assertEqual(len(expressions), 14)
+        for key, expression in expressions.items():
+            if key.endswith('_increase'):
+                self.assertIn('[354s] @ 1060', expression)
+            elif key == 'last_borrow_source_timestamp_after_terminal':
+                self.assertIn('@ 1060', expression)
+            else:
+                self.assertIn('@ 1000', expression)
+            self.assertNotIn('sum(', expression)
+
+    def test_distribution_action_is_read_only_and_pinned_to_v2(self):
+        job = {'metadata': {'uid': 'owned', 'labels': {'trafficxx.io/run-id': 'a' * 12}},
+            'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                {'type': 'Failed', 'status': 'True', 'lastTransitionTime': '1970-01-01T00:03:00Z'}]}}
+        outcome = {'result': 'BROWSE_SCALING_LOAD_FAILED', 'run_id': 'a' * 12,
+                   'users': 500, 'start_ramp_seconds': 120}
+        def kube(*args):
+            self.assertIn(args[0], ('get', 'logs'))
+            self.assertIn('browse-users-500-autoscaling-pressure3-v2', ' '.join(args))
+            return json.dumps(outcome if args[0] == 'logs' else job)
+        def query(expression):
+            if expression.startswith('increase(') and 'queue_full' in expression:
+                return [{'metric': {'instance': 'a'}, 'value': [240, '1']}]
+            return []
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'prometheus') as connection, \
+                patch.object(sys, 'argv', ['browse-autoscaling.py', 'diagnose-500-distribution']), \
+                redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = query
+            self.assertEqual(scaling.main(), 0)
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['per_instance']['a']['queue_full_total_increase'], 1)
+        self.assertIsNone(row['per_instance']['a']['borrows_total_increase'])
+        self.assertFalse(row['inventory_writes'])
+
     def test_command_failure_reporting_uses_fixed_labels_and_never_payloads(self):
         secret = 'private-output-never-print-this'
         cases = [

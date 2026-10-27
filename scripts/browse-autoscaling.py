@@ -489,7 +489,43 @@ def post_job_coverage(before, after, terminal_timestamp):
                 all(name in stamps and stamps[name] > terminal_timestamp for name in initial) if initial else None}
 
 
-def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False):
+def distribution_expressions(window, when, counter_window, counter_when):
+    """Keep per-instance counter tails and pre-terminal peaks separate."""
+    rows = {field + '_increase': 'increase(' + M + field + F + '[' + str(counter_window) +
+            's] @ ' + counter_when + ')' for field in (
+                'queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
+                'borrow_errors_total', 'connection_errors_total', 'connections_lost_total',
+                'bad_returns_total', 'borrows_total')}
+    for label, expression in (
+            ('sampled_peak_waiting', M + 'waiting' + F),
+            ('sampled_peak_busy_or_opening', 'clamp_min(' + M + 'size' + F + ' - ' + M + 'available' + F + ',0)'),
+            ('sampled_peak_borrow_rate', 'rate(' + M + 'borrows_total' + F + '[1m])')):
+        rows[label] = 'max_over_time((' + expression + ')[' + str(window) + 's:15s] @ ' + when + ')'
+    rows['scrape_samples_before_terminal'] = 'count_over_time(up' + F + '[' + str(window) + 's] @ ' + when + ')'
+    rows['last_up_source_timestamp_at_terminal'] = 'timestamp(up' + F + ' @ ' + when + ')'
+    rows['last_borrow_source_timestamp_after_terminal'] = 'timestamp(' + M + 'borrows_total' + F + ' @ ' + counter_when + ')'
+    return rows
+
+
+def instance_distribution(query, expressions):
+    fields, instances = {}, set()
+    for field, expression in expressions.items():
+        values = {}
+        for row in query(expression):
+            instance = row.get('metric', {}).get('instance', '')
+            value = float(row['value'][1])
+            require(re.fullmatch(r'[A-Za-z0-9.\[\]:-]{1,150}', instance) is not None
+                    and instance not in values, 'INVALID_DIAGNOSTIC_INSTANCE')
+            require(math.isfinite(value) and value >= 0, 'INVALID_DIAGNOSTIC_SAMPLE')
+            values[instance] = round(value, 6)
+        fields[field] = values
+        instances.update(values)
+    # Missing series are null, never a claim of zero traffic or zero errors.
+    return {instance: {field: values.get(instance) for field, values in fields.items()}
+            for instance in sorted(instances)}
+
+
+def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     trial.context()
     trial.no_active_load()
@@ -512,6 +548,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     counter_end = end + timedelta(seconds=60)
     counter_when, counter_window = str(int(counter_end.timestamp())), window + 60
     with prometheus() as query:
+        extra = {}
         counters = {}
         for field in ('queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
                       'borrow_errors_total', 'connection_errors_total', 'connections_lost_total', 'bad_returns_total'):
@@ -527,6 +564,13 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                 str(window) + 's:15s] @ ' + when + ')')
         coverage = post_job_coverage(query(M + 'borrows_total' + F + ' @ ' + when),
             query('timestamp(' + M + 'borrows_total' + F + ' @ ' + counter_when + ')'), end.timestamp())
+        if distribution:
+            extra['per_instance'] = instance_distribution(query,
+                distribution_expressions(window, when, counter_window, counter_when))
+            extra['distribution_note'] = ('Instances are Prometheus scrape addresses. Borrow increases include readiness '
+                'and other traffic, not just workload HTTP requests. Counter tails include 60 seconds after terminal; '
+                'peaks and scrape counts end at terminal. New/missing series are null; sampled peaks can miss bursts. '
+                'Current configuration is not historical endpoint or routing evidence.')
     current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
     emit('BROWSE_500_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
@@ -534,7 +578,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
          query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
          counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
          post_terminal_observation_seconds=60, post_job_sample_coverage=coverage,
-         workload=outcome, inventory_writes=False,
+         workload=outcome, inventory_writes=False, **extra,
          note='Read-only capture, not a load pass. Peaks end at Job termination; counters include 60 seconds '
               'after termination to capture the next scrapes. Both include warmup and 60 seconds before start. '
               'Check post-job coverage before interpreting zero counters. Increases are extrapolated estimates; '
@@ -739,7 +783,8 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
-                                         'configure-early', 'diagnose-500-early', 'diagnose-500-verify'))
+                                         'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
+                                         'diagnose-500-distribution'))
     parser.add_argument('--users', type=int, choices=(250, 500), default=250,
                         help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -784,6 +829,8 @@ def main():
             diagnose_500(earlier_scaling=True)
         elif action == 'diagnose-500-verify':
             diagnose_500(verify_early=True)
+        elif action == 'diagnose-500-distribution':
+            diagnose_500(verify_early=True, distribution=True)
         else:
             trial.context()
             with prometheus() as query:

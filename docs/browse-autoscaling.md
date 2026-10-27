@@ -619,8 +619,8 @@ on the added pod; sampled memory maxima were 74.578, 72.789, 50.348 and
 fourth Browse pod has no resource summary in this failed output. These are
 partial sampled observations, not complete peak coverage or a passing audit.
 
-`DATABASE_BUSY` identifies a pool-level service rejection; the exact category
-still requires this run's counters. Four ready pods do not establish equal
+`DATABASE_BUSY` identified a pool-level service rejection; the subsequent
+counters confirmed queue-full rejection as recorded below. Four ready pods do not establish equal
 traffic distribution, full pool readiness at the instant of rejection or
 absence of brief per-pod queue pressure. The supplied database windows include
 warmup and may lag the failure; they do not prove database saturation or its
@@ -632,8 +632,61 @@ python3 scripts/browse-autoscaling.py diagnose-500-verify
 python3 scripts/browse-autoscaling.py wait-idle
 ```
 
-These are read-only checks. Post-run counter coverage and natural recovery
-are pending for v2; no 1,000-user stage or blind rerun should follow this failure.
+These read-only checks subsequently completed. No 1,000-user stage or blind
+rerun should follow this failure.
+
+### V2 queue-full diagnosis and healthy recovery; per-instance capture next
+
+Extended counters for run `40064bcca30f` reported queue-full and borrow-error
+increases of 1.072727 each, consistent with approximately one rejection after
+Prometheus extrapolation. They represent the same failed borrow, not two
+separate failures. Acquisition timeouts, closed-pool rejections, connection
+errors, lost connections and bad returns had zero increases. All three
+instances visible at termination had later source samples; the post-terminal
+window included a fourth instance. Sampled pre-terminal peaks were three
+healthy scrape targets, waiting four, busy/opening 21 and borrow rate
+131.536063/second. These sampled maxima need not coincide.
+
+The Kubernetes observer had recorded four ready pods while this historical
+scrape window recorded at most three targets. That is a visibility discrepancy,
+not proof the fourth pod received no requests. Repository configuration uses
+30-second DNS target refresh and 15-second scrapes. Startup already calls
+`pool.wait(timeout=30)` for a configured minimum above one before the Browse
+lifespan begins serving, so this evidence does not justify removing or adding
+pool warmup. No readiness, discovery, queue or replica-policy change is made.
+
+Recovery independently confirmed two ready pods, pool eight, pressure zero,
+borrow rate 0.20/second, both demo events at 100 available tickets, Operations
+72 processed events, no backlog or active alerts and healthy workers.
+The five-minute recovery database sample maxima were CPU 6.632%, memory
+21.006% and 41 connections, including idle sessions. Recovery passed; this
+does not establish load-period peaks or repair the failed workload result.
+
+To investigate which pod rejected and how borrow activity was distributed,
+run only the following read-only capture in Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py diagnose-500-distribution
+```
+
+It is pinned to the existing verification-v2 Job and checks its terminal state,
+run ID and UID. Alongside the existing aggregate result, `per_instance` adds
+eight counter increases (including borrows), sampled waiting/busy/borrow-rate
+peaks, scrape counts through termination, and last source timestamps at the
+termination and post-terminal cutoffs. Instances are scrape addresses, not
+necessarily current pod names. Missing per-instance fields remain `null`;
+zero and missing are distinct. Counter windows include warmup and the
+60-second tail; borrow counts include readiness and other traffic and are
+not exact workload request counts. Sampled peaks can miss short bursts.
+If historical data has expired, do not interpret missing samples as zero.
+
+This capture creates no Job, generates no HTTP workload, changes no policy
+and opens no SQL connection. Its output is needed before choosing between
+faster discovery/control response, routing investigation or a bounded capacity
+comparison. None of those changes is selected yet. The original successful
+500-user workload remains a single passing attempt; v2 remains a failed repeat.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

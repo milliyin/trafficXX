@@ -6,7 +6,8 @@
       "name": "rejection_exported_after_job_termination",
       "interval": "15s",
       "input_series": [
-        {"series": "trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\",instance=\"a\"}", "values": "0x12 1x3"}
+        {"series": "trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\",instance=\"a\"}", "values": "0x12 1x3"},
+        {"series": "trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\",instance=\"b\"}", "values": "0x16"}
       ],
       "promql_expr_test": [
         {
@@ -18,6 +19,14 @@
           "expr": "sum(increase(trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\"}[240s] @ 240))",
           "eval_time": "4m",
           "exp_samples": [{"labels": "{}", "value": 1}]
+        },
+        {
+          "expr": "increase(trafficxx_browse_pool_queue_full_total{job=\"trafficxx-browse-pool\"}[240s] @ 240)",
+          "eval_time": "4m",
+          "exp_samples": [
+            {"labels": "{job=\"trafficxx-browse-pool\",instance=\"a\"}", "value": 1},
+            {"labels": "{job=\"trafficxx-browse-pool\",instance=\"b\"}", "value": 0}
+          ]
         }
       ]
     }

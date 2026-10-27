@@ -8,8 +8,11 @@ earlier checkpoints. It is not a live status page.
 
 Latest repeat (`40064bcca30f`) stopped after 114.629 seconds: 476 participants,
 12,986 HTTP 200 responses and one `DATABASE_BUSY` HTTP 503. Four ready pods
-were observed before termination. This is a failed repeat; pool-counter
-diagnostics and post-run recovery are pending. No higher stage is prepared.
+were observed before termination. Counters subsequently confirmed approximately
+one queue-full rejection, with no timeout or connection-error increases.
+Recovery to two healthy pods passed. A read-only per-instance capture is
+prepared to investigate pressure distribution and scrape visibility; no higher
+stage or capacity increase is prepared.
 
 The preceding earlier-scaling comparison completed 28,347
 successful reads with all 500 participants and zero errors; p95 was 185.227 ms.
@@ -60,8 +63,9 @@ or establish sustained production capacity.
   three ready pods. Safe command/stage diagnostics and preservation of the
   primary error during cleanup are implemented. The distinct same-profile v2
   repeat failed on one HTTP 503 after reaching four ready pods, rather than
-  an external command error. Capture `diagnose-500-verify` and `wait-idle`
-  before choosing a further change; retain the failed Job.
+  an external command error. Aggregate diagnostics confirmed queue-full rejection
+  and natural recovery passed. Capture `diagnose-500-distribution` before
+  choosing a further change; retain the failed Job.
   The historical failing command remains unknown. Complete the observer run
   before increasing load.
   Separate four-to-two recovery passed; it does not replace the interrupted audit.
