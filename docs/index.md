@@ -24,15 +24,15 @@ results behind a system that holds tickets, moves events, and recovers from faul
 
 <div class="tx-milestone" markdown>
 
-**250 paced users. 6,986 successful reads. Zero errors.**
+**250 paced users. 21,129 successful reads. Zero errors.**
 
-A one-minute Browse trial passed with eight ready database connections and
-16 waiting slots per pod: 116.154 requests/s and p95 latency 191.658 ms.
-Restoration to four connections per pod and healthy operation were verified
-afterwards. This is a temporary trial result, not the current default capacity
-or a production SLO.
+A three-minute Browse verification passed on 27 October with p95 latency
+159.051 ms. Kubernetes scaled from two to three ready pods, then naturally
+returned to two. Sampled resources and final health checks passed; one HPA
+metric gap recovered in 16.78 seconds. Each pod uses eight database connections
+and 16 waiting slots. This is a bounded experiment, not a production SLO.
 
-[Read the experiment and its limits](browse-pool-size-comparison.md#live-trial-passed-and-baseline-restored)
+[Read the experiment and its limits](browse-autoscaling.md#27-october-corrected-observer-verification-passed)
 
 </div>
 

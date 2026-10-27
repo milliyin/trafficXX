@@ -131,7 +131,7 @@ or drill result has been supplied yet.
 
 ## Failure or disconnect
 
-### 27 October: corrected-observer verification prepared
+### 27 October: corrected-observer verification passed
 
 Fresh user-run checks passed: two Browse replicas, eight connections per pod,
 zero pool pressure, demo availability 100 per event, and healthy Operations
@@ -148,9 +148,42 @@ same 250 paced users, 180-second workload, two-second pauses, 22,500 GET cap,
 resource budgets, metric guards, scaling bounds and natural downscale checks.
 It does not rebuild or redeploy the app, change pool policy or increase load.
 Keep Cloud Shell running through `BROWSE_AUTOSCALING_DRILL_OK`; allow 15-20
-minutes for resource sampling, workload and downscale stabilization. No live
-v3 result has been supplied yet. Sampling still cannot establish continuous
-resource peaks or a production latency SLO.
+minutes for resource sampling, workload and downscale stabilization.
+
+The user supplied the full live pass, run `f807afdc2940`, Job
+`browse-users-250-autoscaling-v3`:
+
+| Measurement | Result |
+| --- | --- |
+| Users participating | 250 of 250 |
+| Responses | 21,129 HTTP 200, zero request errors |
+| Workload elapsed | 182.14 seconds |
+| Latency p50 / p95 / p99 / maximum | 128.172 / 159.051 / 176.862 / 387.427 ms |
+| Ready Browse replicas | Two before, three under load, two after natural downscale |
+| HPA metric gaps | One, recovered in 16.78 seconds |
+| Final inventory | 100 available tickets per demo event, no writes |
+| Final Operations | Healthy workers, zero backlog and active alerts; 72 processed events |
+| Database observations | 12 per metric over 14:23:10-14:35:10 UTC, including warmup/recovery |
+| Database window maxima | CPU 8.71%, memory 21.04%, connections 35, including idle sessions |
+| Final result | `BROWSE_AUTOSCALING_DRILL_OK` |
+
+Sampled resource maxima were:
+
+| Process | Distinct source samples | CPU cores | Memory MiB |
+| --- | ---: | ---: | ---: |
+| Initial Browse pod pblw4 | 7 | 0.074280 | 72.473 |
+| Initial Browse pod z9wkl | 7 | 0.077136 | 72.449 |
+| Added Browse pod jn4zr | 3 | 0.155997 | 64.770 |
+| Generator lfsm4 | 5 | 0.091138 | 41.043 |
+
+The corrected observer completed its cycle without the earlier false failure
+at generator completion. The transient HPA gap was explicitly recorded and
+recovered inside its limit; it was not replaced with a zero pressure reading.
+The current policy remains eight connections per pod, queue limit 16, and
+two-to-four Browse pods, with two ready at the final check. Sampling still
+cannot establish continuous resource peaks or a production latency SLO. Heavy
+traffic ended before downscale, so HTTP continuity during downscale is not
+proved by this run. No 500- or 1,000-user experiment ran.
 
 The first live drill, run `1ec4a7395615`, installed the managed addon and
 observed two, three, then four ready Browse pods. HPA events independently

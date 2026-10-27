@@ -1,6 +1,6 @@
 # Verified progress
 
-Updated **24 October 2026** from user-supplied deployment and diagnostic results.
+Updated **27 October 2026** from user-supplied deployment and diagnostic results.
 This page summarises milestones; linked guides retain the full evidence and
 earlier checkpoints. It is not a live status page.
 
@@ -21,6 +21,7 @@ earlier checkpoints. It is not a live status page.
 | 100-user client memory comparison | 2,745 successful reads in 60.156 seconds; zero errors; p95 294.158 ms. Sampled generator peak process RSS 33.250 MiB versus the preceding 241.094 MiB. |
 | 100-user single-query comparison | 2,804 successful reads in 60.100 seconds; zero errors; p95 201.078 ms; sampled generator peak process RSS 33.164 MiB. Fresh post-run health checks passed. |
 | 250-user temporary pool-eight trial | 6,986 successful reads in 60.144 seconds; zero errors; p95 191.658 ms; both pools restored to four and post-trial health verified. |
+| 250-user autoscaling verification | v3 completed 21,129 successful reads in 182.14 seconds, zero errors, p95 159.051 ms, automatic two-to-three-to-two ready pods; sampled resource and final health checks passed. One HPA metric gap recovered in 16.78 seconds. |
 
 The fresh health checks after the restored 250-user trial reported both demo events still
 at 100 available tickets, healthy workers, no backlog, and no active alerts.
@@ -41,6 +42,15 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
+- **Complete autoscaling observer run passed:** v3 run `f807afdc2940`
+  reported `BROWSE_AUTOSCALING_DRILL_OK`. All 250 users completed 21,129
+  successful reads, with p95 159.051 ms and no request errors. The observer
+  verified scale-up to three and natural return to two ready pods, sampled
+  resource limits, healthy inventory and Operations, and database observations.
+  One HPA metric gap recovered in 16.78 seconds. This is a bounded read test;
+  latency SLOs, continuous peaks, downscale HTTP continuity and higher user
+  counts remain separate work.
+
 - **Three-minute pool-eight stability trial passed:** all 250 users completed
   21,133 successful reads, zero errors, p95 167.385 ms; automatic restoration
   to four connections and health checks passed. The [new autoscaling profile](browse-autoscaling.md)
@@ -54,6 +64,7 @@ or establish sustained production capacity.
   observed natural scale-down from three to two ready pods, active metrics,
   healthy inventory and Operations. The original continuous resource audit
   was incomplete; workload, scale-up and post-run scale-down are verified.
+  The later v3 run above completed the corrected observer cycle.
 
 - **Client memory comparison completed:** the HTTP-only, per-thread client
   passed its live Linux comparison with substantially lower sampled process
@@ -64,8 +75,8 @@ or establish sustained production capacity.
   queue-full rejections. The [temporary eight-connection trial](browse-pool-size-comparison.md#live-trial-passed-and-baseline-restored)
   completed with all 250 users, 6,986 successful reads and no new pool errors.
   It restored four connections per pod, verified health and retained its
-  recovery journal. The current default remains four; the pass applies to
-  the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
+  recovery journal. Four was the baseline at that checkpoint; the pass applies
+  to the tested eight-connection configuration. A [separate three-minute trial](browse-pool-size-comparison.md#prepared-three-minute-stability-mode)
   also passed, with its baseline restoration verified. Eight connections are
   selected and deployed for the new two-to-four-pod autoscaling profile.
   No 500/1,000-user test ran.
