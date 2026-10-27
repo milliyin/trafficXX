@@ -170,6 +170,33 @@ synthetic player clicks are created. It refuses if a public ClickClash Service
 already exists, since staging is not a command to withdraw an existing site.
 
 Review backup coverage and rehearse restoring records before inviting players.
+The first-release logical restore helper is:
+
+```bash
+python3 scripts/check-clickclash-restore.py
+```
+
+It requires the public Service to be absent and the real player table to be
+empty. A short-lived administrator client reads the deployed ClickClash schema
+and migration ledger, restores them into a new randomly named temporary
+database, and adds one fixture player with three clicks, a session and an image
+**only in that temporary database**. It dumps those fixtures, clears their
+temporary schema, restores them, compares all table fingerprints and checks
+the audit sequence. The real ClickClash and ticket tables are not written.
+
+Require `CLICKCLASH_LOGICAL_RESTORE_OK`, `scratch_database_removed: true` and
+`temporary_pod_removed: true`. Dumps and private diagnostics stay in the pod's
+memory-backed scratch volume and disappear with the pod; the human token is
+passed only on stdin. If hard interruption prevents cleanup, retain the printed
+`temporary_database` name for operator cleanup. The helper never adopts or
+drops a pre-existing database.
+
+This verifies logical schema/data restore on the existing Azure server. It
+does **not** test Azure managed point-in-time recovery, owner/ACL recovery or
+recovery from losing the server. Those remain separate recovery work. The
+reported 14-day backup retention and earliest restore timestamp establish
+configuration, not proof that a managed restore has been rehearsed.
+
 Then deploy and verify trusted public HTTPS:
 
 ```bash
