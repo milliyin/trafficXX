@@ -23,6 +23,19 @@ type Board = {
   paused: boolean;
   offset: number;
 };
+function PromotionLink({entry, className, children}: {
+  entry: Entry;
+  className: string;
+  children: React.ReactNode;
+}) {
+  return entry.website && !entry.ad_hidden ? (
+    <a className={className + ' promotion-link'} href={entry.website}
+      target="_blank" rel="ugc sponsored nofollow noopener noreferrer"
+      aria-label={"Visit " + entry.nickname + "'s website"}>
+      {children}
+    </a>
+  ) : <div className={className}>{children}</div>;
+}
 class ApiError extends Error {
   constructor(
     public code: string,
@@ -346,7 +359,7 @@ function App() {
                     {String(offset + index + 1).padStart(2, "0")}
                     {offset + index === 0 && <span className="crown">♛</span>}
                   </div>
-                  <div className="player-cell">
+                  <PromotionLink entry={entry} className="player-cell">
                     <span className={"avatar color-" + (index % 4)}>
                       {entry.nickname.slice(0, 2).toUpperCase()}
                     </span>
@@ -358,12 +371,13 @@ function App() {
                           : "In it for the clicks"}
                       </small>
                     </div>
-                  </div>
+                  </PromotionLink>
                   <div className="score-cell">
                     {number(entry.score)}
                     <small>clicks</small>
                   </div>
                   <div className="ad-cell">
+                    <PromotionLink entry={entry} className="ad-promotion">
                     {entry.image_url && (
                       <img
                         src={entry.image_url}
@@ -379,15 +393,12 @@ function App() {
                             : "Just here for the glory.")}
                       </p>
                       {entry.website && (
-                        <a
-                          href={entry.website}
-                          target="_blank"
-                          rel="ugc sponsored nofollow noopener noreferrer"
-                        >
+                        <span className="visit-link">
                           Visit my corner ↗
-                        </a>
+                        </span>
                       )}
                     </div>
+                    </PromotionLink>
                     <button
                       className="report"
                       title="Report this promotion"

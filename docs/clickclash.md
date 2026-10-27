@@ -12,6 +12,9 @@ The existing ticket services and their verified Browse benchmark are unchanged.
 
 - `/`: public all-time leaderboard, ranked accounts, click totals, immediate
   bio/website/image promotions and report controls.
+  A player's name, picture and promotion link to their website in a new tab
+  when provided. Hidden promotions and profiles without a website stay unlinked;
+  reporting is a separate button.
 - `/play`: unlimited-duration guest/account play, confirmed scores, pending
   requests and retries using the original click ID. There is no built-in auto-clicker.
 - `/account`: email signup, one-time five-word generated passphrase, login,

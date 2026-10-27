@@ -76,6 +76,21 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
   await page.getByRole("link", { name: "Leaderboard", exact: true }).click();
   await expect(page.getByText(nickname, { exact: true })).toBeVisible();
   await expect(page.locator('.ad-cell img').first()).toBeVisible();
+  const playerRow = page.locator('.board-row').filter({hasText: nickname});
+  const promotion = playerRow.locator('.ad-promotion');
+  await expect(promotion).toHaveAttribute('href', 'https://example.com/');
+  await expect(promotion).toHaveAttribute('target', '_blank');
+  await expect(promotion).toHaveAttribute('rel', /noopener/);
+  await page.context().route('https://example.com/**', route => route.fulfill({body: 'Linked promotion'}));
+  for (const target of [playerRow.locator('.player-cell strong'), promotion.locator('img'), promotion.locator('p')]) {
+    const popupPromise = page.waitForEvent('popup');
+    await target.click();
+    const popup = await popupPromise;
+    await popup.waitForURL('https://example.com/');
+    await popup.close();
+  }
+  await expect(playerRow.locator('.report')).toBeVisible();
+  expect(await playerRow.locator('.report').evaluate(button => button.closest('a') === null)).toBe(true);
   await expect(
     page.getByText("Browser test profile, not real player data.").first(),
   ).toBeVisible();
@@ -94,7 +109,7 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
     path: "../test-results/clickclash/mobile.png",
     fullPage: true,
   });
-  await page.getByRole("link", { name: nickname }).click();
+  await page.locator('a.account-link').click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("link", { name: "Join the clash" }).click();
   await page.getByRole("button", { name: "Sign in", exact: true }).click();

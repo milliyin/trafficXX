@@ -413,10 +413,14 @@ p {
   object-fit: cover;
   border-radius: 5px;
 }
-.ad-cell > div {
+.ad-promotion {
+  display: flex;
+  gap: 12px;
+  align-items: center;
   min-width: 0;
   flex: 1;
 }
+.ad-promotion > div { min-width: 0; }
 .ad-cell p {
   font-size: 11px;
   margin: 0 0 5px;
@@ -424,12 +428,23 @@ p {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.ad-cell a {
+.visit-link {
   font-size: 10px;
   font-weight: bold;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.promotion-link, .ad-cell .promotion-link {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+  border-radius: 5px;
+}
+.promotion-link:hover strong, .promotion-link:hover .visit-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.promotion-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
 .report {
   border: 0;
   background: transparent;
@@ -1052,7 +1067,7 @@ hr {
   .ad-cell p {
     font-size: 10px;
   }
-  .ad-cell a {
+  .visit-link {
     font-size: 9px;
   }
   .bottom-callout {
