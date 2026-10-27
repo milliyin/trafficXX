@@ -158,6 +158,17 @@ bash scripts/run-postgres-admin-sql.sh test-results/clickclash/azure-register.sq
 The generated SQL registers the exact managed identity and creates only the
 separate ClickClash schema and ledger. The runtime role receives DML privileges
 for that schema, no DDL or operator control privileges, and no ticket grants.
+Stage the application privately first:
+
+```bash
+python3 scripts/clickclash-azure.py stage
+```
+
+This applies only the application, workload service account and ClusterIP
+service. Readiness checks the real database connection; no public listener or
+synthetic player clicks are created. It refuses if a public ClickClash Service
+already exists, since staging is not a command to withdraw an existing site.
+
 Review backup coverage and rehearse restoring records before inviting players.
 Then deploy and verify trusted public HTTPS:
 

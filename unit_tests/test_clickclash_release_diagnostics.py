@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,43 @@ def load():
 
 
 class ReleaseDiagnostics(unittest.TestCase):
+    def test_stage_command_applies_only_private_objects(self):
+        module = load()
+        output = io.StringIO()
+        applied = []
+        def fake(args, payload=None):
+            if args[:2] == ['kubectl', 'apply']:
+                applied.extend(json.loads(payload)['items'])
+            return ''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'clickclash-image.txt').write_text(module.SERVER+'/trafficxx@sha256:'+'a'*64)
+            with patch.object(module, 'ROOT', root), patch.object(module, 'context'), \
+                 patch.object(module, 'metadata', return_value=('clickclash.example.com','20.1.2.3',{'clientId':'fixture','tenantId':'fixture'})), \
+                 patch.object(module, 'call', side_effect=fake), patch.object(module.sys, 'argv', ['release', 'stage']), patch('sys.stdout',output):
+                module.main()
+        self.assertEqual(len(applied), 3)
+        self.assertTrue(all(item['metadata']['name']=='clickclash' for item in applied))
+        self.assertEqual(json.loads(output.getvalue().splitlines()[-1])['result'], 'CLICKCLASH_STAGED_PRIVATE')
+
+    def test_private_stage_has_no_public_service_or_gateway(self):
+        module = load()
+        all_objects = module.deployment('clickclash.example.com', '20.1.2.3',
+                                        {'clientId': 'fixture', 'tenantId': 'fixture'}, 'fixture-image')
+        items = module.private_stage(all_objects)['items']
+        self.assertEqual(len(items), 3)
+        self.assertTrue(all(item['metadata']['name'] == 'clickclash' for item in items))
+        service = next(item for item in items if item['kind'] == 'Service')
+        self.assertEqual(service['spec'].get('type', 'ClusterIP'), 'ClusterIP')
+
+    def test_private_stage_rejects_accidental_public_service(self):
+        module = load()
+        objects = module.deployment('clickclash.example.com', '20.1.2.3',
+                                    {'clientId': 'fixture', 'tenantId': 'fixture'}, 'fixture-image')
+        next(item for item in objects['items'] if item['kind'] == 'Service' and item['metadata']['name'] == 'clickclash')['spec']['type'] = 'LoadBalancer'
+        with self.assertRaises(ValueError):
+            module.private_stage(objects)
+
     def test_doctor_only_inspects_account_registry_and_runs(self):
         module = load()
         output = io.StringIO()

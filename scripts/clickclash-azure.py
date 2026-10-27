@@ -38,6 +38,7 @@ def operation(args):
         (['az', 'identity', 'show'], 'identity_lookup'),
         (['kubectl', 'config', 'current-context'], 'kubernetes_context'),
         (['kubectl', 'apply'], 'apply_manifests'),
+        (['kubectl', 'get', 'service', 'clickclash-public'], 'public_service_lookup'),
         (['kubectl', 'rollout', 'status'], 'deployment_rollout'),
     ):
         if args[:len(prefix)] == prefix:
@@ -222,9 +223,19 @@ def deployment(host, address, identity, image):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': objects}
 
 
+def private_stage(manifests):
+    items = [item for item in manifests['items'] if item['metadata']['name'] == 'clickclash'
+             and item['kind'] in ('ServiceAccount', 'Deployment', 'Service')]
+    if {item['kind'] for item in items} != {'ServiceAccount', 'Deployment', 'Service'} or len(items) != 3:
+        raise ValueError('Invalid private-stage manifest')
+    if any(item['kind'] == 'Service' and item['spec'].get('type', 'ClusterIP') != 'ClusterIP' for item in items):
+        raise ValueError('Private stage cannot publish a load balancer')
+    return {'apiVersion': 'v1', 'kind': 'List', 'items': items}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'deploy', 'check'])
+    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'stage', 'deploy', 'check'])
     args = parser.parse_args()
     context(require_cluster=args.action not in ('doctor', 'build'))
     if args.action == 'doctor':
@@ -251,15 +262,24 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(registration_sql(identity))
         print(json.dumps({'result': 'CLICKCLASH_SQL_PREPARED', 'review_file': str(target), 'url': 'https://' + host}))
-    elif args.action == 'deploy':
+    elif args.action in ('stage', 'deploy'):
         image = (ROOT / 'clickclash-image.txt').read_text().strip()
         if not re.fullmatch(re.escape(SERVER) + r'/trafficxx@sha256:[0-9a-f]{64}', image):
             raise ValueError('Build and save the reviewed image digest first')
-        call(['kubectl', 'apply', '-f', '-'], json.dumps(deployment(host, address, identity, image)))
-        for name in ('clickclash', 'clickclash-gateway'):
+        manifests = deployment(host, address, identity, image)
+        if args.action == 'stage':
+            if call(['kubectl', 'get', 'service', 'clickclash-public', '-n', NS, '--ignore-not-found', '-o', 'name']):
+                raise ValueError('Public ClickClash service already exists; private staging is not a withdrawal action')
+            manifests = private_stage(manifests)
+        call(['kubectl', 'apply', '-f', '-'], json.dumps(manifests))
+        for name in (('clickclash',) if args.action == 'stage' else ('clickclash', 'clickclash-gateway')):
             print('Waiting for deployment/' + name, flush=True)
             call(['kubectl', 'rollout', 'status', 'deployment/' + name, '-n', NS, '--timeout=600s'])
-        print(json.dumps({'result': 'CLICKCLASH_DEPLOYED', 'url': 'https://' + host, 'tls_verified': False}))
+        if args.action == 'stage':
+            print(json.dumps({'result': 'CLICKCLASH_STAGED_PRIVATE', 'rollout_verified': True, 'public_listener_created': False,
+                              'note': 'Only the application, service account and ClusterIP service were applied. No clicks were generated.'}))
+        else:
+            print(json.dumps({'result': 'CLICKCLASH_DEPLOYED', 'url': 'https://' + host, 'tls_verified': False}))
     else:
         for path in ('/', '/readyz', '/api/leaderboard'):
             with urllib.request.urlopen('https://' + host + path, timeout=20) as response:
