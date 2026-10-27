@@ -9,6 +9,15 @@ from trafficxx.db import connect
 
 def migrate(limit=100):
     moved = 0
+    # An old rolling-release replica can scrub an account without knowing the
+    # additive blob table. Reconcile those tombstones after rollout completes.
+    with connect() as conn:
+        conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
+        deleted = conn.execute('DELETE FROM clickclash.image_blobs b USING clickclash.players p '
+                               'WHERE b.player_id=p.id AND p.email IS NULL AND p.banned RETURNING b.byte_size').fetchall()
+        if deleted:
+            conn.execute('UPDATE clickclash.control SET image_bytes=image_bytes-%s WHERE id',
+                         (sum(row['byte_size'] for row in deleted),))
     for _ in range(limit):
         with connect() as conn:
             conn.execute('SELECT id FROM clickclash.control WHERE id FOR UPDATE')
@@ -27,7 +36,8 @@ def migrate(limit=100):
         moved += 1
     with connect() as conn:
         remaining = conn.execute('SELECT count(*) AS n FROM clickclash.images').fetchone()['n']
-    return {'result': 'CLICKCLASH_BLOB_MIGRATION_OK', 'moved': moved, 'remaining': remaining}
+    return {'result': 'CLICKCLASH_BLOB_MIGRATION_OK', 'moved': moved, 'remaining': remaining,
+            'deleted_account_images_unlinked': len(deleted)}
 
 
 def verify():

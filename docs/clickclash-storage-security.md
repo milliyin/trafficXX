@@ -85,6 +85,7 @@ in API responses.
 
 Migration commits one image at a time, serializes with image changes using the
 control row lock, and removes source bytes only after verified storage copy.
+It also unlinks metadata for accounts scrubbed by an old replica during rollout.
 Deletion, replacement and moderation immediately remove public access to an old
 banner. Old objects become private orphans. Cleanup waits 15 days, beyond the
 currently configured 14-day PostgreSQL restore window. Cleanup takes the same
@@ -145,7 +146,7 @@ not create an anchor.
 
 Local verification completed: Terraform formatting/schema validation, strict
 documentation build, 576 offline tests, the existing PostgreSQL account/scoring
-tests plus 12 new storage/security integration tests, and three browser tests.
+tests plus 13 new storage/security integration tests, and three browser tests.
 The Python 3.12 resolved dependency set (46 packages including test dependencies)
 and the frontend dependency audit report no known advisories after the Pillow
 upgrade. Azure blob transfers in these tests use a controlled storage adapter;

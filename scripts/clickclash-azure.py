@@ -292,7 +292,7 @@ def main():
         result = call(['kubectl', 'exec', '-n', NS, 'deployment/clickclash', '-c', 'app', '--',
                        'python', '-m', 'trafficxx.clickclash_blob_maintenance', operation])
         value = json.loads(result)
-        print(json.dumps({key: value[key] for key in ('result', 'moved', 'remaining', 'verified', 'legacy_remaining', 'candidates', 'removed', 'dry_run', 'next_cursor') if key in value}))
+        print(json.dumps({key: value[key] for key in ('result', 'moved', 'remaining', 'verified', 'legacy_remaining', 'candidates', 'removed', 'dry_run', 'next_cursor', 'deleted_account_images_unlinked') if key in value}))
         return
     if args.action == 'prepare':
         target = ROOT / 'test-results/clickclash/azure-register.sql'

@@ -227,3 +227,14 @@ def test_cleanup_preserves_current_and_recent_objects(client, storage, monkeypat
     container.get_blob_client.assert_not_called()
     assert cleanup(execute=True)['removed'] == 1
     container.get_blob_client.assert_called_once_with(old_key)
+
+
+def test_migration_reconciles_old_replica_account_deletion(client, storage):
+    signup(client)
+    assert client.put('/api/profile/image', content=picture()).status_code == 200
+    with connect() as conn:
+        conn.execute('UPDATE clickclash.players SET email=NULL,password_hash=NULL,banned=true')
+    assert migrate()['deleted_account_images_unlinked'] == 1
+    with connect() as conn:
+        assert conn.execute('SELECT image_bytes FROM clickclash.control').fetchone()['image_bytes'] == 0
+        assert conn.execute('SELECT count(*) AS n FROM clickclash.image_blobs').fetchone()['n'] == 0
