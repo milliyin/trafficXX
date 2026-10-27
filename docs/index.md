@@ -33,6 +33,10 @@ Final health and inventory checks passed. The monitoring script exited on a
 command error, leaving its continuous resource audit incomplete. This is a
 bounded workload result, not a fully verified drill or production SLO.
 
+A later repeat stopped on one HTTP 503 before all 500 users participated,
+despite four ready pods being observed. That failed repeat is retained in the
+experiment record; this milestone does not establish repeatable 500-user capacity.
+
 [Read the experiment and its limits](browse-autoscaling.md#500-user-earlier-scaling-workload-and-recovery-passed-observer-audit-incomplete)
 
 </div>

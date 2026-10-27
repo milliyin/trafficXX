@@ -552,7 +552,7 @@ observer command failure and repeat the same 500-user stage with the improved
 safe diagnostic reporting described below before any higher user count.
 Retain the existing Job and logs; do not delete it to reuse its name.
 
-### Prepared observer verification for the same 500-user profile
+### Observer verification for the same 500-user profile
 
 The old output cannot identify which command failed. Source inspection found
 that the top-level handler omitted the operation and exit code, and a second
@@ -568,7 +568,8 @@ reports its own failure separately, and preserves the primary exception.
 Already-observed terminal Jobs need no extra cleanup query. If stopping fails,
 the Job may continue until its existing deadline; inspect it before another run.
 
-With no other active load and healthy recovery, run in Cloud Shell:
+The following commands were used for the verification. Its fixed Job now
+exists; retain and inspect it rather than replaying the creation command:
 
 ```bash
 cd ~/trafficxx &&
@@ -590,8 +591,49 @@ Only `BROWSE_AUTOSCALING_DRILL_OK` from this distinct run completes the
 observer verification. If it fails, inspect the new stage/operation/cleanup
 fields and the preserved Job. `diagnose-500-verify` captures this v2 workload's
 historical pool counters, while `wait-idle` checks recovery after it is terminal.
-This repeat is prepared and tested locally; no live verification result has
-been supplied yet.
+The live repeat failed as recorded next; the full observer verification
+remains incomplete.
+
+### 500-user verification v2 stopped on a service rejection
+
+Run `40064bcca30f`, Job `browse-users-500-autoscaling-pressure3-v2`, stopped
+after 114.629 seconds, with 476 of 500 users participating. Of 12,987 requests,
+12,986 returned HTTP 200 and one returned HTTP 503 with `DATABASE_BUSY` on
+the seated route. That rejection occurred at 114.258 seconds and took
+22.432 ms. Truncated-run latency was p50 130.644 ms, p95 197.139 ms,
+p99 261.038 ms and maximum 370.026 ms. No inventory writes were generated.
+
+The resource gate passed. Observations progressed from two ready pods to
+three, then four. The parent reported `LOAD_JOB_FAILED`, stage
+`read_failed_load_logs`, and cleanup `already_terminal`. This is a workload
+failure, not evidence of another external-command failure; a null command
+exit code and operation `unknown` are expected for this validation error.
+The preceding 28,347-request success remains valid for that individual run,
+but the repeat prevents treating it as established repeatable capacity.
+
+The observer retained four resource summaries: the two original Browse pods,
+the generator, and one added Browse pod. Sampled CPU maxima were approximately
+0.044 and 0.038 cores on the original pods, 0.041 on the generator and 0.144
+on the added pod; sampled memory maxima were 74.578, 72.789, 50.348 and
+63.711 MiB respectively. The added pod had only one source sample and the
+fourth Browse pod has no resource summary in this failed output. These are
+partial sampled observations, not complete peak coverage or a passing audit.
+
+`DATABASE_BUSY` identifies a pool-level service rejection; the exact category
+still requires this run's counters. Four ready pods do not establish equal
+traffic distribution, full pool readiness at the instant of rejection or
+absence of brief per-pod queue pressure. The supplied database windows include
+warmup and may lag the failure; they do not prove database saturation or its
+absence at that instant. No further queue, pool or replica increase has been
+selected. First collect:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-500-verify
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+These are read-only checks. Post-run counter coverage and natural recovery
+are pending for v2; no 1,000-user stage or blind rerun should follow this failure.
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
