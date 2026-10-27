@@ -7,11 +7,19 @@ or deployed yet. Real player records will be durable application data.
 
 ## Product scope
 
-A small responsive website offers timed click rounds, guest play, optional
-email sign-in, personal scores and a shared leaderboard. Visitors can join
-the same countdown and compete. The server awards points only for accepted
-clicks during an active round. The interface distinguishes pending requests,
-accepted scores, rate limiting and temporary unavailability.
+A small responsive React and TypeScript website offers unlimited-duration
+clicking, guest play, optional email sign-in, personal scores and a shared
+leaderboard. Both guests and accounts can rank. There is no countdown or round
+time limit. Cumulative scores are the proposed default; reset or season rules
+must be agreed before implementation. The server awards points only for
+accepted clicks. The interface distinguishes pending requests, accepted
+scores, rate limiting and temporary unavailability.
+
+The public leaderboard is a separate page from the clicking game. Each entry
+shows the player's public nickname, accepted click total and optional bio/ad
+beside it, visible to visitors. Ad format, external links, editing permissions
+and moderation rules remain to be decided; do not assume arbitrary HTML,
+scripts or third-party ad embeds are permitted.
 
 The click itself performs the scoring transaction. It does not call an
 unrelated ticket-availability endpoint merely to manufacture traffic. Existing
@@ -24,7 +32,7 @@ Browse result is not a capacity claim for this new write workload.
   same origin to avoid unnecessary cross-origin authentication complexity.
 - A separate FastAPI challenge deployment runs on the existing AKS foundation.
   It has its own database identity, connection pool and reviewed resource limits.
-- Private PostgreSQL stores the authoritative player, round, receipt and score
+- Private PostgreSQL stores the authoritative player, profile, receipt and score
   records in a separate schema with a least-privilege application role.
 - Start with database-backed scoring. A cache may accelerate leaderboard
   reads after measurement; cache loss must not erase accepted scores.
@@ -38,20 +46,20 @@ large UI or additional microservices.
 ## Real-data correctness
 
 The initial data model separates players, account credentials, server sessions,
-rounds, click receipts and per-player round scores. Score ordering and ties
+public profiles, click receipts and per-player cumulative scores. Score ordering and ties
 have explicit deterministic rules. Different players do not contend on one
 global score row.
 
-An accepted click must atomically validate round eligibility and server-side
+An accepted click must atomically validate player eligibility and server-side
 limits, insert a unique receipt, and update that player's score in PostgreSQL.
 Points are acknowledged after commit. The server uses database time and
-defines the eligibility/round-close boundary consistently across replicas.
+enforces eligibility and operator pause behavior consistently across replicas.
 
 Clients generate a unique identifier for each click and reuse it when retrying
 that click. Replaying a committed request returns its recorded outcome without
 another increment; changing the payload under the same identifier is rejected.
 A connection failure after commit must be recoverable by the same identifier.
-The browser never supplies a trusted score, player identity or round deadline.
+The browser never supplies a trusted score or player identity.
 
 Restarting or replacing an API pod must preserve accepted scores. Schema
 migrations are versioned; backups and an actual restore rehearsal are required
@@ -86,12 +94,14 @@ an atomic merge rule; clients cannot claim an arbitrary guest or account ID.
 The UI labels guest and signed-in identities clearly. Sign-in alone is not
 proof that traffic is human.
 
-Round management, pause controls and incident publishing require operator
+Game management, pause controls and incident publishing require operator
 authorization. Public users cannot start arbitrary generators, submit target
-URLs or change request budgets. Round deadlines, per-player limits and a
+URLs or change request budgets. Per-player request limits and a
 global admission budget bound public traffic. Scores advance only on server
 acceptance, and overload responses remain visible rather than becoming fake
-successful clicks. Public display names are validated and escaped.
+successful clicks. Public display names and bio/ad content are validated and
+escaped. Any allowed destination link is a player promotion, not a URL the
+server fetches or load-tests.
 
 Only necessary profile information is stored. Logging excludes passphrases,
 tokens, cookies and credentials in request bodies or headers. Account deletion, guest cleanup
@@ -110,7 +120,7 @@ earlier uptime. Show the last check time and report missing/stale evidence as
 unknown. Availability percentages describe their actual probe coverage.
 
 Initial components are the website, click API, login and leaderboard. A
-functional canary uses a dedicated synthetic identity and round, rather than
+functional canary uses a dedicated synthetic identity excluded from rankings, rather than
 adding fake scores to real leaderboards. Authenticated internal health signals
 can enrich component status through a sanitized public snapshot; private
 Grafana, Prometheus, database addresses and operational details are not exposed.
@@ -119,7 +129,7 @@ Operator alerts are a separate delivery path and must be configured and tested.
 ## Real usage and controlled tests
 
 Real-player records are never reset to clean up a load test. Automated runs use
-explicit synthetic identities and rounds excluded from public rankings, with
+explicit synthetic identities excluded from public rankings, with
 separate metrics labels and cleanup rules. Recovery tests use those records
 while checking that real records remain intact.
 
@@ -133,8 +143,8 @@ of a user count or latency guarantee.
 
 | Stage | Concrete outcome |
 | --- | --- |
-| 1. Durable scoring | Schema, transactional receipts/scores, guest sessions and integration checks for duplicates, concurrency, round close and restart survival. |
-| 2. Player experience | Responsive play page, shared countdown, server-confirmed score, leaderboard and clear overload/retry behavior. |
+| 1. Durable scoring | Schema, transactional receipts/scores, guest sessions and integration checks for duplicates, concurrency, operator pause and restart survival. |
+| 2. Player experience | React/TypeScript, separate unlimited-duration game and public leaderboard pages, server-confirmed scores, profile bio/ads and clear overload/retry behavior. |
 | 3. Sign-in | Email and generated memorable passphrases, one-time credential display, no recovery, guest linking, session lifecycle, ownership checks and protected operator actions. |
 | 4. Public release | Reviewed HTTPS gateway, scoped database identity, shared rate limits, backups/restore evidence and a small real-user launch. |
 | 5. Status and operation | Independent probes/history, public status and incident page, tested operator notifications. |
