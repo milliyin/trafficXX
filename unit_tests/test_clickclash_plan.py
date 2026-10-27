@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
 from unittest.mock import patch
 
 
@@ -67,3 +68,20 @@ class ClickClashPlanTests(unittest.TestCase):
         self.assertIn('-var=enable_grafana_public_endpoint=true', planned)
         init = next(args for args, _ in seen if 'init' in args)
         self.assertIn('-backend-config=key=lab/foundation.tfstate', init)
+        self.assertIn('-reconfigure', init)
+
+    def test_failure_classification_does_not_expose_tool_output(self):
+        module = load()
+        cases = {'Backend configuration changed': 'BACKEND_RECONFIGURATION_REQUIRED',
+                 'AuthorizationPermissionMismatch StatusCode=403': 'STATE_ACCESS_DENIED',
+                 'failed to query available provider packages': 'PROVIDER_DOWNLOAD_FAILED',
+                 'ContainerNotFound': 'BACKEND_NOT_FOUND',
+                 'Error acquiring the state lock': 'STATE_LOCKED',
+                 'unknown failure': 'COMMAND_FAILED'}
+        for diagnostic, reason in cases.items():
+            completed = subprocess.CompletedProcess(['terraform'], 1, 'NEVER_PRINT_SECRET', diagnostic)
+            with patch.object(module.subprocess, 'run', return_value=completed):
+                with self.assertRaises(module.PlanFailure) as caught:
+                    module.call(['terraform', 'init'], 'terraform_init')
+            self.assertEqual(caught.exception.reason, reason)
+            self.assertNotIn('NEVER_PRINT_SECRET', str(caught.exception))

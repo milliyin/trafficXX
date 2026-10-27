@@ -25,8 +25,26 @@ REQUIRED_STATE = {
 
 
 class PlanFailure(RuntimeError):
-    def __init__(self, operation, code=None):
-        self.operation, self.code = operation, code
+    def __init__(self, operation, code=None, reason='COMMAND_FAILED'):
+        self.operation, self.code, self.reason = operation, code, reason
+
+
+def failure_reason(output):
+    """Classify tool diagnostics without ever returning raw output or credentials."""
+    value = output.lower()
+    patterns = (
+        ('BACKEND_RECONFIGURATION_REQUIRED', ('backend configuration changed', 'backend initialization required')),
+        ('AZURE_AUTHENTICATION_FAILED', ('aadsts', 'refresh token has expired', 'az login', 'please run azure login')),
+        ('STATE_ACCESS_DENIED', ('authorizationpermissionmismatch', 'authorizationfailure', 'statuscode=403', 'status code 403', '403 forbidden')),
+        ('BACKEND_NOT_FOUND', ('containernotfound', 'resourcenotfound', 'storageaccountnotfound')),
+        ('PROVIDER_DOWNLOAD_FAILED', ('failed to install provider', 'failed to query available provider packages', 'registry.terraform.io')),
+        ('STATE_LOCKED', ('error acquiring the state lock', 'state blob is already locked')),
+        ('NETWORK_CONNECTION_FAILED', ('no such host', 'connection timed out', 'i/o timeout', 'tls handshake timeout')),
+    )
+    for reason, phrases in patterns:
+        if any(phrase in value for phrase in phrases):
+            return reason
+    return 'COMMAND_FAILED'
 
 
 def call(args, operation, environment=None):
@@ -37,7 +55,7 @@ def call(args, operation, environment=None):
     except subprocess.TimeoutExpired:
         raise PlanFailure(operation) from None
     if result.returncode:
-        raise PlanFailure(operation, result.returncode)
+        raise PlanFailure(operation, result.returncode, failure_reason(result.stderr + '\n' + result.stdout))
     return result.stdout.strip()
 
 
@@ -95,7 +113,7 @@ def main(argv=()):
     if not ( (1,16,5) <= tuple(map(int, version.split('-')[0].split('.'))) < (1,17,0) ):
         raise ValueError('TERRAFORM_VERSION_MUST_BE_1_16_5_TO_1_16_X')
     print('Reconnecting to the existing foundation backend...', flush=True)
-    terraform('terraform_init', 'init', '-input=false',
+    terraform('terraform_init', 'init', '-input=false', '-reconfigure',
               '-backend-config=resource_group_name=trafficxx-tfstate-rg',
               '-backend-config=storage_account_name=trafficxxtfstatee8708a85',
               '-backend-config=container_name=tfstate', '-backend-config=key=lab/foundation.tfstate',
@@ -141,7 +159,9 @@ if __name__ == '__main__':
     try:
         sys.exit(main(sys.argv[1:]))
     except PlanFailure as error:
-        print(json.dumps({'result': 'CLICKCLASH_PLAN_FAILED', 'operation': error.operation, 'exit_code': error.code}))
+        print(json.dumps({'result': 'CLICKCLASH_PLAN_FAILED', 'operation': error.operation,
+                          'exit_code': error.code, 'reason': error.reason,
+                          'note': 'No apply was performed. Raw tool output and credentials are not printed.'}))
         sys.exit(1)
     except (ValueError, KeyError) as error:
         allowed = {'INCOMPLETE_PLAN', 'WRONG_SUBSCRIPTION', 'WRONG_LAB_ADMINISTRATOR',
