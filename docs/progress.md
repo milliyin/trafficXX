@@ -42,12 +42,13 @@ or establish sustained production capacity.
 
 ## Next checkpoints
 
-- **500-user stage prepared, not run:** after the v3 pass, the user authorized
-  the next stage. `drill --users 500` uses a separate Job, a 60-second arrival
-  ramp inside the 180-second read window and at most 45,000 GETs. Pool, replica,
-  generator resource budgets and stop conditions are unchanged. All 500 users
-  and the configured ramp must be verified; no automatic 1,000-user stage is
-  supported. See [the staged test and limits](browse-autoscaling.md#next-bounded-stage-500-paced-users).
+- **500-user attempt failed safely:** the first ramped run stopped after
+  40.795 seconds, with 338 users participating, 3,359 successful requests and
+  one HTTP 503. Two ready pods were still observed. Fresh follow-up checks
+  showed healthy applications and no backlog or active alerts; the Job is
+  retained. A read-only, Job-aligned pool diagnostic is prepared before
+  choosing a retry. The cause is not yet confirmed and no 500-user pass or
+  1,000-user stage is established. See [the record and diagnostics](browse-autoscaling.md#first-500-user-attempt-stopped-on-http-503).
 
 - **Complete autoscaling observer run passed:** v3 run `f807afdc2940`
   reported `BROWSE_AUTOSCALING_DRILL_OK`. All 250 users completed 21,129

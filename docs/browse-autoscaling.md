@@ -174,13 +174,55 @@ requires all 500 users, matching HTTP 200 counts, no request errors, verified
 60-second arrival ramp and 45,000-attempt cap, at least three ready pods
 observed under the HPA, then natural return to two ready pods and final health
 and database observations. It reports `BROWSE_AUTOSCALING_DRILL_OK` with
-`users: 500` and the distinct Job name. There is **no live 500-user result yet**.
+`users: 500` and the distinct Job name. The first live attempt stopped early,
+as recorded below; no 500-user pass has been established.
 
 On failure, inspect this Job and logs without starting another load. The
 observer attempts to stop only its own Job; the native 450-second deadline
 also bounds a disconnected generator. Once the load is terminal, use
 `python3 scripts/browse-autoscaling.py wait-idle` for read-only recovery.
 Do not delete previous Jobs or increase limits simply to obtain a pass.
+
+### First 500-user attempt stopped on HTTP 503
+
+Run `27651353c0d9`, Job `browse-users-500-autoscaling`, stopped at 40.795
+seconds. Of the planned 500 users, 338 had participated. There were 3,360
+attempts: 3,359 HTTP 200 and one HTTP 503. Observed latency was p50 137.564 ms,
+p95 240.005 ms, p99 276.534 ms and maximum 311.135 ms. These describe the
+truncated failed run, not a completed 500-user result. No inventory writes
+occurred. The observer still reported two desired and ready pods before stop.
+
+Follow-up inspection confirmed the Job Failed 0/1, a healthy active HPA at
+two current/desired replicas, demo availability 100 per event, and healthy
+Operations with no backlog or active alerts. HPA resize events in that
+inspection were from earlier activity, not this short attempt. No scale-up
+was observed in the supplied 500-user record.
+
+Traffic growing faster than reactive scale-up is a hypothesis to investigate,
+not a confirmed root cause. The original probe reported the HTTP status but
+did not retain its service error code. Future probes now record only an
+allowlisted first-failure code (`DATABASE_BUSY` or `DATABASE_UNAVAILABLE`),
+route and timing; no raw body or headers. Updating the source cannot recover
+the missing code from this retained Job's older mounted probe.
+
+Before changing thresholds, arrival pacing or pool capacity, collect this
+read-only diagnostic from Cloud Shell:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py diagnose-500
+```
+
+It requires the original Job to be terminal and matches its run ID to the
+stored result. It queries historical queue-full, timeout, closed-pool, borrow
+and connection-error counters, plus sampled healthy-target, occupancy, waiting
+and borrow-rate peaks. The window ends at that Job's terminal timestamp and
+includes its warmup and 60 seconds before its start. Prometheus `increase`
+values are extrapolated estimates; missing samples remain null, not zero.
+The command creates no Job, makes no configuration or SQL changes and does
+not replay traffic. `BROWSE_500_DIAGNOSTICS_OK` means capture succeeded, not
+that the load passed. Historical samples are retained for the collector's
+configured retention period. Review this evidence before selecting a retry.
 
 ## Failure or disconnect
 

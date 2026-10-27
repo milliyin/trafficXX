@@ -19,7 +19,7 @@ def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
                  'UNSUPPORTED_DRILL')
     ramp_seconds = 60 if users == 500 else 2
     stop, lock = threading.Event(), threading.Lock()
-    rows, failures, participants = [], Counter(), set()
+    rows, failures, participants, first_failure = [], Counter(), set(), []
     start = time.monotonic()
     deadline = start + duration
 
@@ -31,7 +31,7 @@ def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
                 return
             route = ('general', 'seated')[(index + iteration) % 2]
             began = time.monotonic()
-            status = None
+            status, body = None, None
             try:
                 status, body = http(URL + '/events/demo-' + route + '/availability', 'scaling-' + run_id)
                 read.validate_response('browse', route, status, body)
@@ -39,6 +39,13 @@ def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
             except Exception as error:
                 with lock:
                     failures[str(error) if isinstance(error, read.CheckFailed) else type(error).__name__] += 1
+                    if not first_failure:
+                        detail = body.get('detail') if isinstance(body, dict) else None
+                        code = detail.get('code') if isinstance(detail, dict) else None
+                        first_failure.append({'http_status': status, 'route': route,
+                            'service_error_code': code if code in ('DATABASE_BUSY', 'DATABASE_UNAVAILABLE') else None,
+                            'phase_elapsed_seconds': round(time.monotonic() - start, 3),
+                            'latency_ms': round((time.monotonic() - began) * 1000, 3)})
                 stop.set()
             finally:
                 with lock:
@@ -54,6 +61,7 @@ def run(run_id, *, duration=180, users=250, think=2, http=read.read_url):
         'scheduled_duration_seconds': duration, 'start_ramp_seconds': ramp_seconds,
         'think_seconds': think, 'max_workload_attempts': users * 90,
         'attempts': len(rows), 'status_counts': dict(Counter(str(r[0]) for r in rows)), 'errors': dict(failures),
+        'first_failure': first_failure[0] if first_failure else None,
         'latency_ms': read.percentiles([r[1] for r in rows]) if rows else {},
         'elapsed_seconds': round(time.monotonic() - start, 3), 'inventory_writes': False,
         'latency_slo_tested': False}

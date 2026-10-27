@@ -347,6 +347,65 @@ def wait_idle():
          note='Post-run recovery only; not a replacement for the original continuous resource audit.')
 
 
+def diagnostic_window(job):
+    """Use this Job's timestamps, never an unaligned recent traffic window."""
+    conditions = job.get('status', {}).get('conditions', [])
+    terminal = [r for r in conditions if r.get('status') == 'True' and r.get('type') in ('Complete', 'Failed')]
+    require(len(terminal) == 1, 'DIAGNOSTIC_JOB_NOT_TERMINAL')
+    start = datetime.fromisoformat(job['status']['startTime'].replace('Z', '+00:00'))
+    end = datetime.fromisoformat(terminal[0]['lastTransitionTime'].replace('Z', '+00:00'))
+    require(start.tzinfo is not None and end.tzinfo is not None and 0 <= (end - start).total_seconds() <= 900,
+            'UNEXPECTED_DIAGNOSTIC_WINDOW')
+    return start, end, max(60, math.ceil((end - start).total_seconds()) + 60)
+
+
+def optional_scalar(query, expression):
+    rows = query(expression)
+    if not rows:
+        return None
+    require(len(rows) == 1, 'UNEXPECTED_DIAGNOSTIC_SERIES')
+    value = float(rows[0]['value'][1])
+    require(math.isfinite(value) and value >= 0, 'INVALID_DIAGNOSTIC_SAMPLE')
+    return round(value, 6)
+
+
+def diagnose_500():
+    """Read-only historical evidence; no load, configuration or SQL mutation."""
+    trial.context()
+    trial.no_active_load()
+    name = 'browse-users-500-autoscaling'
+    job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
+    start, end, window = diagnostic_window(job)
+    logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
+    outcome = json.loads(logs.splitlines()[-1])
+    require(outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK')
+            and outcome.get('users') == 500 and outcome.get('run_id') ==
+            job['metadata'].get('labels', {}).get('trafficxx.io/run-id'), 'DIAGNOSTIC_RUN_MISMATCH')
+    when = str(int(end.timestamp()))
+    with prometheus() as query:
+        counters = {}
+        for field in ('queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
+                      'borrow_errors_total', 'connection_errors_total', 'connections_lost_total', 'bad_returns_total'):
+            counters[field] = optional_scalar(query, 'sum(increase(' + M + field + F +
+                '[' + str(window) + 's] @ ' + when + '))')
+        peaks = {}
+        for label, expression in (
+                ('healthy_targets', 'sum(up' + F + ')'),
+                ('waiting', 'sum(' + M + 'waiting' + F + ')'),
+                ('busy_or_opening', 'sum(clamp_min(' + M + 'size' + F + ' - ' + M + 'available' + F + ',0))'),
+                ('borrow_rate', 'sum(rate(' + M + 'borrows_total' + F + '[1m]))')):
+            peaks[label] = optional_scalar(query, 'max_over_time((' + expression + ')[' +
+                str(window) + 's:15s] @ ' + when + ')')
+    current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
+    require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
+    emit('BROWSE_500_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
+         job_start_utc=start.isoformat(), job_terminal_utc=end.isoformat(),
+         query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
+         workload=outcome, inventory_writes=False,
+         note='Read-only capture, not a load pass. Window includes Job warmup and 60 seconds before start; '
+              'Prometheus increases are extrapolated estimates, peaks are sampled, missing data is null.')
+
+
 def validate_load(outcome, run_id, users, released):
     require(outcome.get('result') == 'BROWSE_SCALING_LOAD_OK' and outcome.get('run_id') == run_id,
             'LOAD_EVIDENCE_MISSING')
@@ -502,7 +561,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle'))
+    parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500'))
     parser.add_argument('--users', type=int, choices=(250, 500), default=250,
                         help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -523,6 +582,8 @@ def main():
             drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run, users=args.users)
         elif action == 'wait-idle':
             wait_idle()
+        elif action == 'diagnose-500':
+            diagnose_500()
         else:
             trial.context()
             with prometheus() as query:

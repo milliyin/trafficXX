@@ -37,6 +37,41 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_historical_diagnostics_are_read_only_and_job_aligned(self):
+        job = {'metadata': {'uid': 'owned', 'labels': {'trafficxx.io/run-id': 'a' * 12}},
+            'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                {'type': 'Failed', 'status': 'True', 'lastTransitionTime': '1970-01-01T00:03:00Z'}]}}
+        outcome = {'result': 'BROWSE_SCALING_LOAD_FAILED', 'run_id': 'a' * 12, 'users': 500}
+        expressions = []
+        def query(expression):
+            expressions.append(expression)
+            return [{'value': [180, '1.25']}] if 'queue_full' in expression else []
+        def kube(*args):
+            self.assertIn(args[0], ('get', 'logs'))
+            return json.dumps(outcome if args[0] == 'logs' else job)
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'prometheus') as connection, redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = query
+            scaling.diagnose_500()
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['query_window_seconds'], 180)
+        self.assertEqual(row['counter_increases']['queue_full_total'], 1.25)
+        self.assertIsNone(row['counter_increases']['acquire_timeouts_total'])
+        self.assertEqual(len(expressions), 11)
+        self.assertTrue(all('@ 180' in expression for expression in expressions))
+
+    def test_historical_diagnostic_refuses_active_or_unbounded_jobs(self):
+        with self.assertRaisesRegex(ValueError, 'NOT_TERMINAL'):
+            scaling.diagnostic_window({'status': {}})
+        job = {'status': {'startTime': '2026-10-27T10:00:00Z', 'conditions': [
+            {'type': 'Failed', 'status': 'True', 'lastTransitionTime': '2026-10-27T11:00:00Z'}]}}
+        with self.assertRaisesRegex(ValueError, 'UNEXPECTED_DIAGNOSTIC_WINDOW'):
+            scaling.diagnostic_window(job)
+        self.assertIsNone(scaling.optional_scalar(lambda _: [], 'query'))
+        with self.assertRaises(ValueError):
+            scaling.optional_scalar(lambda _: [{'value': [0, 'NaN']}], 'query')
+
     def test_preflight_waits_for_discovery_but_requires_the_same_strict_check(self):
         ready = app()
         checking = Mock(side_effect=[ValueError('DISCOVERY_NOT_CONVERGED'),
@@ -306,6 +341,16 @@ class Scaling(unittest.TestCase):
         self.assertEqual(result['result'], 'BROWSE_SCALING_LOAD_FAILED')
         self.assertIn('UNEXPECTED_HTTP_STATUS_503', result['errors'])
         self.assertLessEqual(result['attempts'], 250)
+
+    def test_first_failure_records_only_allowlisted_code_not_raw_payload(self):
+        for code, expected in (('DATABASE_BUSY', 'DATABASE_BUSY'), ('private-value', None)):
+            http = Mock(return_value=(503, {'detail': {'code': code, 'extra': 'private-payload'}}))
+            with redirect_stdout(io.StringIO()):
+                row = probe.run('a' * 12, users=500, http=http)
+            self.assertEqual(row['first_failure']['service_error_code'], expected)
+            self.assertEqual(row['first_failure']['http_status'], 503)
+            self.assertNotIn('private-value', json.dumps(row))
+            self.assertNotIn('private-payload', json.dumps(row))
 
     def test_manifest_keeps_generator_limits_and_no_sql_identity(self):
         source = (ROOT / 'scripts/browse-autoscaling.py').read_text()
