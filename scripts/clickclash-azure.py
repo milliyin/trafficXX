@@ -18,19 +18,65 @@ SERVER = REGISTRY + '.azurecr.io'
 SUBSCRIPTION = '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'
 
 
+class CommandFailure(RuntimeError):
+    def __init__(self, operation, exit_code=None, timed_out=False):
+        super().__init__('Release command failed')
+        self.operation = operation
+        self.exit_code = exit_code
+        self.timed_out = timed_out
+
+
+def operation(args):
+    # Fixed labels only: never print arbitrary argv, command input or error text.
+    for prefix, label in (
+        (['az', 'account', 'show'], 'azure_account'),
+        (['az', 'acr', 'show'], 'registry_lookup'),
+        (['az', 'acr', 'build'], 'acr_build'),
+        (['az', 'acr', 'repository', 'show'], 'image_digest_lookup'),
+        (['az', 'acr', 'task', 'list-runs'], 'registry_run_history'),
+        (['az', 'network', 'public-ip', 'show'], 'public_ip_lookup'),
+        (['az', 'identity', 'show'], 'identity_lookup'),
+        (['kubectl', 'config', 'current-context'], 'kubernetes_context'),
+        (['kubectl', 'apply'], 'apply_manifests'),
+        (['kubectl', 'rollout', 'status'], 'deployment_rollout'),
+    ):
+        if args[:len(prefix)] == prefix:
+            return label
+    return 'release_command'
+
+
 def call(args, payload=None):
-    result = subprocess.run(args, input=payload, text=True, capture_output=True, timeout=900)
+    label = operation(args)
+    try:
+        result = subprocess.run(args, input=payload, text=True, capture_output=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        raise CommandFailure(label, timed_out=True) from None
+    except FileNotFoundError:
+        raise CommandFailure(label, exit_code=127) from None
     if result.returncode:
-        # Azure/kubectl error payloads can contain credentials; expose operation only.
-        raise RuntimeError('Command failed: ' + args[0] + ' ' + args[1])
+        raise CommandFailure(label, exit_code=result.returncode)
     return result.stdout.strip()
 
 
-def context():
+def context(require_cluster=True):
     if call(['az', 'account', 'show', '--query', 'id', '-o', 'tsv']) != SUBSCRIPTION:
         raise ValueError('Select the trafficXX sponsorship subscription')
-    if call(['kubectl', 'config', 'current-context']) != 'trafficxx-lab-aks':
+    if require_cluster and call(['kubectl', 'config', 'current-context']) != 'trafficxx-lab-aks':
         raise ValueError('Select trafficxx-lab-aks')
+
+
+def failure_report(error):
+    result = {'result': 'CLICKCLASH_RELEASE_FAILED', 'error_type': type(error).__name__,
+              'note': 'No credential values or raw command errors are printed. No existing services, credentials or scores are reset.'}
+    if isinstance(error, CommandFailure):
+        result.update(command_operation=error.operation, command_exit_code=error.exit_code,
+                      command_timed_out=error.timed_out)
+    elif isinstance(error, ValueError):
+        # Only these exact locally defined preflight failures are public.
+        checks = {'Select the trafficXX sponsorship subscription': 'WRONG_SUBSCRIPTION',
+                  'Select trafficxx-lab-aks': 'WRONG_KUBERNETES_CONTEXT'}
+        result['check'] = checks.get(str(error), 'RELEASE_VALIDATION_FAILED')
+    return result
 
 
 def metadata():
@@ -178,9 +224,18 @@ def deployment(host, address, identity, image):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['build', 'prepare', 'deploy', 'check'])
+    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'deploy', 'check'])
     args = parser.parse_args()
-    context()
+    context(require_cluster=args.action not in ('doctor', 'build'))
+    if args.action == 'doctor':
+        registry = call(['az', 'acr', 'show', '--name', REGISTRY, '--query', 'loginServer', '-o', 'tsv'])
+        if registry != SERVER:
+            raise ValueError('Unexpected container registry')
+        runs = json.loads(call(['az', 'acr', 'task', 'list-runs', '--registry', REGISTRY,
+                                '--query', '[:3].{run_id:runId,status:status,created_at:createTime}', '-o', 'json']))
+        print(json.dumps({'result': 'CLICKCLASH_BUILD_PREFLIGHT_OK', 'registry': registry,
+                          'kubernetes_context_required_for_build': False, 'recent_builds': runs, 'read_only': True}))
+        return
     if args.action == 'build':
         tag = 'clickclash-' + time.strftime('%Y%m%d%H%M%S', time.gmtime())
         call(['az', 'acr', 'build', '--registry', REGISTRY, '--image', 'trafficxx:' + tag, '--file', 'Dockerfile.clickclash', str(ROOT)])
@@ -225,6 +280,5 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as error:
-        print(json.dumps({'result': 'CLICKCLASH_RELEASE_FAILED', 'error_type': type(error).__name__,
-                          'note': 'Inspect deployment readiness and the reviewed operation. No existing services, credentials or scores are reset.'}))
+        print(json.dumps(failure_report(error)))
         sys.exit(1)

@@ -123,6 +123,14 @@ git pull --ff-only origin main
 python3 scripts/clickclash-azure.py build
 ```
 
+If the helper reports a failure, pull the latest code and run
+`python3 scripts/clickclash-azure.py doctor`. It checks the subscription and
+registry and lists recent build statuses without starting a build or requiring
+a Kubernetes context. Failures identify a fixed operation name, exit code and
+timeout flag without exposing raw command output. Building an image does not
+require AKS credentials; preparing/deploying/checking still require the exact
+lab cluster context.
+
 Persist `enable_clickclash = true` in your existing private foundation tfvars.
 Keep the existing KEDA/Grafana settings. Review a Terraform plan before apply;
 the opt-in creates a ClickClash managed identity/federation and public IP with
