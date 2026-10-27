@@ -1,1 +1,29 @@
-{"checked_at":null,"started_at":null,"components":[],"history":[],"note":"External monitoring has not started. No uptime history is claimed."}
+{
+  "origin": "https://clickclash-e8708a85.f4c9crh8e7adc8bw.eastus.sysgen.cloudapp.azure.com",
+  "started_at": "2026-10-27T20:44:19.751112+00:00",
+  "checked_at": "2026-10-27T20:44:19.751112+00:00",
+  "components": [
+    {
+      "name": "Website",
+      "ok": true,
+      "latency_ms": 33.0
+    },
+    {
+      "name": "Click API readiness",
+      "ok": true,
+      "latency_ms": 144.6
+    },
+    {
+      "name": "Leaderboard",
+      "ok": true,
+      "latency_ms": 212.7
+    }
+  ],
+  "history": [
+    {
+      "checked_at": "2026-10-27T20:44:19.751112+00:00",
+      "ok": true
+    }
+  ],
+  "note": "Actual functional probe results; missing time is not assumed healthy. No authenticated login or click-write availability claim."
+}
