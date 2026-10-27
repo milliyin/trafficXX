@@ -10,16 +10,23 @@ or deployed yet. Real player records will be durable application data.
 A small responsive React and TypeScript website offers unlimited-duration
 clicking, guest play, optional email sign-in, personal scores and a shared
 leaderboard. Both guests and accounts can rank. There is no countdown or round
-time limit. Cumulative scores are the proposed default; reset or season rules
-must be agreed before implementation. The server awards points only for
+time limit. Scores accumulate as all-time totals with no scheduled resets.
+The server awards points only for
 accepted clicks. The interface distinguishes pending requests, accepted
 scores, rate limiting and temporary unavailability.
 
 The public leaderboard is a separate page from the clicking game. Each entry
 shows the player's public nickname, accepted click total and optional bio/ad
-beside it, visible to visitors. Ad format, external links, editing permissions
-and moderation rules remain to be decided; do not assume arbitrary HTML,
-scripts or third-party ad embeds are permitted.
+beside it, visible to visitors. The optional bio/ad supports short text, one
+website link and an image. New and edited content appears immediately without
+prior approval; the operator can hide or remove it. Profile editing requires
+the owning guest session or authenticated account. Arbitrary HTML, scripts and
+third-party ad embeds are outside this format.
+
+Image uploads require bounded file sizes and dimensions, validated image
+formats and safe delivery as non-executable content. Links require validated
+web URL schemes. Reporting and operator removal controls must be available
+for publicly displayed content; hiding an ad does not reset a player's score.
 
 The click itself performs the scoring transaction. It does not call an
 unrelated ticket-availability endpoint merely to manufacture traffic. Existing
@@ -144,7 +151,7 @@ of a user count or latency guarantee.
 | Stage | Concrete outcome |
 | --- | --- |
 | 1. Durable scoring | Schema, transactional receipts/scores, guest sessions and integration checks for duplicates, concurrency, operator pause and restart survival. |
-| 2. Player experience | React/TypeScript, separate unlimited-duration game and public leaderboard pages, server-confirmed scores, profile bio/ads and clear overload/retry behavior. |
+| 2. Player experience | React/TypeScript, separate unlimited-duration game and public leaderboard pages, persistent all-time scores, immediate text/link/image bio/ads with operator hide/remove controls and clear overload/retry behavior. |
 | 3. Sign-in | Email and generated memorable passphrases, one-time credential display, no recovery, guest linking, session lifecycle, ownership checks and protected operator actions. |
 | 4. Public release | Reviewed HTTPS gateway, scoped database identity, shared rate limits, backups/restore evidence and a small real-user launch. |
 | 5. Status and operation | Independent probes/history, public status and incident page, tested operator notifications. |
