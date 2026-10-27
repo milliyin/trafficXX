@@ -131,6 +131,27 @@ or drill result has been supplied yet.
 
 ## Failure or disconnect
 
+### 27 October: corrected-observer verification prepared
+
+Fresh user-run checks passed: two Browse replicas, eight connections per pod,
+zero pool pressure, demo availability 100 per event, and healthy Operations
+with no backlog or active alerts. To verify the corrected observer through
+one complete run while preserving both previous Jobs:
+
+```bash
+git pull --ff-only origin main
+python3 scripts/browse-autoscaling.py drill --verification-run
+```
+
+This selects the distinct Job `browse-users-250-autoscaling-v3`. It uses the
+same 250 paced users, 180-second workload, two-second pauses, 22,500 GET cap,
+resource budgets, metric guards, scaling bounds and natural downscale checks.
+It does not rebuild or redeploy the app, change pool policy or increase load.
+Keep Cloud Shell running through `BROWSE_AUTOSCALING_DRILL_OK`; allow 15-20
+minutes for resource sampling, workload and downscale stabilization. No live
+v3 result has been supplied yet. Sampling still cannot establish continuous
+resource peaks or a production latency SLO.
+
 The first live drill, run `1ec4a7395615`, installed the managed addon and
 observed two, three, then four ready Browse pods. HPA events independently
 confirmed both resizes. The observer stopped on `HPA_METRIC_NOT_ACTIVE`;

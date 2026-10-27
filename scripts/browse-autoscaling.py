@@ -345,8 +345,9 @@ def wait_idle():
          note='Post-run recovery only; not a replacement for the original continuous resource audit.')
 
 
-def drill(*, retry_metric_gap=False):
-    job_name = JOB + '-v2' if retry_metric_gap else JOB
+def drill(*, retry_metric_gap=False, verification_run=False):
+    require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
+    job_name = JOB + ('-v3' if verification_run else '-v2' if retry_metric_gap else '')
     trial.context()
     trial.no_active_load()
     require(not base.kube('get', 'job', job_name, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'),
@@ -357,7 +358,7 @@ def drill(*, retry_metric_gap=False):
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
         app = wait_baseline(query)
-        if retry_metric_gap and app['spec']['replicas'] != 2:
+        if (retry_metric_gap or verification_run) and app['spec']['replicas'] != 2:
             emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
             app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
@@ -470,7 +471,7 @@ def drill(*, retry_metric_gap=False):
             trial.health()
             database_pressure()
             require(trial.database_metrics(start), 'DATABASE_METRIC_SAMPLES_UNAVAILABLE')
-            emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, ready_replicas_before=2,
+            emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, ready_replicas_before=2,
                  peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
                  resources=resource_watch.summary(),
                  hpa_metric_observations=gaps,
@@ -486,17 +487,20 @@ def drill(*, retry_metric_gap=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle'))
-    parser.add_argument('--retry-metric-gap', action='store_true',
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--retry-metric-gap', action='store_true',
                         help='Use a distinct v2 Job, preserving the original stopped drill.')
+    modes.add_argument('--verification-run', action='store_true',
+                       help='Use a distinct v3 Job to verify the corrected observer end to end.')
     args = parser.parse_args()
     action = args.action
-    if args.retry_metric_gap and action != 'drill':
-        parser.error('--retry-metric-gap requires drill')
+    if (args.retry_metric_gap or args.verification_run) and action != 'drill':
+        parser.error('drill modes require the drill action')
     try:
         if action == 'deploy':
             deploy()
         elif action == 'drill':
-            drill(retry_metric_gap=args.retry_metric_gap)
+            drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run)
         elif action == 'wait-idle':
             wait_idle()
         else:

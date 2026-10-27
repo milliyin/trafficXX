@@ -236,10 +236,11 @@ class Scaling(unittest.TestCase):
         self.assertIn('peak >= 3', source)
 
     def test_drill_pass_requires_real_scale_up_and_natural_downscale(self):
-        for scales, expected_error, retry in (([3, 3, 3, 2], None, False),
-                ([2, 2, 2], 'NATURAL_SCALE_UP', False), ([3, 3, 3, 2], None, True)):
+        for scales, expected_error, retry, verification in (([3, 3, 3, 2], None, False, False),
+                ([2, 2, 2], 'NATURAL_SCALE_UP', False, False), ([3, 3, 3, 2], None, True, False),
+                ([3, 3, 3, 2], None, False, True)):
             initial = app()
-            job_name = scaling.JOB + '-v2' if retry else scaling.JOB
+            job_name = scaling.JOB + ('-v3' if verification else '-v2' if retry else '')
             pod_names = ['browse-a', 'browse-b', job_name + '-pod']
             pods = [{'metadata': {'name': name, 'labels': ({'job-name': scaling.JOB} if i == 2 else
                     {'app.kubernetes.io/name': 'trafficxx-browse'})}} for i, name in enumerate(pod_names)]
@@ -293,17 +294,23 @@ class Scaling(unittest.TestCase):
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if expected_error:
                     with self.assertRaisesRegex(ValueError, expected_error):
-                        scaling.drill(retry_metric_gap=retry)
+                        scaling.drill(retry_metric_gap=retry, verification_run=verification)
                 else:
-                    scaling.drill(retry_metric_gap=retry)
+                    scaling.drill(retry_metric_gap=retry, verification_run=verification)
                     self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
-                    if retry:
+                    if retry or verification:
                         self.assertIn(job_name, output.getvalue())
                     # The third poll is already Job Complete. Live generator
                     # metrics must not be read after that terminal evidence.
                     with self.assertRaises(StopIteration):
                         next(states)
                     self.assertIsNotNone(next(dates))
+
+    def test_conflicting_run_modes_fail_before_cloud_access(self):
+        with patch.object(scaling.trial, 'context') as context:
+            with self.assertRaisesRegex(ValueError, 'CONFLICTING_DRILL_MODES'):
+                scaling.drill(retry_metric_gap=True, verification_run=True)
+            context.assert_not_called()
 
 
 if __name__ == '__main__':
