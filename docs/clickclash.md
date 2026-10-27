@@ -59,6 +59,9 @@ it does not impose a server-side individual click rate limit.
 Profile pictures are resized in the browser before upload (PNG, JPEG or WebP,
 up to 20 MB input). The backend still validates and re-encodes the bounded
 upload, strips metadata and enforces its shared image storage budget.
+The leaderboard displays the image as a full-width banner in the promotion
+column. Recommended artwork is **1200 × 200 pixels (6:1)**. The account preview
+uses the same ratio; other ratios fit with padding rather than being cropped.
 
 Signup/login have separate shared and IP-based limits, plus bounded Argon2
 concurrency. The gateway overwrites the client-IP header and the application

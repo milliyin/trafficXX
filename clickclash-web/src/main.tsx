@@ -386,12 +386,12 @@ function App() {
                       />
                     )}
                     <div>
-                      <p>
+                      {(!entry.image_url || entry.bio) && <p>
                         {entry.bio ||
                           (entry.ad_hidden
                             ? "Promotion hidden by moderator."
                             : "Just here for the glory.")}
-                      </p>
+                      </p>}
                       {entry.website && (
                         <span className="visit-link">
                           Visit my corner ↗
@@ -792,7 +792,7 @@ function Account({
             )}
           </div>
           <div className="form-card">
-            <h2>A picture for your pitch</h2>
+            <h2>Your leaderboard banner</h2>
             {me.image_url && (
               <img
                 className="profile-image"
@@ -801,7 +801,7 @@ function Account({
               />
             )}
             <label>
-              Choose an image
+              Choose a banner image
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
@@ -826,8 +826,10 @@ function Account({
               />
             </label>
             <p className="form-note">
-              PNG, JPEG or WebP up to 20 MB. We resize your picture before
-              uploading and remove metadata. {busy && 'Saving your changes…'}
+              Recommended: <strong>1200 × 200 pixels (6:1 ratio)</strong>.
+              PNG, JPEG or WebP, up to 20 MB. Other ratios fit with padding;
+              your image is not cropped. We resize before uploading and remove
+              metadata. {busy && 'Saving your changes…'}
             </p>
             {me.image_url && (
               <button

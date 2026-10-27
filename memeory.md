@@ -1151,3 +1151,9 @@ Queue backlog monitoring detects delayed messages that reached the queue. It can
 
 - User approved name/image/promotion linking inspired by outbid.lol. Added semantic anchors opening each player's saved website in a new tab with noopener/noreferrer/ugc/sponsored/nofollow. Report button remains outside links. No URL or hidden promotion renders an ordinary non-interactive container. Rank and score remain separate.
 - Production build passed. Expanded local real-browser flow verifies name, image and bio each open the expected website; external test navigation is intercepted so tests do not depend on third-party availability. The new links required narrowing the existing account-navigation test selector. App change still requires CloudShell build/deploy/check after source push.
+
+## Full-width leaderboard banners (28 October)
+
+- User marked the promotion column and requested banner display plus accepted dimensions/ratio guidance. Changed tiny thumbnail to full-width6:1 banner, responsive on desktop/mobile; matching account preview. Uses object-fit:contain with padding, never crops existing uploads. Bio/link remain below banner; no-image and moderated fallbacks preserved.
+- Upload copy: recommended1200x200px(6:1), PNG/JPEG/WebP up to20MB input. Existing browser scaling960x640 bounding box and backend validation/storage unchanged; recommended size is not an exact-size restriction.
+- Build passed; both Playwright tests passed including assertion banner fills promotion width at6:1, upload/image visibility, clickable image/name/bio, report separate and mobile no horizontal overflow. NextCloudShellpull/build/deploy/check required to publish app change.

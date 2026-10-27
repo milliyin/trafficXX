@@ -68,7 +68,8 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
     canvas.getContext('2d')!.fillRect(0, 0, 3000, 2200);
     return canvas.toDataURL('image/png').split(',')[1];
   });
-  await page.getByLabel('Choose an image').setInputFiles({
+  await expect(page.getByText('1200 × 200 pixels (6:1 ratio)')).toBeVisible();
+  await page.getByLabel('Choose a banner image').setInputFiles({
     name: 'large-picture.png', mimeType: 'image/png', buffer: Buffer.from(largePicture, 'base64'),
   });
   await expect(page.getByAltText('Your promotion')).toBeVisible();
@@ -78,6 +79,11 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
   await expect(page.locator('.ad-cell img').first()).toBeVisible();
   const playerRow = page.locator('.board-row').filter({hasText: nickname});
   const promotion = playerRow.locator('.ad-promotion');
+  const bannerBox = await promotion.locator('img').boundingBox();
+  const promotionBox = await promotion.boundingBox();
+  expect(bannerBox!.width).toBeGreaterThan(200);
+  expect(bannerBox!.width / bannerBox!.height).toBeCloseTo(6, 1);
+  expect(bannerBox!.width).toBeCloseTo(promotionBox!.width, 0);
   await expect(promotion).toHaveAttribute('href', 'https://example.com/');
   await expect(promotion).toHaveAttribute('target', '_blank');
   await expect(promotion).toHaveAttribute('rel', /noopener/);
