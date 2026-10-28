@@ -16,6 +16,72 @@ def load():
 
 
 class ReleaseDiagnostics(unittest.TestCase):
+    def test_domain_switch_reuses_running_image_and_redirects_old_host(self):
+        module = load()
+        azure_host = 'clickclash-e8708a85.example.cloudapp.azure.com'
+        image = module.SERVER + '/trafficxx@sha256:' + 'b' * 64
+        application = {'spec': {'template': {'spec': {'containers': [{
+            'name': 'app', 'image': image,
+            'env': [{'name': 'CLICKCLASH_ORIGIN', 'value': 'https://' + azure_host}]}]}}}}
+        applied = []
+        def fake(args, payload=None):
+            if args[:2] == ['kubectl', 'apply']:
+                applied.extend(json.loads(payload)['items'])
+            return ''
+        with patch.object(module.sys, 'argv', ['release', 'custom-domain']), \
+             patch.object(module, 'context'), patch.object(module, 'metadata', return_value=(azure_host, '20.120.14.226', {'clientId':'id','tenantId':'tenant'})), \
+             patch.object(module, 'current_application', return_value=application), \
+             patch.object(module, 'storage_preflight'), patch.object(module, 'domain_preflight'), \
+             patch.object(module, 'call', side_effect=fake), patch('sys.stdout', io.StringIO()):
+            module.main()
+        app = next(item for item in applied if item['kind']=='Deployment' and item['metadata']['name']=='clickclash')
+        container = app['spec']['template']['spec']['containers'][0]
+        self.assertEqual(container['image'], image)
+        self.assertIn({'name':'CLICKCLASH_ORIGIN','value':'https://clickclash.milliyin.dev'}, container['env'])
+        caddy = next(item['data']['Caddyfile'] for item in applied if item['kind']=='ConfigMap')
+        self.assertIn('redir https://clickclash.milliyin.dev{uri} 308', caddy)
+        self.assertIn('http://clickclash.milliyin.dev, http://' + azure_host, caddy)
+        gateway = next(item for item in applied if item['kind']=='Deployment' and item['metadata']['name']=='clickclash-gateway')
+        self.assertIn('clickclash/caddy-config-sha256', gateway['spec']['template']['metadata']['annotations'])
+        self.assertEqual(module.active_hostname(app, azure_host), module.CUSTOM_DOMAIN)
+
+    def test_custom_domain_requires_exact_public_ip_and_no_stray_ipv6(self):
+        module = load()
+        records = [(2,1,6,'',('20.120.14.226',443))]
+        with patch.object(module.socket, 'getaddrinfo', return_value=records):
+            module.domain_preflight('20.120.14.226')
+        for invalid in ([], [(2,1,6,'',('1.2.3.4',443))], records+[(10,1,6,'',('::1',443,0,0))]):
+            with patch.object(module.socket, 'getaddrinfo', return_value=invalid):
+                with self.assertRaises(ValueError):
+                    module.domain_preflight('20.120.14.226')
+
+    def test_only_known_origins_can_be_preserved(self):
+        module = load()
+        app = {'spec': {'template': {'spec': {'containers': [{'name':'app','env':[{'name':'CLICKCLASH_ORIGIN','value':'https://evil.test'}]}]}}}}
+        with self.assertRaises(ValueError):
+            module.active_hostname(app, 'clickclash.example.cloudapp.azure.com')
+
+    def test_public_check_retries_connection_errors_without_skipping_tls(self):
+        module = load()
+        import urllib.error
+        from unittest.mock import MagicMock
+        host = module.CUSTOM_DOMAIN
+        responses = []
+        for path, body in [('/', b'ClickClash'), ('/readyz', b'{"readiness":"ready"}'), ('/api/leaderboard', b'{"entries":[]}')]:
+            response = MagicMock()
+            response.status = 200
+            response.geturl.return_value = 'https://' + host + path
+            response.read.return_value = body
+            manager = MagicMock()
+            manager.__enter__.return_value = response
+            responses.append(manager)
+        with patch.object(module.urllib.request, 'urlopen', side_effect=[urllib.error.URLError('fixture'), *responses]) as opened, \
+             patch.object(module.time, 'sleep') as sleep, patch('sys.stdout', io.StringIO()):
+            module.check_public_routes(host)
+        sleep.assert_called_once_with(5)
+        self.assertEqual(opened.call_count, 4)
+        self.assertTrue(all(set(entry.kwargs) == {'timeout'} for entry in opened.call_args_list))
+
     def test_stage_command_applies_only_private_objects(self):
         module = load()
         output = io.StringIO()

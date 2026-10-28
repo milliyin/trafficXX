@@ -224,6 +224,33 @@ require `CLICKCLASH_HTTPS_OK`, then test browser signup, a confirmed click,
 profile editing and login through the returned HTTPS URL. Live cloud and public
 browser checks remain pending; local tests do not replace them.
 
+## Custom domain on AKS
+
+ClickClash uses an AKS LoadBalancer and Caddy, so App Service's custom-domain
+settings are not used. In Cloudflare, create a DNS-only A record named
+`clickclash` pointing to `20.120.14.226`. Remove any conflicting AAAA record.
+The resulting hostname is `clickclash.milliyin.dev`.
+
+After reconnecting the Cloud Shell Kubernetes context, run:
+
+```bash
+python3 scripts/clickclash-azure.py custom-domain &&
+python3 scripts/clickclash-azure.py check
+```
+
+This reuses the currently deployed digest, updates Caddy and the exact allowed
+application Origin, and redirects the original Azure hostname to the custom
+domain. DNS is checked before applying. Caddy configuration changes trigger
+its gateway restart; certificate issuance is still separate from pod readiness.
+Later ordinary deploy/check commands retain the configured custom domain.
+The checker waits briefly for a trusted certificate and never disables TLS
+validation. Scores/accounts/banners are not reset. Sign in again on the custom
+domain using the saved passphrase; cookies from the old host do not transfer.
+
+The external status workflow's `CLICKCLASH_PUBLIC_URL` also needs to point to
+`https://clickclash.milliyin.dev` when monitoring is resumed. Its probes reject
+redirects. Monitoring remains deferred at the user's request.
+
 ## Independent status monitoring
 
 After the public URL passes HTTPS checks, set GitHub repository variable

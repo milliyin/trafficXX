@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 import time
+import socket
 import urllib.request
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[1]
 RG = 'trafficxx-lab-rg'
@@ -16,6 +18,7 @@ NS = 'trafficxx'
 REGISTRY = 'trafficxxacre8708a85'
 SERVER = REGISTRY + '.azurecr.io'
 SUBSCRIPTION = '35aaf788-f4cf-40c3-9ea5-bc8fe8708a85'
+CUSTOM_DOMAIN = 'clickclash.milliyin.dev'
 
 
 class CommandFailure(RuntimeError):
@@ -75,7 +78,8 @@ def failure_report(error):
     elif isinstance(error, ValueError):
         # Only these exact locally defined preflight failures are public.
         checks = {'Select the trafficXX sponsorship subscription': 'WRONG_SUBSCRIPTION',
-                  'Select trafficxx-lab-aks': 'WRONG_KUBERNETES_CONTEXT'}
+                  'Select trafficxx-lab-aks': 'WRONG_KUBERNETES_CONTEXT',
+                  'CUSTOM_DOMAIN_DNS_NOT_READY': 'CUSTOM_DOMAIN_DNS_NOT_READY'}
         result['check'] = checks.get(str(error), 'RELEASE_VALIDATION_FAILED')
     return result
 
@@ -167,7 +171,7 @@ SELECT 'CLICKCLASH_SCHEMA_AND_GRANTS_OK';
 """
 
 
-def deployment(host, address, identity, image):
+def deployment(host, address, identity, image, redirect_host=None):
     labels = {'app.kubernetes.io/name': 'clickclash'}
     security = {'runAsNonRoot': True, 'runAsUser': 10001, 'runAsGroup': 10001, 'seccompProfile': {'type': 'RuntimeDefault'}}
     container_security = {'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}
@@ -212,6 +216,14 @@ def deployment(host, address, identity, image):
   respond /healthz "ok" 200
 }}
 """
+    if redirect_host and redirect_host != host:
+        caddy += f"""{redirect_host} {{
+  redir https://{host}{{uri}} 308
+}}
+http://{host}, http://{redirect_host} {{
+  redir https://{host}{{uri}} 308
+}}
+"""
     objects.append({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'clickclash-gateway', 'namespace': NS}, 'data': {'Caddyfile': caddy}})
     mounts = [{'name': 'certificates', 'mountPath': '/data'}, {'name': 'config', 'mountPath': '/etc/caddy', 'readOnly': True},
               {'name': 'runtime', 'mountPath': '/runtime'}, {'name': 'temp', 'mountPath': '/tmp'}, {'name': 'runtime-config', 'mountPath': '/config'}]
@@ -221,7 +233,8 @@ def deployment(host, address, identity, image):
     objects.extend([
         {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'metadata': {'name': 'clickclash-gateway', 'namespace': NS}, 'spec': {
           'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': {'app': 'clickclash-gateway'}}, 'template': {
-            'metadata': {'labels': {'app': 'clickclash-gateway'}}, 'spec': {
+            'metadata': {'labels': {'app': 'clickclash-gateway'},
+                         'annotations': {'clickclash/caddy-config-sha256': hashlib.sha256(caddy.encode()).hexdigest()}}, 'spec': {
               'automountServiceAccountToken': False, 'nodeSelector': {'agentpool': 'apps'}, 'securityContext': {**security, 'fsGroup': 10001},
               'volumes': [{'name': 'certificates', 'persistentVolumeClaim': {'claimName': 'clickclash-certificates'}},
                 {'name': 'config', 'configMap': {'name': 'clickclash-gateway'}}, {'name': 'runtime', 'emptyDir': {'sizeLimit': '64Mi'}},
@@ -262,9 +275,56 @@ def storage_preflight():
         raise ValueError('Banner container must be private')
 
 
+def current_application():
+    value = call(['kubectl', 'get', 'deployment', 'clickclash', '-n', NS, '--ignore-not-found', '-o', 'json'])
+    return json.loads(value) if value else None
+
+
+def active_hostname(application, azure_host):
+    if not application:
+        return azure_host
+    containers = application['spec']['template']['spec']['containers']
+    app = next(item for item in containers if item['name'] == 'app')
+    origin = next((item.get('value') for item in app.get('env', []) if item['name'] == 'CLICKCLASH_ORIGIN'), None)
+    if origin not in ('https://' + azure_host, 'https://' + CUSTOM_DOMAIN):
+        raise ValueError('Unexpected existing ClickClash origin')
+    return CUSTOM_DOMAIN if origin == 'https://' + CUSTOM_DOMAIN else azure_host
+
+
+def domain_preflight(address):
+    records = socket.getaddrinfo(CUSTOM_DOMAIN, 443, type=socket.SOCK_STREAM)
+    resolved = {entry[4][0] for entry in records}
+    if resolved != {address}:
+        raise ValueError('CUSTOM_DOMAIN_DNS_NOT_READY')
+
+
+def check_public_routes(host):
+    deadline = time.monotonic() + 90
+    while True:
+        try:
+            for path in ('/', '/readyz', '/api/leaderboard'):
+                url = 'https://' + host + path
+                with urllib.request.urlopen(url, timeout=20) as response:
+                    body = response.read(262145)
+                    if len(body) > 262144 or response.status != 200 or response.geturl() != url:
+                        raise ValueError('Public route unavailable')
+                    if path == '/' and b'ClickClash' not in body:
+                        raise ValueError('Wrong public website')
+                    if path == '/readyz' and json.loads(body).get('readiness') != 'ready':
+                        raise ValueError('Readiness unavailable')
+                    if path == '/api/leaderboard' and not isinstance(json.loads(body).get('entries'), list):
+                        raise ValueError('Leaderboard unavailable')
+            return
+        except urllib.error.URLError as error:
+            if isinstance(error, urllib.error.HTTPError) or time.monotonic() >= deadline:
+                raise
+            print('Waiting for DNS and a trusted HTTPS certificate...', flush=True)
+            time.sleep(5)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'stage', 'deploy', 'check', 'migrate-blobs', 'check-blobs', 'cleanup-blobs'])
+    parser.add_argument('action', choices=['doctor', 'build', 'prepare', 'stage', 'deploy', 'check', 'migrate-blobs', 'check-blobs', 'cleanup-blobs', 'custom-domain'])
     args = parser.parse_args()
     context(require_cluster=args.action not in ('doctor', 'build'))
     if args.action == 'doctor':
@@ -286,6 +346,16 @@ def main():
         print('CLICKCLASH_IMAGE_BUILD_OK')
         return
     host, address, identity = metadata()
+    azure_host = host
+    application = None
+    if args.action in ('deploy', 'check', 'custom-domain'):
+        application = current_application()
+        host = active_hostname(application, azure_host)
+    if args.action == 'custom-domain':
+        domain_preflight(address)
+        if not application:
+            raise ValueError('Deploy ClickClash before switching its domain')
+        host = CUSTOM_DOMAIN
     if args.action in ('migrate-blobs', 'check-blobs', 'cleanup-blobs'):
         operation = {'migrate-blobs': 'migrate', 'check-blobs': 'check', 'cleanup-blobs': 'cleanup'}[args.action]
         # Existing serving pod identity only. Cleanup is dry-run from this release helper.
@@ -299,12 +369,16 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(registration_sql(identity))
         print(json.dumps({'result': 'CLICKCLASH_SQL_PREPARED', 'review_file': str(target), 'url': 'https://' + host}))
-    elif args.action in ('stage', 'deploy'):
+    elif args.action in ('stage', 'deploy', 'custom-domain'):
         storage_preflight()
-        image = (ROOT / 'clickclash-image.txt').read_text().strip()
+        if args.action == 'custom-domain':
+            image = next(item['image'] for item in application['spec']['template']['spec']['containers'] if item['name'] == 'app')
+        else:
+            image = (ROOT / 'clickclash-image.txt').read_text().strip()
         if not re.fullmatch(re.escape(SERVER) + r'/trafficxx@sha256:[0-9a-f]{64}', image):
             raise ValueError('Build and save the reviewed image digest first')
-        manifests = deployment(host, address, identity, image)
+        manifests = deployment(host, address, identity, image,
+                               redirect_host=azure_host if host == CUSTOM_DOMAIN else None)
         if args.action == 'stage':
             if call(['kubectl', 'get', 'service', 'clickclash-public', '-n', NS, '--ignore-not-found', '-o', 'name']):
                 raise ValueError('Public ClickClash service already exists; private staging is not a withdrawal action')
@@ -319,19 +393,9 @@ def main():
         else:
             print(json.dumps({'result': 'CLICKCLASH_DEPLOYED', 'url': 'https://' + host, 'tls_verified': False}))
     else:
-        for path in ('/', '/readyz', '/api/leaderboard'):
-            with urllib.request.urlopen('https://' + host + path, timeout=20) as response:
-                body = response.read(262144)
-                if response.status != 200:
-                    raise ValueError('Public route unavailable')
-                if path == '/' and b'ClickClash' not in body:
-                    raise ValueError('Wrong public website')
-                if path == '/readyz' and json.loads(body).get('readiness') != 'ready':
-                    raise ValueError('Readiness unavailable')
-                if path == '/api/leaderboard' and not isinstance(json.loads(body).get('entries'), list):
-                    raise ValueError('Leaderboard unavailable')
+        check_public_routes(host)
         print(json.dumps({'result': 'CLICKCLASH_HTTPS_OK', 'url': 'https://' + host, 'certificate_verified': True,
-                          'note': 'Public read routes only; browser signup/scoring and restore rehearsal remain release checks.'}))
+                          'note': 'Public read routes only; browser signup/scoring and paired database/blob recovery are separate checks.'}))
 
 
 if __name__ == '__main__':
