@@ -1,110 +1,43 @@
 {
-  "origin": "https://clickclash-e8708a85.f4c9crh8e7adc8bw.eastus.sysgen.cloudapp.azure.com",
-  "started_at": "2026-10-27T20:44:19.751112+00:00",
-  "checked_at": "2026-10-28T08:46:29.826349+00:00",
+  "origin": "https://clickclash.milliyin.dev",
+  "started_at": "2026-10-28T14:05:47.179210+00:00",
+  "checked_at": "2026-10-28T14:05:47.179210+00:00",
   "components": [
     {
       "name": "Website",
       "ok": true,
-      "latency_ms": 63.5
+      "latency_ms": 164.8
     },
     {
       "name": "Click API readiness",
       "ok": true,
-      "latency_ms": 165.0
+      "latency_ms": 210.7
     },
     {
       "name": "Leaderboard",
       "ok": true,
-      "latency_ms": 232.2
+      "latency_ms": 293.5
     }
   ],
   "history": [
     {
-      "checked_at": "2026-10-27T20:44:19.751112+00:00",
-      "ok": true
-    },
-    {
-      "checked_at": "2026-10-27T20:47:23.531654+00:00",
+      "checked_at": "2026-10-28T14:05:47.179210+00:00",
       "ok": true,
       "components": [
         {
           "name": "Website",
           "ok": true,
-          "latency_ms": 31.7
+          "latency_ms": 164.8
         },
         {
           "name": "Click API readiness",
           "ok": true,
-          "latency_ms": 149.8
+          "latency_ms": 210.7
         },
         {
           "name": "Leaderboard",
           "ok": true,
-          "latency_ms": 221.5
-        }
-      ]
-    },
-    {
-      "checked_at": "2026-10-27T23:16:37.733482+00:00",
-      "ok": true,
-      "components": [
-        {
-          "name": "Website",
-          "ok": true,
-          "latency_ms": 203.3
-        },
-        {
-          "name": "Click API readiness",
-          "ok": true,
-          "latency_ms": 301.6
-        },
-        {
-          "name": "Leaderboard",
-          "ok": true,
-          "latency_ms": 341.4
-        }
-      ]
-    },
-    {
-      "checked_at": "2026-10-28T02:23:00.159760+00:00",
-      "ok": true,
-      "components": [
-        {
-          "name": "Website",
-          "ok": true,
-          "latency_ms": 107.0
-        },
-        {
-          "name": "Click API readiness",
-          "ok": true,
-          "latency_ms": 164.7
-        },
-        {
-          "name": "Leaderboard",
-          "ok": true,
-          "latency_ms": 230.2
-        }
-      ]
-    },
-    {
-      "checked_at": "2026-10-28T08:46:29.826349+00:00",
-      "ok": true,
-      "components": [
-        {
-          "name": "Website",
-          "ok": true,
-          "latency_ms": 63.5
-        },
-        {
-          "name": "Click API readiness",
-          "ok": true,
-          "latency_ms": 165.0
-        },
-        {
-          "name": "Leaderboard",
-          "ok": true,
-          "latency_ms": 232.2
+          "latency_ms": 293.5
         }
       ]
     }
