@@ -1,4 +1,4 @@
-"""Bounded 250/500-paced-user Browse reads; service routing permits pod changes."""
+"""Bounded 250/500/1000-paced-user Browse reads; service routing permits pod changes."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -15,12 +15,13 @@ URL = 'http://browse.trafficxx.svc.cluster.local'
 
 def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=read.read_url):
     read.require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_RUN_ID')
-    read.require(type(users) is int and users in (250, 500) and duration == 180 and think == 2,
+    read.require(type(users) is int and users in (250, 500, 1000) and duration == 180 and think == 2,
                  'UNSUPPORTED_DRILL')
     if ramp_seconds is None:
-        ramp_seconds = 60 if users == 500 else 2
+        ramp_seconds = 120 if users == 1000 else 60 if users == 500 else 2
     read.require(type(ramp_seconds) is int and
-                 (ramp_seconds in (60, 120) if users == 500 else ramp_seconds == 2), 'UNSUPPORTED_RAMP')
+                 (ramp_seconds == 120 if users == 1000 else
+                  ramp_seconds in (60, 120) if users == 500 else ramp_seconds == 2), 'UNSUPPORTED_RAMP')
     stop, lock = threading.Event(), threading.Lock()
     rows, failures, participants, first_failure = [], Counter(), set(), []
     start = time.monotonic()

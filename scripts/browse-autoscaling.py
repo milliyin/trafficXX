@@ -488,8 +488,8 @@ def wait_until(function, seconds):
 
 
 def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False):
-    require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
-    require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
+    require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
+    require(not slower_ramp or users in (500, 1000), 'UNSUPPORTED_RAMP')
     files = 'browse-scaling-' + run_id
     base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
     cm = base.kube('create', 'configmap', files, '-n', 'trafficxx',
@@ -508,7 +508,7 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False):
              {'op': 'replace', 'path': '/spec/template/spec/containers/0/image',
               'value': app['spec']['template']['spec']['containers'][0]['image']},
              {'op': 'add', 'path': '/spec/template/spec/containers/0/args',
-              'value': [run_id, str(users)] + (['120'] if slower_ramp else [])}]
+              'value': [run_id, str(users)] + (['120'] if slower_ramp or users == 1000 else [])}]
     manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
         '--type=json', '--patch', json.dumps(patch), '-o', 'json')
     try:
@@ -751,15 +751,15 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False):
             type(outcome.get('attempts')) is int and 1 <= outcome['attempts'] <= users * 90 and
             not outcome.get('errors') and outcome.get('status_counts') == {'200': outcome['attempts']},
             'INCOMPLETE_LOAD_EVIDENCE')
-    if users == 500:
-        require(outcome.get('users') == 500 and outcome.get('scheduled_duration_seconds') == 180 and
-                outcome.get('start_ramp_seconds') == (120 if slower_ramp else 60) and outcome.get('think_seconds') == 2 and
-                outcome.get('max_workload_attempts') == 45000, 'HIGHER_STAGE_PACING_NOT_VERIFIED')
+    if users in (500, 1000):
+        require(outcome.get('users') == users and outcome.get('scheduled_duration_seconds') == 180 and
+                outcome.get('start_ramp_seconds') == (120 if slower_ramp or users == 1000 else 60) and outcome.get('think_seconds') == 2 and
+                outcome.get('max_workload_attempts') == users * 90, 'HIGHER_STAGE_PACING_NOT_VERIFIED')
 
 
 def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
           verify_early=False, faster_scale_up=False, verify_waiting_samples=False):
-    require(type(users) is int and users in (250, 500), 'UNSUPPORTED_USER_COUNT')
+    require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
     require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
@@ -770,12 +770,13 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                             slower_ramp, earlier_scaling, verify_early))), 'CONFLICTING_DRILL_MODES')
     require(not verify_waiting_samples or (users == 500 and not any((retry_metric_gap, verification_run,
                     slower_ramp, earlier_scaling, verify_early, faster_scale_up))), 'CONFLICTING_DRILL_MODES')
-    faster_scale_up = faster_scale_up or verify_waiting_samples
+    faster_scale_up = faster_scale_up or verify_waiting_samples or users == 1000
     earlier_scaling = earlier_scaling or verify_early or faster_scale_up
     pressure_target = '3' if earlier_scaling else '5'
     scale_up_seconds = 30 if faster_scale_up else 60
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = ('browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
+    job_name = ('browse-users-1000-autoscaling' if users == 1000 else
+                'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
                 'browse-users-500-autoscaling-step30' if faster_scale_up else
                 'browse-users-500-autoscaling-pressure3-v2' if verify_early else
                 'browse-users-500-autoscaling-pressure3' if earlier_scaling else
@@ -791,7 +792,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
         app = wait_baseline(query)
-        if (retry_metric_gap or verification_run or users == 500) and app['spec']['replicas'] != 2:
+        if (retry_metric_gap or verification_run or users in (500, 1000)) and app['spec']['replicas'] != 2:
             emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
             app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
@@ -806,7 +807,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         metric_readiness = MetricReadiness()
         stage, primary_error, job_terminal = 'create_load_job', None, False
         try:
-            job = (create_job(app, run_id, job_name, users=500, slower_ramp=True) if slower_ramp else
+            job = (create_job(app, run_id, job_name, users=users, slower_ramp=True) if slower_ramp else
                    create_job(app, run_id, job_name, users=500) if users == 500 else
                    create_job(app, run_id, job_name))
             emit('BROWSE_AUTOSCALING_DRILL_STARTED', run_id=run_id, job=job_name, users=users, seconds=180,
@@ -953,8 +954,8 @@ def main():
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
                                          'diagnose-500-sourcewait'))
-    parser.add_argument('--users', type=int, choices=(250, 500), default=250,
-                        help='Only the explicitly selected stage; 500 uses a 60-second arrival ramp.')
+    parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
+                        help='Only the selected stage; 1000 uses the verified pressure-3/step30 policy and 120-second ramp.')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--retry-metric-gap', action='store_true',
                         help='Use a distinct v2 Job, preserving the original stopped drill.')
@@ -976,7 +977,7 @@ def main():
             args.verify_early, args.faster_scale_up, args.verify_waiting_samples)) and action != 'drill':
         parser.error('drill modes require the drill action')
     if args.users != 250 and (action != 'drill' or args.retry_metric_gap or args.verification_run):
-        parser.error('--users 500 requires drill without a 250-user retry mode')
+        parser.error('--users 500/1000 requires drill without a 250-user retry mode')
     if args.slower_ramp and args.users != 500:
         parser.error('--slower-ramp requires --users 500')
     if args.earlier_scaling and args.users != 500:

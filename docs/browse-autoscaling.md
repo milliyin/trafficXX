@@ -952,6 +952,58 @@ effect of each change. Longer runs and repeated trials remain future work
 before a sustained-capacity or higher-user-count claim. No new load, larger
 budget or 1,000-user stage was prepared as part of this verification.
 
+## Next stage: 1,000 paced Browse users
+
+The operator has authorized this next stage after the full 500-user verification.
+It is prepared, not yet run. Run only from Azure Cloud Shell and keep the shell
+open through resource observation and natural recovery:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/browse-autoscaling.py check &&
+python3 scripts/browse-autoscaling.py drill --users 1000
+```
+
+The new preserved Job is `browse-users-1000-autoscaling`. Existing Jobs are
+not deleted or reused; any active read load blocks the run. This is the same
+180-second workload, 120-second arrival ramp and two-second pause after each
+response as the verified 500-user profile, with at most 90,000 GETs. Every
+participant must make a request; all 1,000 arrive only for roughly the last
+minute. It is not 1,000 simultaneous requests or 1,000 requests per second.
+
+The helper requires the existing pressure target three, borrow-rate target
+40 and one-pod-per-30-second scale-up policy. It does not configure the policy
+or increase capacity: two-to-four replicas, eight connections per pod, queue
+16, steady Browse cap 32 and total planning budget 128 remain unchanged.
+The generator retains one CPU and 256 MiB; its ability to generate this stage
+is also under test. A generator/resource failure is not a server capacity verdict.
+
+The existing fresh-source metrics gate, sustained resource/queue guards,
+first HTTP error stop, pool-error checks, deployment identity checks and
+owned-Job cleanup remain active. Success requires the completed workload,
+observed automatic scale-up, natural return to two replicas, final health and
+database evidence under the same observer. Budget for warmup and recovery as
+well as load (approximately 15 minutes). Do not start overlapping loads.
+
+If interrupted or failed, preserve the Job and paste the full runner output:
+
+```bash
+kubectl get job browse-users-1000-autoscaling -n trafficxx
+kubectl get pods -n trafficxx -l job-name=browse-users-1000-autoscaling
+kubectl describe hpa trafficxx-browse -n trafficxx
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+No application image rebuild is needed: the helper mounts the reviewed probe
+into a Job using the current immutable Browse image. This tests internal Browse
+availability reads, not ClickClash clicks, booking writes, public ingress or a
+production latency SLO. Since ClickClash now shares infrastructure, this stage
+can contend with live users; its existing conservative stops remain in effect.
+No higher stage follows automatically.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
