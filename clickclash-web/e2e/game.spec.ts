@@ -1,6 +1,32 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from 'node:fs';
 
+test('profile banner remains visible with the EasyList ad-cell hiding rule', async ({page}) => {
+  await page.route('**/api/me', route => route.fulfill({status:401,json:{detail:{code:'SESSION_REQUIRED'}}}));
+  await page.route('**/api/leaderboard*', route => route.fulfill({json:{
+    entries:[{id:'profile-fixture',nickname:'Banner player',score:10,bio:'My profile',
+      website:'https://example.com/',ad_hidden:false,image_url:'/api/images/profile-fixture'}],
+    totals:{players:1,clicks:10},paused:false,offset:0,
+  }}));
+  await page.route('**/api/images/profile-fixture', route => route.fulfill({contentType:'image/png',
+    body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWZkAAAAASUVORK5CYII=', 'base64')}));
+  await page.route('**/assets/*.css', async route => {
+    const response = await route.fetch();
+    await route.fulfill({response,body:(await response.text())+'\n.ad-cell {display:none!important}'});
+  });
+  await page.goto('/');
+  await page.evaluate(() => {
+    const bait = document.createElement('div');
+    bait.className = 'ad-cell';
+    bait.textContent = 'Cosmetic filter test';
+    document.body.append(bait);
+  });
+  await expect(page.getByText('Cosmetic filter test')).toBeHidden();
+  await expect(page.getByAltText('Banner player promotion')).toBeVisible();
+  await expect.poll(() => page.getByAltText('Banner player promotion').evaluate((img:HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.locator('.profile-content')).toHaveAttribute('href','https://example.com/');
+});
+
 test('public profiles render as text and unsafe websites are not links', async ({page}) => {
   await page.route('**/api/me', route => route.fulfill({status:401,json:{detail:{code:'SESSION_REQUIRED'}}}));
   await page.route('**/api/leaderboard*', route => route.fulfill({json:{
@@ -45,6 +71,12 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  // Reproduce the EasyList cosmetic rule that hid the former container.
+  // Serve as same-origin CSS, so the app's CSP remains enabled during the test.
+  await page.route('**/assets/*.css', async route => {
+    const response = await route.fetch();
+    await route.fulfill({response, body: (await response.text()) + '\n.ad-cell { display: none !important; }'});
+  });
   await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "The leaderboard." }),
@@ -90,9 +122,9 @@ test("real guest clicks, signup, profile, leaderboard, logout/login and mobile",
   await expect.poll(() => page.getByAltText('Your promotion').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
   await page.getByRole("link", { name: "Leaderboard", exact: true }).click();
   await expect(page.getByText(nickname, { exact: true })).toBeVisible();
-  await expect(page.locator('.ad-cell img').first()).toBeVisible();
+  await expect(page.locator('.profile-cell img').first()).toBeVisible();
   const playerRow = page.locator('.board-row').filter({hasText: nickname});
-  const promotion = playerRow.locator('.ad-promotion');
+  const promotion = playerRow.locator('.profile-content');
   const bannerBox = await promotion.locator('img').boundingBox();
   const promotionBox = await promotion.boundingBox();
   expect(bannerBox!.width).toBeGreaterThan(200);

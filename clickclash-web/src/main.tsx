@@ -34,7 +34,7 @@ function PromotionLink({entry, className, children}: {
     safeWebsite = ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
   } catch { /* Missing or invalid websites are plain text. */ }
   return safeWebsite && !entry.ad_hidden ? (
-    <a className={className + ' promotion-link'} href={entry.website}
+    <a className={className + ' profile-link'} href={entry.website}
       target="_blank" rel="ugc sponsored nofollow noopener noreferrer"
       aria-label={"Visit " + entry.nickname + "'s website"}>
       {children}
@@ -384,8 +384,8 @@ function App() {
                     {number(entry.score)}
                     <small>clicks</small>
                   </div>
-                  <div className="ad-cell">
-                    <PromotionLink entry={entry} className="ad-promotion">
+                  <div className="profile-cell">
+                    <PromotionLink entry={entry} className="profile-content">
                     {entry.image_url && (
                       <img
                         src={entry.image_url}

@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   font-family: Arial, Helvetica, sans-serif;
   color: #20231d;
   background: #f4f3eb;
@@ -401,13 +401,13 @@ p {
   letter-spacing: 0;
   margin-top: 4px;
 }
-.ad-cell {
+.profile-cell {
   display: flex;
   gap: 12px;
   align-items: center;
   min-width: 0;
 }
-.ad-cell img {
+.profile-cell img {
   display: block;
   width: 100%;
   height: auto;
@@ -416,7 +416,7 @@ p {
   background: #20231d08;
   border-radius: 5px;
 }
-.ad-promotion {
+.profile-content {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -424,8 +424,8 @@ p {
   min-width: 0;
   flex: 1;
 }
-.ad-promotion > div { min-width: 0; }
-.ad-cell p {
+.profile-content > div { min-width: 0; }
+.profile-cell p {
   font-size: 11px;
   margin: 0 0 5px;
   color: #616653;
@@ -438,17 +438,17 @@ p {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.promotion-link, .ad-cell .promotion-link {
+.profile-link, .profile-cell .profile-link {
   color: inherit;
   font-weight: inherit;
   text-decoration: none;
   border-radius: 5px;
 }
-.promotion-link:hover strong, .promotion-link:hover .visit-link {
+.profile-link:hover strong, .profile-link:hover .visit-link {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.promotion-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
+.profile-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 5px; }
 .report {
   border: 0;
   background: transparent;
@@ -1056,13 +1056,13 @@ hr {
   .score-cell small {
     font-size: 9px;
   }
-  .ad-cell {
+  .profile-cell {
     grid-column: 2/-1;
     padding-top: 13px;
     margin-top: 5px;
     border-top: 1px solid #20231d10;
   }
-  .ad-cell p {
+  .profile-cell p {
     font-size: 10px;
   }
   .visit-link {
