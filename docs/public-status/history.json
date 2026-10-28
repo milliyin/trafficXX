@@ -1,22 +1,22 @@
 {
   "origin": "https://clickclash-e8708a85.f4c9crh8e7adc8bw.eastus.sysgen.cloudapp.azure.com",
   "started_at": "2026-10-27T20:44:19.751112+00:00",
-  "checked_at": "2026-10-27T23:16:37.733482+00:00",
+  "checked_at": "2026-10-28T02:23:00.159760+00:00",
   "components": [
     {
       "name": "Website",
       "ok": true,
-      "latency_ms": 203.3
+      "latency_ms": 107.0
     },
     {
       "name": "Click API readiness",
       "ok": true,
-      "latency_ms": 301.6
+      "latency_ms": 164.7
     },
     {
       "name": "Leaderboard",
       "ok": true,
-      "latency_ms": 341.4
+      "latency_ms": 230.2
     }
   ],
   "history": [
@@ -63,6 +63,27 @@
           "name": "Leaderboard",
           "ok": true,
           "latency_ms": 341.4
+        }
+      ]
+    },
+    {
+      "checked_at": "2026-10-28T02:23:00.159760+00:00",
+      "ok": true,
+      "components": [
+        {
+          "name": "Website",
+          "ok": true,
+          "latency_ms": 107.0
+        },
+        {
+          "name": "Click API readiness",
+          "ok": true,
+          "latency_ms": 164.7
+        },
+        {
+          "name": "Leaderboard",
+          "ok": true,
+          "latency_ms": 230.2
         }
       ]
     }
