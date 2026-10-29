@@ -1004,6 +1004,35 @@ production latency SLO. Since ClickClash now shares infrastructure, this stage
 can contend with live users; its existing conservative stops remain in effect.
 No higher stage follows automatically.
 
+### 29 October: first 1,000-user attempt stopped on HTTP 503
+
+Run `d22e0d48a388`, Job `browse-users-1000-autoscaling`, released its
+resource gate and stopped after 35.1 seconds. Only 289 users participated:
+2,478 requests returned HTTP 200 and one returned HTTP 503 `DATABASE_BUSY`.
+The first rejection was a seated-availability read at 34.69 seconds, taking
+18.118 ms. The controller had reached three ready pods. This is a failed
+partial trial, not a 1,000-user pass or proof of a fixed user-count limit.
+
+The last supplied pool samples showed zero waiting, but coarse samples can
+miss a short burst. The response alone does not distinguish queue-full from
+acquisition timeout. Minute-level database observations are also not proof
+of the database state at that instant. Capture the preserved run and then
+verify natural recovery, without starting another load:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py diagnose-1000 &&
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+The diagnostic pins the Job name, run label, 1,000-user arguments and
+120-second ramp. It captures counter increases through 60 seconds after
+termination (to include subsequent scrapes), peak samples ending at
+termination, per-instance distribution and stored waiting source samples.
+Missing values remain unknown. A diagnostic success means capture succeeded,
+not that the load test passed. No configuration or connection-budget change
+is proposed until this evidence and post-run health are reviewed.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

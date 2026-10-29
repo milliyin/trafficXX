@@ -549,6 +549,44 @@ class Scaling(unittest.TestCase):
         with self.assertRaises(ValueError):
             scaling.post_job_coverage(before, after(float('nan'), 210), 180)
 
+    def test_1000_diagnostics_pin_job_pacing_and_retain_counter_tail(self):
+        run_id = 'a' * 12
+        job = {'metadata': {'name': 'browse-users-1000-autoscaling', 'uid': 'owned',
+                'labels': {'trafficxx.io/run-id': run_id}},
+            'spec': {'template': {'spec': {'containers': [{'name': 'check', 'args': [run_id, '1000', '120']}]}}},
+            'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                {'type': 'Failed', 'status': 'True', 'lastTransitionTime': '1970-01-01T00:03:00Z'}]}}
+        outcome = {'result': 'BROWSE_SCALING_LOAD_FAILED', 'run_id': run_id, 'users': 1000,
+                   'start_ramp_seconds': 120}
+        operations = []
+        def kube(*args):
+            operations.append(args)
+            self.assertIn(args[0], ('get', 'logs'))
+            return json.dumps(outcome if args[0] == 'logs' else job)
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'prometheus') as connection, redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = lambda _: []
+            scaling.diagnose_500(users=1000, distribution=True)
+            row = json.loads(output.getvalue())
+            self.assertEqual(row['result'], 'BROWSE_1000_DIAGNOSTICS_OK')
+            self.assertEqual(row['counter_query_window_seconds'], 240)
+            self.assertIn('per_instance', row)
+            self.assertIn('browse-users-1000-autoscaling', operations[0])
+            outcome['users'] = 500
+            with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_RUN_MISMATCH'):
+                scaling.diagnose_500(users=1000)
+            job['spec']['template']['spec']['containers'][0]['args'][2] = '60'
+            with self.assertRaisesRegex(ValueError, 'DIAGNOSTIC_JOB_ARGUMENTS_MISMATCH'):
+                scaling.diagnose_500(users=1000)
+
+    def test_1000_diagnostic_cli_selects_only_read_only_capture(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'diagnose-1000']), \
+                patch.object(scaling, 'diagnose_500') as diagnose, patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            diagnose.assert_called_once_with(users=1000, distribution=True)
+            drill.assert_not_called()
+
     def test_historical_diagnostic_refuses_active_or_unbounded_jobs(self):
         with self.assertRaisesRegex(ValueError, 'NOT_TERMINAL'):
             scaling.diagnostic_window({'status': {}})

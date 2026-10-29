@@ -644,7 +644,7 @@ def waiting_history(query, end):
     return result
 
 
-def diagnostic_outcome(job, logs, *, allow_interrupted=False):
+def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500):
     try:
         outcome = json.loads(logs.splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
@@ -652,11 +652,11 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False):
     run_id = job['metadata'].get('labels', {}).get('trafficxx.io/run-id')
     require(isinstance(run_id, str) and re.fullmatch(r'[0-9a-f]{12}', run_id), 'DIAGNOSTIC_RUN_MISMATCH')
     if isinstance(outcome, dict) and outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK'):
-        require(outcome.get('users') == 500 and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
+        require(outcome.get('users') == users and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
         return outcome
     # Our stop shortens the deadline while retaining logs. Admit missing final
     # summaries only for the fixed, deadline-stopped step30 Job with exact args.
-    require(allow_interrupted and job['metadata'].get('name') in (
+    require(users == 500 and allow_interrupted and job['metadata'].get('name') in (
                 'browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
@@ -669,16 +669,26 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False):
 
 
 def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False,
-                 faster_scale_up=False, verify_waiting_samples=False):
+                 faster_scale_up=False, verify_waiting_samples=False, users=500):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
+    require(type(users) is int and users in (500, 1000), 'UNSUPPORTED_USER_COUNT')
+    require(users == 500 or not any((slower_ramp, earlier_scaling, verify_early,
+                                    faster_scale_up, verify_waiting_samples)), 'CONFLICTING_DRILL_MODES')
     trial.context()
     trial.no_active_load()
-    name = ('browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
+    name = ('browse-users-1000-autoscaling' if users == 1000 else
+            'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
             'browse-users-500-autoscaling-step30' if faster_scale_up else
             'browse-users-500-autoscaling-pressure3-v2' if verify_early else
             'browse-users-500-autoscaling-pressure3' if earlier_scaling else
             'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
+    if users == 1000:
+        run_id = job['metadata'].get('labels', {}).get('trafficxx.io/run-id')
+        containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+        require(job['metadata'].get('name') == name and len(containers) == 1
+                and containers[0].get('name') == 'check'
+                and containers[0].get('args') == [run_id, '1000', '120'], 'DIAGNOSTIC_JOB_ARGUMENTS_MISMATCH')
     start, end, window = diagnostic_window(job)
     log_capture = {'available': True}
     try:
@@ -691,9 +701,9 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
         outcome = diagnostic_outcome(job, '', allow_interrupted=True)
         log_capture = {'available': False, **failure_details(error)}
     else:
-        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up or verify_waiting_samples)
+        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up or verify_waiting_samples, users=users)
     when = str(int(end.timestamp()))
-    require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up or verify_waiting_samples)
+    require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up or verify_waiting_samples or users == 1000)
             or outcome.get('start_ramp_seconds') == 120,
             'DIAGNOSTIC_RAMP_MISMATCH')
     # A final rejection may not be exported until the next scrape, after the
@@ -731,7 +741,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                 'Samples after the stop request may include recovery; missing history is not zero waiting.')
     current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
-    emit('BROWSE_500_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
+    emit('BROWSE_' + str(users) + '_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
          job_start_utc=start.isoformat(), job_terminal_utc=end.isoformat(),
          query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
          counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
@@ -953,7 +963,7 @@ def main():
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
-                                         'diagnose-500-sourcewait'))
+                                         'diagnose-500-sourcewait', 'diagnose-1000'))
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
                         help='Only the selected stage; 1000 uses the verified pressure-3/step30 policy and 120-second ramp.')
     modes = parser.add_mutually_exclusive_group()
@@ -1016,6 +1026,8 @@ def main():
             diagnose_500(faster_scale_up=True, distribution=True)
         elif action == 'diagnose-500-sourcewait':
             diagnose_500(verify_waiting_samples=True, distribution=True)
+        elif action == 'diagnose-1000':
+            diagnose_500(users=1000, distribution=True)
         else:
             trial.context()
             with prometheus() as query:
