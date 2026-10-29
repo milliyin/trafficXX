@@ -40,6 +40,7 @@ PRESSURE = ('sum(clamp_min(' + M + 'size' + F + ' - ' + M + 'available' + F + ',
 BORROWS = ('sum(rate(' + M + 'borrows_total' + F + '[1m]))' + GUARD +
            ' and on() (count(rate(' + M + 'borrows_total' + F + '[1m])) == count(up' + F + '))')
 JOB = 'browse-users-250-autoscaling'
+PREWARM_ANNOTATION = 'trafficxx.io/prewarm-run'
 
 
 def require(condition, code):
@@ -244,7 +245,8 @@ class PoolWaitingWatch:
                 for instance, state in self.instances.items()}
 
 
-def owned_hpa(*, require_active=True, pressure_target=None, scale_up_seconds=None):
+def owned_hpa(*, require_active=True, pressure_target=None, scale_up_seconds=None, min_replicas=2):
+    require(min_replicas in (2, 4), 'UNREVIEWED_MINIMUM')
     rows = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
     matches = [r for r in rows if r['spec']['scaleTargetRef'].get('name') == 'browse']
     require(len(matches) == 1 and matches[0]['metadata']['name'] == 'trafficxx-browse', 'EXPECTED_KEDA_HPA')
@@ -254,11 +256,14 @@ def owned_hpa(*, require_active=True, pressure_target=None, scale_up_seconds=Non
     targets = (pressure_target,) if pressure_target is not None else ('5', '3')
     profiles = [(t, seconds) for t, seconds in (('5', 60), ('3', 60), ('3', 30))
                 if t in targets and (scale_up_seconds is None or seconds == scale_up_seconds)]
-    require(any(contains(so['spec'], scaled_object(t, seconds)['spec']) for t, seconds in profiles),
+    expected_profiles = [scaled_object(t, seconds)['spec'] for t, seconds in profiles]
+    for spec in expected_profiles:
+        spec['minReplicaCount'] = min_replicas
+    require(any(contains(so['spec'], spec) for spec in expected_profiles),
             'AUTOSCALING_POLICY_CHANGED')
     require(any(r.get('uid') == so['metadata']['uid'] and r.get('controller')
                 for r in matches[0]['metadata'].get('ownerReferences', [])), 'FOREIGN_HPA')
-    require(matches[0]['spec']['minReplicas'] == 2 and matches[0]['spec']['maxReplicas'] == 4,
+    require(matches[0]['spec']['minReplicas'] == min_replicas and matches[0]['spec']['maxReplicas'] == 4,
             'HPA_BOUNDS_CHANGED')
     if pressure_target is not None:
         require_hpa_targets(matches[0], pressure_target)
@@ -353,6 +358,120 @@ def configure_fast_scale_up():
          inventory_writes=False, note='Allows faster additions when metrics request them; no load was started.')
 
 
+def prewarm_policy(desired, *, expected_run=None):
+    """Compare-and-swap only our marked temporary minimum; never scale Deployment directly."""
+    require(desired in (2, 4), 'UNREVIEWED_MINIMUM')
+    so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
+    annotations = so['metadata'].get('annotations', {})
+    marker = annotations.get(PREWARM_ANNOTATION)
+    old = so['spec'].get('minReplicaCount')
+    expected = scaled_object('3', 30)['spec']
+    expected['minReplicaCount'] = old
+    require(old in (2, 4) and contains(so['spec'], expected), 'AUTOSCALING_POLICY_CHANGED')
+    require(not any(k.startswith('autoscaling.keda.sh/paused') for k in annotations), 'AUTOSCALING_PAUSED')
+    if desired == 2 and old == 2 and marker is None:
+        return None
+    if desired == 4:
+        require(old == 2 and marker is None and isinstance(expected_run, str)
+                and re.fullmatch(r'[0-9a-f]{12}', expected_run), 'PREWARM_ALREADY_CONFIGURED')
+    else:
+        require(old == 4 and isinstance(marker, str) and re.fullmatch(r'[0-9a-f]{12}', marker)
+                and (expected_run is None or marker == expected_run), 'PREWARM_OWNERSHIP_CHANGED')
+    # Validate controller ownership even if its minimum has not reconciled yet.
+    hpas = json.loads(base.kube('get', 'hpa', '-n', 'trafficxx', '-o', 'json'))['items']
+    matches = [h for h in hpas if h['metadata']['name'] == 'trafficxx-browse'
+               and h['spec']['scaleTargetRef'].get('name') == 'browse']
+    require(len(matches) == 1 and any(r.get('uid') == so['metadata']['uid'] and r.get('controller')
+            for r in matches[0]['metadata'].get('ownerReferences', [])), 'FOREIGN_HPA')
+    operations = [{'op': 'test', 'path': '/metadata/uid', 'value': so['metadata']['uid']},
+                  {'op': 'test', 'path': '/metadata/resourceVersion', 'value': so['metadata']['resourceVersion']},
+                  {'op': 'test', 'path': '/spec', 'value': so['spec']},
+                  {'op': 'test', 'path': '/metadata/annotations', 'value': annotations}]
+    # Kubernetes may omit annotations on a fresh object.
+    if 'annotations' not in so['metadata']:
+        operations.pop()
+        operations.append({'op': 'add', 'path': '/metadata/annotations', 'value': {}})
+    operations.extend([
+        {'op': 'replace', 'path': '/spec/minReplicaCount', 'value': desired},
+        {'op': 'add' if desired == 4 else 'remove',
+         'path': '/metadata/annotations/trafficxx.io~1prewarm-run',
+         **({'value': expected_run} if desired == 4 else {})}])
+    base.kube('patch', 'scaledobject', 'browse', '-n', 'trafficxx', '--type=json', '-p', json.dumps(operations))
+    emit('BROWSE_PREWARM_MINIMUM_CHANGED', min_replicas=desired, max_replicas=4,
+         run_id=expected_run or marker, inventory_writes=False)
+    return expected_run or marker
+
+
+def warm_four(query, uid):
+    """Require four ready, discovered, endpoint-eligible pods with eight idle connections each."""
+    app = deployment(uid)
+    require(app['spec']['replicas'] == 4 and app.get('status', {}).get('readyReplicas') == 4,
+            'PREWARM_PODS_NOT_READY')
+    owned_hpa(pressure_target='3', scale_up_seconds=30, min_replicas=4)
+    rows = query('up' + F)
+    require(len(rows) == 4 and all(float(r['value'][1]) == 1 for r in rows), 'PREWARM_DISCOVERY_NOT_READY')
+    addresses = {r.get('metric', {}).get('instance') for r in rows}
+    slices = json.loads(base.kube('get', 'endpointslices', '-n', 'trafficxx', '-l',
+        'kubernetes.io/service-name=browse', '-o', 'json'))['items']
+    endpoints = {ip + ':8000' for s in slices if any(p.get('port') == 8000 for p in s.get('ports', []))
+        for e in s.get('endpoints', []) if e.get('conditions', {}).get('ready') is True
+        and not e.get('conditions', {}).get('terminating', False) and e.get('targetRef', {}).get('kind') == 'Pod'
+        for ip in e.get('addresses', [])}
+    require(len(addresses) == 4 and addresses == endpoints, 'PREWARM_ENDPOINTS_NOT_READY')
+    require(scalar(query, PRESSURE) == 0, 'PREWARM_POOL_NOT_IDLE')
+    for field in ('size', 'available'):
+        require(scalar(query, 'min(' + M + field + F + ')') == 8
+                and scalar(query, 'count(' + M + field + F + ')') == 4, 'PREWARM_POOL_NOT_WARM')
+    check_pool_errors(query)
+    return app
+
+
+def restore_prewarm(*, expected_run=None):
+    trial.context()
+    trial.no_active_load()
+    prewarm_policy(2, expected_run=expected_run)
+    with prometheus() as query:
+        wait_until(lambda: owned_hpa(pressure_target='3', scale_up_seconds=30), 180)
+        app = deployment()
+        wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
+    trial.health()
+    emit('BROWSE_PREWARM_RESTORED', ready_replicas=2, inventory_writes=False)
+
+
+def drill_prewarmed():
+    trial.context()
+    trial.no_active_load()
+    trial.health()
+    database_pressure()
+    require(not base.kube('get', 'job', 'browse-users-1000-prewarmed-5m', '-n', 'trafficxx',
+                          '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
+    marker = uuid4().hex[:12]
+    changed = False
+    try:
+        with prometheus() as query:
+            app = wait_baseline(query)
+            require(app['spec']['replicas'] == 2, 'START_WITH_TWO_REPLICAS')
+            owned_hpa(pressure_target='3', scale_up_seconds=30)
+            # Set before patch: a lost response can still have applied the marked change.
+            changed = True
+            prewarm_policy(4, expected_run=marker)
+            wait_until(lambda: warm_four(query, app['metadata']['uid']), 300)
+            database_pressure()
+            emit('BROWSE_FOUR_PODS_PREWARMED', ready_replicas=4, connections_per_pod=8,
+                 ready_service_endpoints=4, automatic_scale_up_tested=False)
+        drill(users=1000, duration=300, prewarmed=True)
+    finally:
+        if changed:
+            try:
+                restore_prewarm(expected_run=marker)
+            except (Exception, KeyboardInterrupt) as error:
+                emit('BROWSE_PREWARM_RESTORE_REQUIRED', **failure_details(error),
+                     note='Run restore-prewarm after the Job stops. The marked temporary minimum may remain four.')
+                raise
+    emit('BROWSE_PREWARMED_DRILL_OK', ready_replicas_after=2, users=1000,
+         scheduled_duration_seconds=300, inventory_writes=False, automatic_scale_up_tested=False)
+
+
 def contains(actual, expected):
     # API defaulting may add fields, but must not change any reviewed value.
     if isinstance(expected, dict):
@@ -393,9 +512,12 @@ def deployment(expected_uid=None):
     return app
 
 
-def check(query):
+def check(query, *, min_replicas=2):
     app = deployment()
-    owned_hpa()
+    if min_replicas == 2:
+        owned_hpa()
+    else:
+        owned_hpa(min_replicas=min_replicas)
     count = app['spec']['replicas']
     require(app.get('status', {}).get('readyReplicas') == count, 'BROWSE_NOT_READY')
     rows = query('up' + F)
@@ -406,14 +528,14 @@ def check(query):
     return app
 
 
-def wait_baseline(query, seconds=180, *, clock=time.monotonic, sleep=time.sleep):
+def wait_baseline(query, seconds=180, *, clock=time.monotonic, sleep=time.sleep, min_replicas=2):
     """Wait for asynchronous readiness/discovery without relaxing final evidence."""
     transient = {'DISCOVERY_NOT_CONVERGED', 'BROWSE_NOT_READY',
                  'SCALING_METRIC_MISSING', 'HPA_METRIC_NOT_ACTIVE'}
     deadline, previous = clock() + seconds, None
     while True:
         try:
-            return check(query)
+            return check(query) if min_replicas == 2 else check(query, min_replicas=min_replicas)
         except ValueError as error:
             reason = str(error)
             if reason not in transient:
@@ -660,7 +782,8 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
     # summaries only for reviewed, deadline-stopped Jobs with exact args.
     allowed_names = (('browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
                      if users == 500 and duration == 180 else
-                     ('browse-users-1000-autoscaling-5m',) if users == 1000 and duration == 300 else ())
+                     ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
+                     if users == 1000 and duration == 300 else ())
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
@@ -675,15 +798,17 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
 
 
 def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False,
-                 faster_scale_up=False, verify_waiting_samples=False, users=500, duration=180):
+                 faster_scale_up=False, verify_waiting_samples=False, users=500, duration=180, prewarmed=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     require(type(users) is int and users in (500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
+    require(not prewarmed or (users == 1000 and duration == 300), 'UNSUPPORTED_PREWARMED_PROFILE')
     require(users == 500 or not any((slower_ramp, earlier_scaling, verify_early,
                                     faster_scale_up, verify_waiting_samples)), 'CONFLICTING_DRILL_MODES')
     trial.context()
     trial.no_active_load()
-    name = ('browse-users-1000-autoscaling-5m' if duration == 300 else
+    name = ('browse-users-1000-prewarmed-5m' if prewarmed else
+            'browse-users-1000-autoscaling-5m' if duration == 300 else
             'browse-users-1000-autoscaling' if users == 1000 else
             'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
             'browse-users-500-autoscaling-step30' if faster_scale_up else
@@ -783,9 +908,10 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False, durati
 
 
 def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
-          verify_early=False, faster_scale_up=False, verify_waiting_samples=False, duration=180):
+          verify_early=False, faster_scale_up=False, verify_waiting_samples=False, duration=180, prewarmed=False):
     require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
+    require(not prewarmed or (users == 1000 and duration == 300), 'UNSUPPORTED_PREWARMED_PROFILE')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
     require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
@@ -801,7 +927,8 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
     pressure_target = '3' if earlier_scaling else '5'
     scale_up_seconds = 30 if faster_scale_up else 60
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = ('browse-users-1000-autoscaling-5m' if duration == 300 else
+    job_name = ('browse-users-1000-prewarmed-5m' if prewarmed else
+                'browse-users-1000-autoscaling-5m' if duration == 300 else
                 'browse-users-1000-autoscaling' if users == 1000 else
                 'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
                 'browse-users-500-autoscaling-step30' if faster_scale_up else
@@ -818,17 +945,24 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
     job = None
     start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     with prometheus() as query:
-        app = wait_baseline(query)
-        if (retry_metric_gap or verification_run or users in (500, 1000)) and app['spec']['replicas'] != 2:
+        app = wait_baseline(query, min_replicas=4) if prewarmed else wait_baseline(query)
+        if not prewarmed and (retry_metric_gap or verification_run or users in (500, 1000)) and app['spec']['replicas'] != 2:
             emit('BROWSE_WAITING_FOR_IDLE_BASELINE', current_replicas=app['spec']['replicas'],
                  timeout_seconds=600, note='Read-only wait for natural HPA downscale; no load is started.')
             app = wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
-        require(app['spec']['replicas'] == 2, 'START_WITH_TWO_REPLICAS')
-        owned_hpa(pressure_target=pressure_target, scale_up_seconds=scale_up_seconds)
+        require(app['spec']['replicas'] == (4 if prewarmed else 2),
+                'PREWARM_PODS_NOT_READY' if prewarmed else 'START_WITH_TWO_REPLICAS')
+        if prewarmed:
+            so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
+            require(re.fullmatch(r'[0-9a-f]{12}', so['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION, '')),
+                    'PREWARM_MARKER_MISSING')
+            warm_four(query, app['metadata']['uid'])
+        else:
+            owned_hpa(pressure_target=pressure_target, scale_up_seconds=scale_up_seconds)
         start = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         original = trial.fingerprint(app['spec']['template'])
         run_id = uuid4().hex[:12]
-        peak, released, last_database = 2, False, time.monotonic()
+        peak, released, last_database = 4 if prewarmed else 2, False, time.monotonic()
         samples, first_seen, resource_watch = {}, {}, trial.users.ResourceWatch()
         waiting_watch = PoolWaitingWatch()
         metric_readiness = MetricReadiness()
@@ -842,7 +976,8 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  pressure_target_per_pod=int(pressure_target),
                  scale_up_period_seconds=scale_up_seconds,
                  start_ramp_seconds=120 if slower_ramp else 60 if users == 500 else 2, max_workload_attempts=users * (duration // 2),
-                 note='Real Browse GETs; no manual scale commands or inventory writes.')
+                 prewarmed=prewarmed,
+                 note='Real Browse GETs; no direct Deployment scale commands or inventory writes.')
             deadline = time.monotonic() + duration + 300
             while True:
                 stage = 'observe_deployment'
@@ -853,8 +988,11 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                 emit('BROWSE_SCALING_OBSERVATION', desired=current['spec']['replicas'], ready=ready,
                      resource_gate_released=released)
                 stage = 'observe_autoscaler'
+                hpa_args = {'min_replicas': 4} if prewarmed else {}
                 metric_readiness.observe(owned_hpa(require_active=False, pressure_target=pressure_target,
-                                                 scale_up_seconds=scale_up_seconds), time.monotonic())
+                                                 scale_up_seconds=scale_up_seconds, **hpa_args), time.monotonic())
+                if prewarmed:
+                    require(current['spec']['replicas'] == 4 and ready == 4, 'PREWARM_CAPACITY_CHANGED')
                 stage = 'observe_load_job'
                 state = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
                 require(state['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
@@ -935,24 +1073,30 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
             print(logs, flush=True)
             outcome = json.loads(logs.splitlines()[-1])
             validate_load(outcome, run_id, users, released, slower_ramp=slower_ramp, duration=duration)
-            require(peak >= 3, 'NATURAL_SCALE_UP_NOT_OBSERVED')
+            if prewarmed:
+                require(peak == 4, 'PREWARM_CAPACITY_CHANGED')
+            else:
+                require(peak >= 3, 'NATURAL_SCALE_UP_NOT_OBSERVED')
             check_pool_errors(query)
             gaps = metric_readiness.summary()
-            emit('BROWSE_SCALE_UP_OBSERVED', peak_ready_replicas=peak)
+            emit('BROWSE_PREWARMED_LOAD_COMPLETED' if prewarmed else 'BROWSE_SCALE_UP_OBSERVED', peak_ready_replicas=peak)
             # No manual replica restoration: success requires the actual controller to downscale.
             stage = 'wait_natural_recovery'
-            wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
+            if not prewarmed:
+                wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
             stage = 'verify_final_health'
             trial.health()
             stage = 'verify_final_database_metrics'
             database_pressure()
             require(trial.database_metrics(start), 'DATABASE_METRIC_SAMPLES_UNAVAILABLE')
-            emit('BROWSE_AUTOSCALING_DRILL_OK', run_id=run_id, job=job_name, users=users, ready_replicas_before=2,
+            emit('BROWSE_PREWARMED_CAPACITY_OK' if prewarmed else 'BROWSE_AUTOSCALING_DRILL_OK',
+                 run_id=run_id, job=job_name, users=users, ready_replicas_before=4 if prewarmed else 2,
                  scheduled_duration_seconds=duration,
                  pressure_target_per_pod=int(pressure_target),
                  scale_up_period_seconds=scale_up_seconds,
                  start_ramp_seconds=120 if slower_ramp else 60 if users == 500 else 2,
-                 peak_ready_replicas=peak, ready_replicas_after=2, inventory_writes=False,
+                 peak_ready_replicas=peak, ready_replicas_after=4 if prewarmed else 2, inventory_writes=False,
+                 automatic_scale_up_tested=not prewarmed,
                  resources=resource_watch.summary(),
                  pool_waiting_observations=waiting_watch.summary(),
                  hpa_metric_observations=gaps,
@@ -982,7 +1126,8 @@ def main():
     parser.add_argument('action', choices=('deploy', 'check', 'drill', 'wait-idle', 'diagnose-500', 'diagnose-500-slow',
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
-                                         'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m'))
+                                         'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
+                                         'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1024,6 +1169,10 @@ def main():
     try:
         if action == 'deploy':
             deploy()
+        elif action == 'drill-prewarmed':
+            drill_prewarmed()
+        elif action == 'restore-prewarm':
+            restore_prewarm()
         elif action == 'drill':
             duration_args = {'duration': args.seconds} if args.seconds != 180 else {}
             drill(retry_metric_gap=args.retry_metric_gap, verification_run=args.verification_run,
@@ -1054,6 +1203,8 @@ def main():
             diagnose_500(users=1000, distribution=True)
         elif action == 'diagnose-1000-5m':
             diagnose_500(users=1000, distribution=True, duration=300)
+        elif action == 'diagnose-1000-prewarmed':
+            diagnose_500(users=1000, distribution=True, duration=300, prewarmed=True)
         else:
             trial.context()
             with prometheus() as query:

@@ -38,6 +38,96 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_prewarm_policy_only_patches_owned_marked_minimum_with_compare_and_swap(self):
+        so = scaling.scaled_object('3', 30)
+        so['metadata'].update(uid='so', resourceVersion='17', annotations={})
+        hpa = {'metadata': {'name': 'trafficxx-browse', 'ownerReferences': [{'uid': 'so', 'controller': True}]},
+               'spec': {'scaleTargetRef': {'name': 'browse'}}}
+        changes = []
+        def kube(*args):
+            if args[:2] == ('get', 'scaledobject'):
+                return json.dumps(so)
+            if args[:2] == ('get', 'hpa'):
+                return json.dumps({'items': [hpa]})
+            self.assertEqual(args[:2], ('patch', 'scaledobject'))
+            changes.append(json.loads(args[args.index('-p') + 1]))
+            return '{}'
+        with patch.object(scaling.base, 'kube', side_effect=kube), redirect_stdout(io.StringIO()):
+            scaling.prewarm_policy(4, expected_run='a' * 12)
+            self.assertEqual(changes[0][-2], {'op': 'replace', 'path': '/spec/minReplicaCount', 'value': 4})
+            self.assertEqual(changes[0][0]['path'], '/metadata/uid')
+            self.assertEqual(changes[0][1]['path'], '/metadata/resourceVersion')
+            self.assertEqual(changes[0][2]['path'], '/spec')
+            so['spec']['minReplicaCount'] = 4
+            so['metadata']['annotations'][scaling.PREWARM_ANNOTATION] = 'a' * 12
+            scaling.prewarm_policy(2, expected_run='a' * 12)
+            self.assertEqual(changes[-1][-1]['op'], 'remove')
+            with self.assertRaisesRegex(ValueError, 'OWNERSHIP_CHANGED'):
+                scaling.prewarm_policy(2, expected_run='b' * 12)
+            hpa['metadata']['ownerReferences'][0]['uid'] = 'foreign'
+            with self.assertRaisesRegex(ValueError, 'FOREIGN_HPA'):
+                scaling.prewarm_policy(2, expected_run='a' * 12)
+        self.assertEqual(len(changes), 2)
+
+    def test_prewarm_requires_four_endpoints_and_full_idle_pools(self):
+        ready = app()
+        ready['spec']['replicas'] = ready['status']['readyReplicas'] = 4
+        addresses = ['10.0.0.' + str(n) for n in range(1, 5)]
+        slices = {'items': [{'ports': [{'port': 8000}], 'endpoints': [
+            {'addresses': [ip], 'conditions': {'ready': True}, 'targetRef': {'kind': 'Pod'}} for ip in addresses]}]}
+        values = {'minimum': 8, 'pressure': 0}
+        def query(expression):
+            if expression == 'up' + scaling.F:
+                return [{'metric': {'instance': ip + ':8000'}, 'value': [0, '1']} for ip in addresses]
+            val = values['pressure'] if expression == scaling.PRESSURE else 4 if expression.startswith('count(') else values['minimum']
+            return [{'value': [0, str(val)]}]
+        with patch.object(scaling, 'deployment', return_value=ready), patch.object(scaling, 'owned_hpa'), \
+                patch.object(scaling, 'check_pool_errors'), \
+                patch.object(scaling.base, 'kube', side_effect=lambda *a: json.dumps(slices)):
+            scaling.warm_four(query, 'owned')
+            values['minimum'] = 7
+            with self.assertRaisesRegex(ValueError, 'POOL_NOT_WARM'):
+                scaling.warm_four(query, 'owned')
+            values['minimum'] = 8
+            slices['items'][0]['endpoints'][0]['conditions']['ready'] = False
+            with self.assertRaisesRegex(ValueError, 'ENDPOINTS_NOT_READY'):
+                scaling.warm_four(query, 'owned')
+
+    def test_prewarmed_wrapper_restores_on_workload_and_patch_failures(self):
+        for failure_at in ('drill', 'patch'):
+            with ExitStack() as stack:
+                for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                    (scaling.trial, 'health'), (scaling, 'database_pressure'), (scaling, 'owned_hpa')):
+                    stack.enter_context(patch.object(owner, name))
+                stack.enter_context(patch.object(scaling.base, 'kube', return_value=''))
+                stack.enter_context(patch.object(scaling, 'wait_baseline', return_value=app()))
+                stack.enter_context(patch.object(scaling, 'wait_until'))
+                stack.enter_context(patch.object(scaling, 'prometheus'))
+                policy = stack.enter_context(patch.object(scaling, 'prewarm_policy',
+                    side_effect=ValueError('PATCH_RESPONSE_LOST') if failure_at == 'patch' else None))
+                workload = stack.enter_context(patch.object(scaling, 'drill', side_effect=ValueError('LOAD_STOP')))
+                restore = stack.enter_context(patch.object(scaling, 'restore_prewarm'))
+                stack.enter_context(redirect_stdout(io.StringIO()))
+                with self.assertRaises(ValueError):
+                    scaling.drill_prewarmed()
+                restore.assert_called_once()
+                self.assertEqual(policy.call_args.kwargs['expected_run'], restore.call_args.kwargs['expected_run'])
+                if failure_at == 'patch':
+                    workload.assert_not_called()
+                else:
+                    workload.assert_called_once_with(users=1000, duration=300, prewarmed=True)
+
+    def test_prewarm_restore_refuses_active_load_and_cli_has_distinct_actions(self):
+        with patch.object(scaling.trial, 'context'), \
+                patch.object(scaling.trial, 'no_active_load', side_effect=ValueError('OTHER_READ_LOAD_ACTIVE')), \
+                patch.object(scaling, 'prewarm_policy') as policy, self.assertRaises(ValueError):
+            scaling.restore_prewarm()
+        policy.assert_not_called()
+        for action, function in (('drill-prewarmed', 'drill_prewarmed'), ('restore-prewarm', 'restore_prewarm')):
+            with patch.object(sys, 'argv', ['browse-autoscaling.py', action]), patch.object(scaling, function) as call:
+                self.assertEqual(scaling.main(), 0)
+                call.assert_called_once_with()
+
     @staticmethod
     def waiting_rows(a_stamp, a_value, b_stamp=None, b_value=0):
         return [{'metric': {'instance': name}, 'values': [[stamp, str(value)]]}
@@ -1035,7 +1125,8 @@ class Scaling(unittest.TestCase):
                  ([4, 4, 4, 2], None, {'users': 500, 'faster_scale_up': True}, 'browse-users-500-autoscaling-step30'),
                  ([4, 4, 4, 2], None, {'users': 500, 'verify_waiting_samples': True}, 'browse-users-500-autoscaling-sourcewait'),
                  ([4, 4, 4, 2], None, {'users': 1000}, 'browse-users-1000-autoscaling'),
-                 ([4, 4, 4, 2], None, {'users': 1000, 'duration': 300}, 'browse-users-1000-autoscaling-5m'))
+                 ([4, 4, 4, 2], None, {'users': 1000, 'duration': 300}, 'browse-users-1000-autoscaling-5m'),
+                 ([4, 4, 4, 4], None, {'users': 1000, 'duration': 300, 'prewarmed': True}, 'browse-users-1000-prewarmed-5m'))
         for scales, expected_error, options, job_name in cases:
             users = options.get('users', 250)
             duration = options.get('duration', 180)
@@ -1043,6 +1134,9 @@ class Scaling(unittest.TestCase):
             slower, early, verify = options.get('slower_ramp'), options.get('earlier_scaling'), options.get('verify_early')
             fast = options.get('faster_scale_up') or options.get('verify_waiting_samples') or users == 1000
             initial = app()
+            prewarmed = options.get('prewarmed', False)
+            if prewarmed:
+                initial['spec']['replicas'] = initial['status']['readyReplicas'] = 4
             pod_names = ['browse-a', 'browse-b', job_name + '-pod']
             pods = [{'metadata': {'name': name, 'labels': ({'job-name': scaling.JOB} if i == 2 else
                     {'app.kubernetes.io/name': 'trafficxx-browse'})}} for i, name in enumerate(pod_names)]
@@ -1055,6 +1149,8 @@ class Scaling(unittest.TestCase):
                                think_seconds=2, max_workload_attempts=users * (duration // 2))
             states = iter([False, False, True])
             def kube(*args, **kwargs):
+                if args[:2] == ('get', 'scaledobject'):
+                    return json.dumps({'metadata': {'annotations': {scaling.PREWARM_ANNOTATION: 'a' * 12}}})
                 if args[:2] == ('get', 'job'):
                     if '--ignore-not-found' in args:
                         return ''
@@ -1087,6 +1183,7 @@ class Scaling(unittest.TestCase):
                     (scaling, 'owned_hpa', {'return_value': {'status': {'conditions': [
                         {'type': 'ScalingActive', 'status': 'True'}]}}}),
                     (scaling, 'create_job', {'return_value': {'metadata': {'uid': 'job'}}}),
+                    (scaling, 'warm_four', {'return_value': initial}),
                     (scaling, 'deployment', {'side_effect': deployments}),
                     (scaling.base, 'kube', {'side_effect': kube}),
                     (scaling.trial.users, 'metrics', {'side_effect': metrics}),
@@ -1107,13 +1204,17 @@ class Scaling(unittest.TestCase):
                         scaling.drill(**options)
                 else:
                     scaling.drill(**options)
-                    self.assertIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
+                    self.assertIn('BROWSE_PREWARMED_CAPACITY_OK' if prewarmed else 'BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
+                    if prewarmed:
+                        self.assertNotIn('BROWSE_AUTOSCALING_DRILL_OK', output.getvalue())
+                        self.assertIn('"automatic_scale_up_tested": false', output.getvalue())
                     if early or verify or fast:
                         self.assertIn(job_name, output.getvalue())
                         self.assertIn('"pressure_target_per_pod": 3', output.getvalue())
                     if fast:
                         self.assertIn('"scale_up_period_seconds": 30', output.getvalue())
-                        scaling.owned_hpa.assert_any_call(pressure_target='3', scale_up_seconds=30)
+                        if not prewarmed:
+                            scaling.owned_hpa.assert_any_call(pressure_target='3', scale_up_seconds=30)
                     if retry or verification:
                         self.assertIn(job_name, output.getvalue())
                     # The third poll is already Job Complete. Live generator

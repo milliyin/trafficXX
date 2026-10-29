@@ -1142,6 +1142,64 @@ database maxima were CPU 5.950%, memory 21.217% and 38 connections including
 idle sessions; they do not describe the exact rejection instant. Preserve
 this failed run and its first three-minute predecessor for future comparisons.
 
+### Next controlled comparison: four warm pods before traffic
+
+The operator authorized the next attempt to complete the five-minute window.
+`drill-prewarmed` separates running capacity from the two-to-four scale-up
+transition. It keeps eight connections per pod, queue 16, maximum four pods,
+the 32-connection steady Browse cap and total planning budget 128. It
+temporarily changes only KEDA's minimum from two to four, with an ownership
+annotation and compare-and-swap tests against the exact live object. The HPA
+still owns replica changes; no direct Deployment scale command is used.
+
+Before creating the load Job, the helper requires four ready pods, four
+healthy Prometheus targets, the same four ready/nonterminating Service
+EndpointSlice addresses, zero pool pressure, and eight available connections
+per pod. This proves sampled readiness and endpoint eligibility, not balanced
+per-request routing. It then runs the same 1,000 users, 300-second total
+window, 120-second arrival ramp, two-second think time and 150,000-GET cap.
+The new preserved Job is `browse-users-1000-prewarmed-5m`.
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py drill-prewarmed
+```
+
+The helper includes health, database pressure, active-load and policy checks.
+Keep Cloud Shell open (allow about 25 minutes including warmup/recovery).
+The same first-error, sustained queueing, resource and identity stops apply.
+A longer duration or prewarming is not a guaranteed pass. No new application
+build is needed. Shared public ClickClash may contend for this infrastructure.
+
+`BROWSE_PREWARMED_CAPACITY_OK` means the workload and observer completed with
+four held pods. It does not claim automatic scale-up. The wrapper restores
+the minimum to two and waits for natural recovery; only then can it emit
+`BROWSE_PREWARMED_DRILL_OK`. It attempts restoration on failure too, but
+refuses to restore while a read load remains active or when policy/ownership
+has changed. If restoration fails, the temporary four-pod minimum may persist.
+
+After a disconnect, inspect the Job first and wait for it to become terminal:
+
+```bash
+kubectl get job browse-users-1000-prewarmed-5m -n trafficxx
+```
+
+Then capture the specific run and restore the marked minimum:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-1000-prewarmed
+python3 scripts/browse-autoscaling.py restore-prewarm
+```
+
+Run restoration even if diagnostic capture fails. The annotation survives
+Cloud Shell loss, so restoration does not rely on a missing local journal.
+The restore action validates the reviewed policy, marker and controller
+ownership, changes the minimum only, and preserves Jobs, images and data.
+If it refuses, share the error instead of manually deleting the annotation
+or editing replica counts. Do not run normal `wait-idle` while the marked
+minimum remains four: it expects the usual two-pod policy.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
