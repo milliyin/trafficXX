@@ -21,6 +21,43 @@ def load(name, path):
 
 
 class Timings(unittest.TestCase):
+    def test_eight_connection_timing_requires_exact_stable_warm_policy(self):
+        module = load('timing_eight', 'scripts/check-browse-timing.py')
+        counts = [0, 0]
+        snapshots = [0, 0]
+        fault = [None]
+        def call(index, path):
+            if path != '/internal/database-pool':
+                counts[index] += 1
+                return {'id': 'demo-' + ('general' if 'general' in path else 'seated'), 'available': 100}
+            snapshots[index] += 1
+            size = 4 if (fault[0] == 'mixed' and index == 1) or (fault[0] == 'changed' and snapshots[index] > 1) else 8
+            stats = dict(pool_min=size, pool_max=size, pool_size=size, pool_available=size,
+                requests_waiting=0, pool_waiting_limit=16, requests_num=counts[index], requests_errors=0,
+                connections_num=size, connections_errors=0, connections_lost=0, returns_bad=0,
+                rejections_queue_full=0, rejections_timeout=0, rejections_closed=0, single_statement_autocommit=1)
+            for phase in PHASES:
+                stats.update({'timing_' + phase + '_count': counts[index],
+                    'timing_' + phase + '_total_us': counts[index] * 1000,
+                    'timing_' + phase + '_max_us': 1000})
+            return {'instance_id': 'ab'[index] * 32, 'statistics': stats}
+        row = module.experiment(call, pool_size=8)
+        self.assertEqual(row['pool_per_pod'], 8)
+        self.assertEqual(row['read_mode'], 'single-statement-autocommit')
+        self.assertEqual(counts, [12, 12])
+        for failure in ('mixed', 'changed'):
+            fault[0], counts[:], snapshots[:] = failure, [0, 0], [0, 0]
+            with self.subTest(failure=failure), self.assertRaises(module.flow.CheckFailed):
+                module.experiment(call, pool_size=8)
+            if failure == 'mixed':
+                self.assertEqual(counts, [0, 0])
+        fault[0], counts[:], snapshots[:] = None, [0, 0], [0, 0]
+        with self.assertRaises(module.flow.CheckFailed):
+            module.experiment(call)  # Legacy default must still reject eight.
+        with self.assertRaises(module.flow.CheckFailed):
+            module.experiment(call, pool_size=16)
+        self.assertEqual(counts, [0, 0])
+
     def test_probe_blocks_active_load_and_preserves_failed_job(self):
         module = load('timing_job_guard', 'scripts/check-browse-timing.py')
         jobs = {'items': [{'metadata': {'name': 'browse-users-250'}, 'status': {}}]}

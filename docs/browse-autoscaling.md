@@ -1282,7 +1282,7 @@ git pull --ff-only origin main &&
 bash scripts/build-browse-image.sh &&
 python3 scripts/browse-autoscaling.py deploy-image &&
 bash scripts/check-browse-http.sh --demo &&
-python3 scripts/check-browse-timing.py
+python3 scripts/check-browse-timing.py --pool-size 8
 ```
 
 `deploy-image` requires the usual two-pod baseline and reviewed KEDA policy,
@@ -1300,6 +1300,24 @@ separate future experiment, not part of this image/timing check.
 
 See Psycopg's [transaction behavior](https://www.psycopg.org/psycopg3/docs/basic/transactions.html)
 and [pool transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
+
+The operator deployed the candidate image
+`sha256:9080ac3d8b0eb80680c2ad4f395679909b2509efd3c55614834acc28ff34db5c`.
+Rollout, two-pod KEDA baseline and Browse/Operations health checks passed.
+The initial timing invocation failed `Unexpected pool bounds`: the timing
+script and its shared snapshot validator still expected the historical
+four-connection pool. This was a checker incompatibility, not a measured
+application failure or performance verdict. The checker now accepts explicit
+`--pool-size 8` and requires that exact warm policy on both replicas before
+and after reads; its default remains four for old comparisons. Mixed sizes,
+drift, oversize pools and invalid counters still fail closed.
+
+No second image build or deployment is needed for this checker-only correction:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/check-browse-timing.py --pool-size 8
+```
 
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and

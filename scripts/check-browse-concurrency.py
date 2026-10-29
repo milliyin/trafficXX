@@ -46,7 +46,8 @@ def select_pods(deployment, items, replica_set, *, name='browse'):
     return sorted(items, key=lambda pod: pod['metadata']['name'])
 
 
-def snapshot(call, index):
+def snapshot(call, index, *, expected_pool_max=4):
+    require(type(expected_pool_max) is int and expected_pool_max in (4, 8), 'Unexpected expected pool size')
     row = call(index, '/internal/database-pool')
     require(isinstance(row.get('instance_id'), str) and len(row['instance_id']) == 32,
             'Missing process instance identifier')
@@ -58,8 +59,9 @@ def snapshot(call, index):
             'Invalid numeric pool statistics')
     waiting_limit = stats.get('pool_waiting_limit', 8)
     require(type(waiting_limit) is int and waiting_limit in (8, 16), 'Unexpected queue limit')
-    require(stats['pool_min'] in (1, 4) and stats['pool_max'] == 4
-            and 1 <= stats['pool_size'] <= 4
+    require(stats['pool_min'] in ((1, 4) if expected_pool_max == 4 else (8,))
+            and stats['pool_max'] == expected_pool_max
+            and 1 <= stats['pool_size'] <= expected_pool_max
             and stats['pool_available'] <= stats['pool_size']
             and stats['requests_waiting'] <= waiting_limit, 'Unexpected pool bounds')
     return row

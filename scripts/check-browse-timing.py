@@ -1,4 +1,5 @@
 """Cloud Shell: 12 sequential availability reads per pod with server timing deltas."""
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -26,10 +27,10 @@ def no_active_load():
                          'Another read load is active; inspect it first')
 
 
-def snapshot(call, index):
-    row = flow.snapshot(call, index)
+def snapshot(call, index, *, pool_size=4):
+    row = flow.snapshot(call, index, expected_pool_max=pool_size)
     stats = row['statistics']
-    flow.require(stats['pool_min'] == 4 and stats['pool_size'] == 4
+    flow.require(stats['pool_min'] == pool_size and stats['pool_size'] == pool_size
                  and stats.get('pool_waiting_limit') == 16, 'Expected unchanged warm pool policy')
     flow.require(all(type(stats.get('timing_' + phase + '_' + suffix)) is int
                      and stats['timing_' + phase + '_' + suffix] >= 0
@@ -38,9 +39,10 @@ def snapshot(call, index):
     return row
 
 
-def experiment(call):
+def experiment(call, *, pool_size=4):
+    flow.require(type(pool_size) is int and pool_size in (4, 8), 'Unreviewed timing pool size')
     # Verify both have instrumentation before generating the measured reads.
-    initial = [snapshot(call, index) for index in range(2)]
+    initial = [snapshot(call, index, pool_size=pool_size) for index in range(2)]
     modes = [row['statistics'].get('single_statement_autocommit', 0) for row in initial]
     flow.require(modes[0] in (0, 1) and modes[0] == modes[1], 'Browse replicas have different read modes')
     flow.require(phases(initial[0]['statistics']) == phases(initial[1]['statistics']),
@@ -57,7 +59,7 @@ def experiment(call):
             wall.append((time.perf_counter() - begun) * 1000)
             flow.require(body.get('id') == 'demo-' + route and body.get('available') == 100,
                          'Demo inventory changed')
-        after = snapshot(call, index)
+        after = snapshot(call, index, pool_size=pool_size)
         flow.require(after['instance_id'] == before['instance_id'], 'Browse process changed')
         final = after['statistics']
         flow.require(final.get('single_statement_autocommit', 0) == modes[index], 'Read mode changed')
@@ -75,6 +77,7 @@ def experiment(call):
         results.append({'reads': 12, 'timings': timings,
                         'mean_port_forward_http_ms': round(sum(wall) / len(wall), 3)})
     return {'result': 'BROWSE_TIMING_BASELINE_OK', 'per_pod': results,
+            'pool_per_pod': pool_size,
             'read_mode': 'single-statement-autocommit' if modes[0] else 'transaction',
             'query_mode': 'single-query' if 'availability_query' in phases(initial[0]['statistics']) else 'two-query',
             'inventory_writes': False, 'concurrent_workload_requests': 1,
@@ -84,5 +87,10 @@ def experiment(call):
 
 
 if __name__ == '__main__':
-    raise SystemExit(flow.main(experiment_function=experiment, failure_result='BROWSE_TIMING_BASELINE_FAILED',
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--pool-size', type=int, choices=(4, 8), default=4,
+                        help='Require this exact reviewed warm pool size on both pods (current autoscaled policy: 8).')
+    args = parser.parse_args()
+    raise SystemExit(flow.main(experiment_function=lambda call: experiment(call, pool_size=args.pool_size),
+                               failure_result='BROWSE_TIMING_BASELINE_FAILED',
                                preflight_check=no_active_load))

@@ -17,6 +17,21 @@ spec.loader.exec_module(flow)
 
 
 class BrowseConcurrency(unittest.TestCase):
+    def test_explicit_eight_slot_snapshot_preserves_legacy_default_and_bounds(self):
+        row = {'instance_id': 'a' * 32, 'statistics': dict(pool_min=8, pool_max=8, pool_size=8,
+            pool_available=8, requests_waiting=0, requests_num=1, requests_errors=0, connections_num=8,
+            connections_errors=0, connections_lost=0, returns_bad=0, pool_waiting_limit=16)}
+        call = lambda *args: row
+        flow.snapshot(call, 0, expected_pool_max=8)
+        with self.assertRaises(flow.CheckFailed):
+            flow.snapshot(call, 0)
+        for key, value in (('pool_min', 4), ('pool_max', 9), ('pool_size', 9),
+                           ('pool_available', 9), ('requests_waiting', 17)):
+            wrong = copy.deepcopy(row)
+            wrong['statistics'][key] = value
+            with self.subTest(key=key), self.assertRaises(flow.CheckFailed):
+                flow.snapshot(lambda *args: wrong, 0, expected_pool_max=8)
+
     def scenario(self, fault=None):
         lock = threading.Lock()
         requests, snapshots = [0, 0], [0, 0]
