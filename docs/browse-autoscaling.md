@@ -1033,6 +1033,33 @@ Missing values remain unknown. A diagnostic success means capture succeeded,
 not that the load test passed. No configuration or connection-budget change
 is proposed until this evidence and post-run health are reviewed.
 
+The subsequent capture confirmed `queue_full_total` and `borrow_errors_total`
+increased by approximately 1.043 on `10.244.3.131:8000`; acquire timeouts,
+closed rejections, connection errors, lost connections and bad returns showed
+zero increase. Prometheus extrapolates increases, so the fractional result is
+consistent with the one observed HTTP 503, not a fractional request count.
+Both original instances had post-terminal scrape coverage. Stored waiting
+samples were all zero, demonstrating that short queue bursts can escape
+15-second snapshots while cumulative rejection counters retain evidence.
+
+The third address had no pre-terminal scrape evidence and only about five
+estimated borrows in the extended counter window. Deployment readiness reached
+three, but this does not prove when the added pod joined Service endpoints or
+how requests were routed during the burst. Readiness, discovery and workload
+distribution are different observations. The evidence establishes a local
+queue-full rejection; it does not establish database saturation or the exact
+reason for the burst. The 1,000-user arrival rate was twice the verified
+500-user ramp's arrival rate because both used a 120-second ramp.
+
+Natural recovery subsequently passed: two ready Browse replicas, pool eight,
+zero current pressure, both demo availabilities 100, healthy Operations with
+no backlog or active alerts. The last five-minute database recovery maxima
+were CPU 6.388%, memory 21.217% and 37 active connections including idle
+sessions. This is recovery evidence, not a replacement for the failed load
+audit. Preserve this Job; do not increase the queue, database connections or
+pod ceiling solely to hide the observed rejection. Review scale-up timing
+and readiness/distribution evidence before choosing a distinct comparison.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
