@@ -70,6 +70,8 @@ def command_operation(command):
                 return 'read_' + label
         if args[:2] == ['patch', 'job']:
             return 'stop_owned_load_job'
+        if args[:2] == ['patch', 'scaledobject']:
+            return 'validate_autoscaling_patch' if '--dry-run=server' in args else 'update_autoscaling_policy'
         if args[:1] == ['exec']:
             return 'release_load_gate'
         if args[:1] == ['logs']:
@@ -385,9 +387,27 @@ def deploy_image():
          note='Only the running image changed. Verify per-pod read mode and timing before any load.')
 
 
-def prewarm_policy(desired, *, expected_run=None):
+def prewarm_patch_failure(stderr):
+    """Fixed classifications only; never expose raw API errors or object contents."""
+    value = (stderr or '').casefold()
+    if any(s in value for s in ('test failed', 'test operation does not apply', 'object has been modified',
+                                'the object has been modified', 'conflict')):
+        return 'PREWARM_SNAPSHOT_CONFLICT'
+    if any(s in value for s in ('forbidden', 'unauthorized', 'must be logged in')):
+        return 'PREWARM_PATCH_NOT_AUTHORIZED'
+    if any(s in value for s in ('webhook', 'denied the request')):
+        return 'PREWARM_ADMISSION_REJECTED'
+    if any(s in value for s in ('invalid', 'missing path', 'cannot apply', 'unprocessable')):
+        return 'PREWARM_PATCH_INVALID'
+    if any(s in value for s in ('connection refused', 'deadline exceeded', 'no such host', 'unable to connect', 'timeout')):
+        return 'PREWARM_API_UNAVAILABLE'
+    return 'PREWARM_PATCH_REJECTED'
+
+
+def prewarm_policy(desired, *, expected_run=None, dry_run=False):
     """Compare-and-swap only our marked temporary minimum; never scale Deployment directly."""
     require(desired in (2, 4), 'UNREVIEWED_MINIMUM')
+    require(not dry_run or desired == 4, 'UNREVIEWED_PREFLIGHT')
     so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
     annotations = so['metadata'].get('annotations', {})
     marker = annotations.get(PREWARM_ANNOTATION)
@@ -423,7 +443,28 @@ def prewarm_policy(desired, *, expected_run=None):
         {'op': 'add' if desired == 4 else 'remove',
          'path': '/metadata/annotations/trafficxx.io~1prewarm-run',
          **({'value': expected_run} if desired == 4 else {})}])
-    base.kube('patch', 'scaledobject', 'browse', '-n', 'trafficxx', '--type=json', '-p', json.dumps(operations))
+    if dry_run:
+        command = ['kubectl', '--request-timeout=20s', 'patch', 'scaledobject', 'browse', '-n', 'trafficxx',
+                   '--type=json', '-p', json.dumps(operations), '--dry-run=server', '-o', 'json']
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        require(result.returncode == 0, prewarm_patch_failure(result.stderr))
+        require(len(result.stdout) <= 262144, 'PREWARM_PREFLIGHT_RESPONSE_TOO_LARGE')
+        projected = json.loads(result.stdout)
+        require(projected['spec']['minReplicaCount'] == 4 and projected['spec']['maxReplicaCount'] == 4
+                and projected['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION) == expected_run,
+                'PREWARM_PREFLIGHT_RESULT_MISMATCH')
+        current = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
+        require(current['metadata']['uid'] == so['metadata']['uid'] and current['spec'] == so['spec']
+                and current['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION) == marker,
+                'PREWARM_PREFLIGHT_BASELINE_CHANGED')
+        emit('BROWSE_PREWARM_PREFLIGHT_OK', server_dry_run=True, live_min_replicas=old,
+             projected_min_replicas=4, max_replicas=4, load_started=False)
+        return expected_run
+    try:
+        base.kube('patch', 'scaledobject', 'browse', '-n', 'trafficxx', '--type=json', '-p', json.dumps(operations))
+    except subprocess.CalledProcessError as error:
+        error.prewarm_patch_attempted = True
+        raise
     emit('BROWSE_PREWARM_MINIMUM_CHANGED', min_replicas=desired, max_replicas=4,
          run_id=expected_run or marker, inventory_writes=False)
     return expected_run or marker
@@ -463,6 +504,13 @@ def restore_prewarm(*, expected_run=None):
         wait_until(lambda: idle_two(app['metadata']['uid'], query), 600)
     trial.health()
     emit('BROWSE_PREWARM_RESTORED', ready_replicas=2, inventory_writes=False)
+
+
+def preflight_prewarm():
+    trial.context()
+    trial.no_active_load()
+    owned_hpa(pressure_target='3', scale_up_seconds=30)
+    prewarm_policy(4, expected_run=uuid4().hex[:12], dry_run=True)
 
 
 def drill_prewarmed(*, profile=False):
@@ -1196,7 +1244,7 @@ def main():
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
                                          'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
                                          'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image',
-                                         'drill-user-profile', 'diagnose-user-profile'))
+                                         'drill-user-profile', 'diagnose-user-profile', 'preflight-prewarm'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1244,6 +1292,8 @@ def main():
             drill_prewarmed()
         elif action == 'drill-user-profile':
             drill_prewarmed(profile=True)
+        elif action == 'preflight-prewarm':
+            preflight_prewarm()
         elif action == 'restore-prewarm':
             restore_prewarm()
         elif action == 'drill':

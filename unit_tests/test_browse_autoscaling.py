@@ -38,6 +38,39 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_server_preflight_classifies_rejection_without_mutating_or_leaking_errors(self):
+        marker = 'a' * 12
+        so = scaling.scaled_object('3', 30)
+        so['metadata'].update(uid='so', resourceVersion='17')
+        projected = deepcopy(so)
+        projected['spec']['minReplicaCount'] = 4
+        projected['metadata']['annotations'] = {scaling.PREWARM_ANNOTATION: marker}
+        hpa = {'metadata': {'name': 'trafficxx-browse', 'ownerReferences': [{'uid': 'so', 'controller': True}]},
+               'spec': {'scaleTargetRef': {'name': 'browse'}}}
+        def kube(*args):
+            self.assertEqual(args[0], 'get')
+            return json.dumps({'items': [hpa]} if args[1] == 'hpa' else so)
+        with patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling.subprocess, 'run', return_value=Mock(returncode=0, stderr='', stdout=json.dumps(projected))) as run, \
+                redirect_stdout(io.StringIO()) as output:
+            scaling.prewarm_policy(4, expected_run=marker, dry_run=True)
+            self.assertIn('BROWSE_PREWARM_PREFLIGHT_OK', output.getvalue())
+            self.assertIn('--dry-run=server', run.call_args.args[0])
+            self.assertIn('"live_min_replicas": 2', output.getvalue())
+        cases = [('test failed', 'SNAPSHOT_CONFLICT'), ('forbidden', 'NOT_AUTHORIZED'),
+                 ('admission webhook denied the request', 'ADMISSION_REJECTED'),
+                 ('invalid missing path', 'PATCH_INVALID'), ('connection refused', 'API_UNAVAILABLE'),
+                 ('unrecognized server error', 'PATCH_REJECTED')]
+        for message, expected in cases:
+            with patch.object(scaling.base, 'kube', side_effect=kube), \
+                    patch.object(scaling.subprocess, 'run', return_value=Mock(returncode=1,
+                        stderr=message + ' PRIVATE_RESPONSE', stdout='PRIVATE_OBJECT')), \
+                    redirect_stdout(io.StringIO()) as output, self.assertRaisesRegex(ValueError, expected) as caught:
+                scaling.prewarm_policy(4, expected_run=marker, dry_run=True)
+            self.assertNotIn('PRIVATE', str(caught.exception) + output.getvalue())
+        self.assertEqual(scaling.command_operation(['kubectl', '--request-timeout=20s', 'patch', 'scaledobject', 'browse']),
+                         'update_autoscaling_policy')
+
     @staticmethod
     def profile_fields():
         return dict(hold_seconds=180, ramp_down_seconds=120, peak_active_users=1000,

@@ -1386,6 +1386,30 @@ This seven-minute workload has been prepared, not yet run on Azure. Historical
 three- and five-minute failures remain unchanged. A successful new run would
 prove only this bounded profile and would not retroactively complete them.
 
+The first operator invocation of `drill-user-profile` failed during setup,
+before the warm-pod and load-start markers. Restoration reported the normal
+two-pod baseline and healthy Browse/Operations. The error was an exit-one
+Kubernetes operation, without stderr captured by the original command wrapper.
+This is not a failed 1,000-user workload: no workload result was produced.
+The exact API rejection has not yet been established. Do not assume resource
+exhaustion or weaken policy guards based on that generic exception.
+
+Inspect the setup patch without persisting it or sending traffic:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py preflight-prewarm
+```
+
+This validates the exact guarded minimum-four patch using server-side dry run,
+checks that the live specification/marker remain unchanged, and emits either
+`BROWSE_PREWARM_PREFLIGHT_OK` or a fixed error category. It does not start a
+Job, change replicas or print raw API errors/object content. The diagnostic
+distinguishes snapshot conflicts, authorization, admission, invalid patch and
+API reachability problems where the server message permits classification.
+Share its result before repeating the load command. No new image build is
+needed for the diagnostic.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
