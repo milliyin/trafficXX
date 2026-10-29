@@ -1200,6 +1200,30 @@ If it refuses, share the error instead of manually deleting the annotation
 or editing replica counts. Do not run normal `wait-idle` while the marked
 minimum remains four: it expects the usual two-pod policy.
 
+The first live prewarmed attempt was run `b5134614b92f` (temporary policy
+marker `e52143bf0265`). The helper verified four ready Service endpoints and
+eight idle connections per pod before traffic. All four remained ready during
+the observed load. The observer stopped on `SUSTAINED_POOL_WAITING`: instance
+`10.244.2.50:8000` had waiting count one at 13:07:26.110 and
+13:07:41.110 UTC, 15 seconds apart. Another instance showed one waiting
+request in its latest sample. No final workload summary was supplied, so
+request totals, participation, HTTP errors and full latency are unknown.
+
+This did not complete five minutes. Importantly, the queue guard triggers on
+any positive waiting in successive samples; a count of one out of a configured
+16-slot queue is not by itself proof of overload, continuous waiting or poor
+HTTP latency. Queueing is expected when borrowing a finite connection pool.
+Prewarming did not avoid this stop, so scale-up delay alone cannot explain
+all outcomes. Capture `diagnose-1000-prewarmed` before deciding whether there
+were actual rejected requests and whether a separately specified pressure
+criterion is appropriate. Do not silently relabel this stopped trial a pass.
+
+Restoration succeeded: the minimum returned to two, two Browse replicas were
+ready, pool pressure was zero, both event availabilities were 100, and
+Operations remained healthy with no backlog or active alerts. No additional
+restore is needed for this reported run. The preserved Job remains available
+for historical counter and source-sample capture; do not repeat its name.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
