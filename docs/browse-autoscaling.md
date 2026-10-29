@@ -1101,6 +1101,24 @@ the full duration, correct pacing/bounds and zero HTTP errors. The complete
 drill additionally requires resource observation, real scale-up and natural
 recovery. This comparison has been prepared but has not yet run.
 
+The first live five-minute attempt, run `f116265fb4b7`, was subsequently
+stopped by `SUSTAINED_POOL_WAITING`. At `10.244.3.206:8000` the observer
+recorded positive waiting at 12:47:12.664 and 12:47:27.664 UTC, 15 seconds
+apart; the last count was one and sampled maximum two. This meets the existing
+source-sample guard, but does not prove continuous queue occupancy between
+scrapes. Deployment observation reached three ready replicas. Cleanup
+requested a stop of the owned Job. No final workload summary, HTTP counts,
+participation count or post-run recovery result was supplied; the five-minute
+workload is not a pass.
+
+Use the read-only `diagnose-1000-5m` and `wait-idle` commands above after
+pulling the update. The diagnostic now permits a missing final summary only
+when exact Job name/run arguments and a Failed/DeadlineExceeded condition
+independently establish the reviewed interrupted stage. HTTP counts, errors
+and participation remain unknown in that case. The original three-minute
+1,000-user Job does not qualify for this fallback. A still-active Job blocks
+the diagnostic and recovery checks; do not start a second load.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

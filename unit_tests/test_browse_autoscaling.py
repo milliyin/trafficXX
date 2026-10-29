@@ -160,6 +160,45 @@ class Scaling(unittest.TestCase):
             scaling.diagnostic_outcome(job, json.dumps({'result': 'BROWSE_SCALING_LOAD_OK', 'users': 500,
                                                        'run_id': 'b' * 12}), allow_interrupted=True)
 
+    def test_interrupted_five_minute_capture_preserves_unknown_counts_and_exact_args(self):
+        run_id = 'a' * 12
+        job = {'metadata': {'name': 'browse-users-1000-autoscaling-5m', 'uid': 'owned',
+                'labels': {'trafficxx.io/run-id': run_id}},
+            'status': {'startTime': '1970-01-01T00:01:00Z', 'conditions': [
+                {'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded',
+                 'lastTransitionTime': '1970-01-01T00:03:00Z'}]},
+            'spec': {'template': {'spec': {'containers': [
+                {'name': 'check', 'args': [run_id, '1000', '120', '300']}]}}}}
+        row = scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=300)
+        self.assertEqual(row['result'], 'BROWSE_SCALING_WORKLOAD_INTERRUPTED')
+        self.assertNotIn('errors', row)
+        self.assertNotIn('attempts', row)
+        self.assertFalse(row['final_workload_summary_available'])
+        self.assertEqual(row['scheduled_duration_seconds'], 300)
+        for mutate in (
+                lambda j: j['metadata'].update(name='browse-users-1000-autoscaling'),
+                lambda j: j['status']['conditions'][0].update(type='Complete'),
+                lambda j: j['status']['conditions'][0].update(reason='Other'),
+                lambda j: j['spec']['template']['spec']['containers'][0]['args'].pop()):
+            wrong = deepcopy(job)
+            mutate(wrong)
+            with self.assertRaises(ValueError):
+                scaling.diagnostic_outcome(wrong, '', allow_interrupted=True, users=1000, duration=300)
+        def kube(*args):
+            if args[0] == 'logs':
+                raise subprocess.CalledProcessError(1, ['kubectl', 'logs'])
+            self.assertEqual(args[0], 'get')
+            return json.dumps(job)
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'prometheus') as connection, redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = lambda _: []
+            scaling.diagnose_500(users=1000, duration=300, distribution=True)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result['result'], 'BROWSE_1000_DIAGNOSTICS_OK')
+        self.assertFalse(result['workload_log_capture']['available'])
+        self.assertNotIn('attempts', result['workload'])
+
     def test_deadline_stopped_step30_capture_needs_no_final_workload_summary(self):
         job = {'metadata': {'uid': 'owned', 'name': 'browse-users-500-autoscaling-step30',
                             'labels': {'trafficxx.io/run-id': 'a' * 12}},

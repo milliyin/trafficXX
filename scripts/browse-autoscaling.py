@@ -646,7 +646,7 @@ def waiting_history(query, end):
     return result
 
 
-def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500):
+def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duration=180):
     try:
         outcome = json.loads(logs.splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
@@ -657,16 +657,20 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500):
         require(outcome.get('users') == users and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
         return outcome
     # Our stop shortens the deadline while retaining logs. Admit missing final
-    # summaries only for the fixed, deadline-stopped step30 Job with exact args.
-    require(users == 500 and allow_interrupted and job['metadata'].get('name') in (
-                'browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
+    # summaries only for reviewed, deadline-stopped Jobs with exact args.
+    allowed_names = (('browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
+                     if users == 500 and duration == 180 else
+                     ('browse-users-1000-autoscaling-5m',) if users == 1000 and duration == 300 else ())
+    require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
     containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
     require(len(containers) == 1 and containers[0].get('name') == 'check'
-            and containers[0].get('args') == [run_id, '500', '120'], 'INTERRUPTED_JOB_ARGUMENTS_MISMATCH')
+            and containers[0].get('args') == [run_id, str(users), '120'] + (['300'] if duration == 300 else []),
+            'INTERRUPTED_JOB_ARGUMENTS_MISMATCH')
     return {'result': 'BROWSE_SCALING_WORKLOAD_INTERRUPTED', 'run_id': run_id,
-            'users': 500, 'start_ramp_seconds': 120, 'final_workload_summary_available': False,
+            'users': users, 'start_ramp_seconds': 120, 'scheduled_duration_seconds': duration,
+            'max_workload_attempts': users * (duration // 2), 'final_workload_summary_available': False,
             'note': 'Deadline-stopped Job without a final summary. HTTP counts, errors and participation are unknown.'}
 
 
@@ -699,14 +703,16 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     try:
         logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        if not (faster_scale_up or verify_waiting_samples):
+        if not (faster_scale_up or verify_waiting_samples or duration == 300):
             raise
         # Metadata must independently prove this exact interrupted stage.
         # Missing logs never permit a completed or unrecognized Job to pass.
-        outcome = diagnostic_outcome(job, '', allow_interrupted=True)
+        outcome = diagnostic_outcome(job, '', allow_interrupted=True, users=users, duration=duration)
         log_capture = {'available': False, **failure_details(error)}
     else:
-        outcome = diagnostic_outcome(job, logs, allow_interrupted=faster_scale_up or verify_waiting_samples, users=users)
+        outcome = diagnostic_outcome(job, logs,
+            allow_interrupted=faster_scale_up or verify_waiting_samples or duration == 300,
+            users=users, duration=duration)
         if duration == 300:
             require(outcome.get('scheduled_duration_seconds') == 300
                     and outcome.get('max_workload_attempts') == 150000, 'DIAGNOSTIC_DURATION_MISMATCH')
