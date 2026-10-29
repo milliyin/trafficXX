@@ -1319,6 +1319,73 @@ git pull --ff-only origin main &&
 python3 scripts/check-browse-timing.py --pool-size 8
 ```
 
+The corrected live timing check passed on both pods using that image, pool
+eight and `read_mode: single-statement-autocommit`. Reported acquire/body/return
+means were 27.469/28.646/0.038 ms and 26.008/26.771/0.034 ms. The sums of
+these phase means were approximately 56 and 53 ms, compared with approximately
+118 and 103 ms in the preceding transactional single-query baseline. This is
+encouraging sequential diagnostic evidence, not a controlled causal estimate,
+exact connection holding time or a load-capacity result. Observation counts
+can include readiness traffic. Port-forward HTTP means remained 416.880 and
+381.210 ms, so these samples do not show a comparable end-to-end speedup.
+
+### Explicit seven-minute user profile after the read optimization
+
+The operator's requested profile is now available as a distinct comparison:
+
+| Phase | Seconds from workload start | Paced users |
+| --- | --- | --- |
+| Ramp up | 0–120 | 0 to 1,000 |
+| Hold | 120–300 | 1,000 |
+| Ramp down | 300–420 | 1,000 to zero |
+
+Each user's arrival and departure are scheduled relative to the same workload
+clock. No new request starts after that user's departure; an already running
+request may finish. Every user keeps the two-second think time after each
+response. Active user count includes users thinking between requests; it is
+not concurrent HTTP requests or requests per second. The 210,000-attempt cap
+is an upper bound, not a throughput target. Progress is sampled around every
+five seconds while requests complete, plus a final zero-active sample.
+Final output includes per-phase request counts, status counts and latency.
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py drill-user-profile
+```
+
+The helper prewarms and holds four pods using the same marked minimum and
+restoration safeguards as the previous capacity experiment. This isolates
+the deployed read candidate with ready capacity; it does not test scale-up
+from two. The new preserved Job is `browse-users-1000-autocommit-profile`.
+All pool/queue/connection/generator budgets and first-error, request-latency,
+source-waiting and resource stops remain unchanged. A profile pass requires
+all participants, full 420-second duration, zero errors, a verified 1,000-user
+hold and observed gradual withdrawal to zero. A stop remains a failed trial.
+
+No image rebuild is required for the profile: the current application image
+is used and the new probe is mounted as a ConfigMap. Keep Cloud Shell open
+through marked-minimum restoration and recovery, allowing about 30 minutes
+including warmup/load/recovery. The Job deadline is 690 seconds and parent
+load observation deadline 720 seconds; recovery is separately bounded.
+
+After a disconnect, inspect this exact Job and wait until terminal:
+
+```bash
+kubectl get job browse-users-1000-autocommit-profile -n trafficxx
+```
+
+Then capture and restore, running restoration even if capture fails:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-user-profile
+python3 scripts/browse-autoscaling.py restore-prewarm
+```
+
+This seven-minute workload has been prepared, not yet run on Azure. Historical
+three- and five-minute failures remain unchanged. A successful new run would
+prove only this bounded profile and would not retroactively complete them.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

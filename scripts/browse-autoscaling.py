@@ -465,12 +465,13 @@ def restore_prewarm(*, expected_run=None):
     emit('BROWSE_PREWARM_RESTORED', ready_replicas=2, inventory_writes=False)
 
 
-def drill_prewarmed():
+def drill_prewarmed(*, profile=False):
     trial.context()
     trial.no_active_load()
     trial.health()
     database_pressure()
-    require(not base.kube('get', 'job', 'browse-users-1000-prewarmed-5m', '-n', 'trafficxx',
+    job_name = 'browse-users-1000-autocommit-profile' if profile else 'browse-users-1000-prewarmed-5m'
+    require(not base.kube('get', 'job', job_name, '-n', 'trafficxx',
                           '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     marker = uuid4().hex[:12]
     changed = False
@@ -486,7 +487,7 @@ def drill_prewarmed():
             database_pressure()
             emit('BROWSE_FOUR_PODS_PREWARMED', ready_replicas=4, connections_per_pod=8,
                  ready_service_endpoints=4, automatic_scale_up_tested=False)
-        drill(users=1000, duration=300, prewarmed=True)
+        drill(users=1000, duration=420 if profile else 300, prewarmed=True)
     finally:
         if changed:
             try:
@@ -496,7 +497,7 @@ def drill_prewarmed():
                      note='Run restore-prewarm after the Job stops. The marked temporary minimum may remain four.')
                 raise
     emit('BROWSE_PREWARMED_DRILL_OK', ready_replicas_after=2, users=1000,
-         scheduled_duration_seconds=300, inventory_writes=False, automatic_scale_up_tested=False)
+         scheduled_duration_seconds=420 if profile else 300, inventory_writes=False, automatic_scale_up_tested=False)
 
 
 def contains(actual, expected):
@@ -639,7 +640,7 @@ def wait_until(function, seconds):
 def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, duration=180):
     require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(not slower_ramp or users in (500, 1000), 'UNSUPPORTED_RAMP')
-    require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
+    require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
     files = 'browse-scaling-' + run_id
     base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
     cm = base.kube('create', 'configmap', files, '-n', 'trafficxx',
@@ -659,7 +660,8 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
               'value': app['spec']['template']['spec']['containers'][0]['image']},
              {'op': 'add', 'path': '/spec/template/spec/containers/0/args',
               'value': [run_id, str(users)] + (['120'] if slower_ramp or users == 1000 else [])
-                       + ([str(duration)] if duration != 180 else [])}]
+                       + ([str(duration)] if duration != 180 else [])
+                       + (['ramp-down'] if duration == 420 else [])}]
     manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
         '--type=json', '--patch', json.dumps(patch), '-o', 'json')
     try:
@@ -810,13 +812,16 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
     allowed_names = (('browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
                      if users == 500 and duration == 180 else
                      ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
-                     if users == 1000 and duration == 300 else ())
+                     if users == 1000 and duration == 300 else
+                     ('browse-users-1000-autocommit-profile',) if users == 1000 and duration == 420 else ())
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
     containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
     require(len(containers) == 1 and containers[0].get('name') == 'check'
-            and containers[0].get('args') == [run_id, str(users), '120'] + (['300'] if duration == 300 else []),
+            and containers[0].get('args') == [run_id, str(users), '120']
+                + ([str(duration)] if duration in (300, 420) else [])
+                + (['ramp-down'] if duration == 420 else []),
             'INTERRUPTED_JOB_ARGUMENTS_MISMATCH')
     return {'result': 'BROWSE_SCALING_WORKLOAD_INTERRUPTED', 'run_id': run_id,
             'users': users, 'start_ramp_seconds': 120, 'scheduled_duration_seconds': duration,
@@ -828,13 +833,15 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                  faster_scale_up=False, verify_waiting_samples=False, users=500, duration=180, prewarmed=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     require(type(users) is int and users in (500, 1000), 'UNSUPPORTED_USER_COUNT')
-    require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
-    require(not prewarmed or (users == 1000 and duration == 300), 'UNSUPPORTED_PREWARMED_PROFILE')
+    require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
+    require(not prewarmed or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_PREWARMED_PROFILE')
+    require(duration != 420 or prewarmed, 'UNSUPPORTED_PREWARMED_PROFILE')
     require(users == 500 or not any((slower_ramp, earlier_scaling, verify_early,
                                     faster_scale_up, verify_waiting_samples)), 'CONFLICTING_DRILL_MODES')
     trial.context()
     trial.no_active_load()
-    name = ('browse-users-1000-prewarmed-5m' if prewarmed else
+    name = ('browse-users-1000-autocommit-profile' if duration == 420 else
+            'browse-users-1000-prewarmed-5m' if prewarmed else
             'browse-users-1000-autoscaling-5m' if duration == 300 else
             'browse-users-1000-autoscaling' if users == 1000 else
             'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
@@ -848,14 +855,16 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
         containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
         require(job['metadata'].get('name') == name and len(containers) == 1
                 and containers[0].get('name') == 'check'
-                and containers[0].get('args') == [run_id, '1000', '120'] + (['300'] if duration == 300 else []),
+                and containers[0].get('args') == [run_id, '1000', '120']
+                    + ([str(duration)] if duration in (300, 420) else [])
+                    + (['ramp-down'] if duration == 420 else []),
                 'DIAGNOSTIC_JOB_ARGUMENTS_MISMATCH')
     start, end, window = diagnostic_window(job)
     log_capture = {'available': True}
     try:
         logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        if not (faster_scale_up or verify_waiting_samples or duration == 300):
+        if not (faster_scale_up or verify_waiting_samples or duration in (300, 420)):
             raise
         # Metadata must independently prove this exact interrupted stage.
         # Missing logs never permit a completed or unrecognized Job to pass.
@@ -863,11 +872,11 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
         log_capture = {'available': False, **failure_details(error)}
     else:
         outcome = diagnostic_outcome(job, logs,
-            allow_interrupted=faster_scale_up or verify_waiting_samples or duration == 300,
+            allow_interrupted=faster_scale_up or verify_waiting_samples or duration in (300, 420),
             users=users, duration=duration)
-        if duration == 300:
-            require(outcome.get('scheduled_duration_seconds') == 300
-                    and outcome.get('max_workload_attempts') == 150000, 'DIAGNOSTIC_DURATION_MISMATCH')
+        if duration in (300, 420):
+            require(outcome.get('scheduled_duration_seconds') == duration
+                    and outcome.get('max_workload_attempts') == users * (duration // 2), 'DIAGNOSTIC_DURATION_MISMATCH')
     when = str(int(end.timestamp()))
     require(not (slower_ramp or earlier_scaling or verify_early or faster_scale_up or verify_waiting_samples or users == 1000)
             or outcome.get('start_ramp_seconds') == 120,
@@ -919,8 +928,36 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
               'peaks are sampled and missing data is null.')
 
 
+def validate_profile(outcome):
+    require(outcome.get('hold_seconds') == 180 and outcome.get('ramp_down_seconds') == 120
+            and outcome.get('peak_active_users') == 1000 and outcome.get('active_users_after_workload') == 0,
+            'USER_PROFILE_NOT_VERIFIED')
+    phases = outcome.get('phases', {})
+    require(set(phases) == {'ramp_up', 'hold', 'ramp_down'}, 'USER_PROFILE_PHASES_MISSING')
+    for phase in phases.values():
+        attempts = phase.get('attempts')
+        require(type(attempts) is int and attempts > 0 and phase.get('status_counts') == {'200': attempts},
+                'USER_PROFILE_PHASE_INCOMPLETE')
+    require(sum(p['attempts'] for p in phases.values()) == outcome['attempts'], 'USER_PROFILE_COUNTS_MISMATCH')
+    samples = outcome.get('progress_samples', [])
+    require(isinstance(samples, list) and 3 <= len(samples) <= 100, 'USER_PROFILE_PROGRESS_MISSING')
+    previous = -1
+    for sample in samples:
+        stamp, active = sample.get('elapsed_seconds'), sample.get('active_users')
+        require(type(stamp) in (int, float) and math.isfinite(stamp) and previous <= stamp <= 435
+                and type(active) is int and 0 <= active <= 1000, 'INVALID_USER_PROFILE_PROGRESS')
+        previous = stamp
+    hold = [r for r in samples if 120 <= r['elapsed_seconds'] < 300]
+    down = [r for r in samples if r['elapsed_seconds'] >= 300]
+    require(len(hold) >= 2 and hold[0]['elapsed_seconds'] <= 126 and hold[-1]['elapsed_seconds'] >= 294
+            and all(r['active_users'] == 1000 for r in hold), 'USER_PROFILE_HOLD_NOT_VERIFIED')
+    require(len(down) >= 2 and down[-1]['elapsed_seconds'] >= 420 and down[-1]['active_users'] == 0
+            and all(a['active_users'] >= b['active_users'] for a, b in zip(down, down[1:])),
+            'USER_PROFILE_RAMP_DOWN_NOT_VERIFIED')
+
+
 def validate_load(outcome, run_id, users, released, *, slower_ramp=False, duration=180):
-    require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
+    require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
     require(outcome.get('result') == 'BROWSE_SCALING_LOAD_OK' and outcome.get('run_id') == run_id,
             'LOAD_EVIDENCE_MISSING')
     require(released and outcome.get('users_with_requests') == users and
@@ -932,13 +969,16 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False, durati
         require(outcome.get('users') == users and outcome.get('scheduled_duration_seconds') == duration and
                 outcome.get('start_ramp_seconds') == (120 if slower_ramp or users == 1000 else 60) and outcome.get('think_seconds') == 2 and
                 outcome.get('max_workload_attempts') == users * (duration // 2), 'HIGHER_STAGE_PACING_NOT_VERIFIED')
+    if duration == 420:
+        validate_profile(outcome)
 
 
 def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
           verify_early=False, faster_scale_up=False, verify_waiting_samples=False, duration=180, prewarmed=False):
     require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
-    require(duration == 180 or (users == 1000 and duration == 300), 'UNSUPPORTED_DURATION')
-    require(not prewarmed or (users == 1000 and duration == 300), 'UNSUPPORTED_PREWARMED_PROFILE')
+    require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
+    require(not prewarmed or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_PREWARMED_PROFILE')
+    require(duration != 420 or prewarmed, 'UNSUPPORTED_PREWARMED_PROFILE')
     require(not (retry_metric_gap and verification_run), 'CONFLICTING_DRILL_MODES')
     require(users == 250 or not (retry_metric_gap or verification_run), 'CONFLICTING_DRILL_MODES')
     require(not slower_ramp or users == 500, 'UNSUPPORTED_RAMP')
@@ -954,7 +994,8 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
     pressure_target = '3' if earlier_scaling else '5'
     scale_up_seconds = 30 if faster_scale_up else 60
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = ('browse-users-1000-prewarmed-5m' if prewarmed else
+    job_name = ('browse-users-1000-autocommit-profile' if duration == 420 else
+                'browse-users-1000-prewarmed-5m' if prewarmed else
                 'browse-users-1000-autoscaling-5m' if duration == 300 else
                 'browse-users-1000-autoscaling' if users == 1000 else
                 'browse-users-500-autoscaling-sourcewait' if verify_waiting_samples else
@@ -995,7 +1036,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         metric_readiness = MetricReadiness()
         stage, primary_error, job_terminal = 'create_load_job', None, False
         try:
-            job = (create_job(app, run_id, job_name, users=users, slower_ramp=True, duration=duration) if duration == 300 else
+            job = (create_job(app, run_id, job_name, users=users, slower_ramp=True, duration=duration) if duration in (300, 420) else
                    create_job(app, run_id, job_name, users=users, slower_ramp=True) if slower_ramp else
                    create_job(app, run_id, job_name, users=500) if users == 500 else
                    create_job(app, run_id, job_name))
@@ -1154,7 +1195,8 @@ def main():
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
                                          'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
-                                         'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image'))
+                                         'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image',
+                                         'drill-user-profile', 'diagnose-user-profile'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1200,6 +1242,8 @@ def main():
             deploy_image()
         elif action == 'drill-prewarmed':
             drill_prewarmed()
+        elif action == 'drill-user-profile':
+            drill_prewarmed(profile=True)
         elif action == 'restore-prewarm':
             restore_prewarm()
         elif action == 'drill':
@@ -1234,6 +1278,8 @@ def main():
             diagnose_500(users=1000, distribution=True, duration=300)
         elif action == 'diagnose-1000-prewarmed':
             diagnose_500(users=1000, distribution=True, duration=300, prewarmed=True)
+        elif action == 'diagnose-user-profile':
+            diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True)
         else:
             trial.context()
             with prometheus() as query:

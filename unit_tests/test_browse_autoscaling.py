@@ -38,6 +38,112 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    @staticmethod
+    def profile_fields():
+        return dict(hold_seconds=180, ramp_down_seconds=120, peak_active_users=1000,
+            active_users_after_workload=0, phases={p: {'attempts': 7000, 'status_counts': {'200': 7000}}
+                for p in ('ramp_up', 'hold', 'ramp_down')}, progress_samples=[
+                {'elapsed_seconds': t, 'active_users': n} for t, n in
+                ((120, 1000), (295, 1000), (300, 1000), (360, 500), (420, 0))])
+
+    def test_seven_minute_schedule_and_profile_evidence(self):
+        for index in range(1000):
+            arrival, departure = probe.user_window(index)
+            self.assertAlmostEqual(arrival, index * .12)
+            self.assertAlmostEqual(departure, 300 + (index + 1) * .12)
+            self.assertGreater(departure - arrival, 300)
+        self.assertEqual(probe.user_window(999)[1], 420)
+        self.assertEqual([probe.profile_phase(t) for t in (0, 119.9, 120, 299.9, 300, 420)],
+                         ['ramp_up', 'ramp_up', 'hold', 'hold', 'ramp_down', 'ramp_down'])
+        for at, expected in ((0, 1), (60, 501), (120, 1000), (299, 1000), (360, 500), (420, 0)):
+            self.assertEqual(sum(a <= at < b for a, b in map(probe.user_window, range(1000))), expected)
+        row = dict(result='BROWSE_SCALING_LOAD_OK', run_id='a' * 12, users=1000, users_with_requests=1000,
+            scheduled_duration_seconds=420, elapsed_seconds=422, start_ramp_seconds=120, think_seconds=2,
+            max_workload_attempts=210000, attempts=21000, status_counts={'200': 21000}, errors={}, **self.profile_fields())
+        scaling.validate_load(row, 'a' * 12, 1000, True, duration=420)
+        for mutate in (lambda r: r.update(ramp_down_seconds=0), lambda r: r.update(peak_active_users=999),
+                       lambda r: r['progress_samples'][1].update(active_users=999),
+                       lambda r: r['progress_samples'][-1].update(elapsed_seconds=300),
+                       lambda r: r['phases']['hold'].update(attempts=6999),
+                       lambda r: r.update(active_users_after_workload=1)):
+            wrong = deepcopy(row)
+            mutate(wrong)
+            with self.assertRaises(ValueError):
+                scaling.validate_load(wrong, 'a' * 12, 1000, True, duration=420)
+        for duration, down in ((420, False), (300, True)):
+            with self.assertRaises(ValueError):
+                probe.run('a' * 12, users=1000, duration=duration, ramp_down=down, http=Mock())
+
+    def test_profile_generator_enforces_each_arrival_and_departure_with_simulated_time(self):
+        clock, current, observed = [0.0], [0], {}
+        class Event:
+            def wait(self, seconds):
+                clock[0] += seconds
+                return False
+            def is_set(self):
+                return False
+            def set(self):
+                raise AssertionError('Unexpected HTTP failure')
+        def execute(fn, ids):
+            for i in ids:
+                clock[0], current[0] = 0.0, i
+                fn(i)
+            return []
+        def http(url, customer):
+            observed.setdefault(current[0], []).append(clock[0])
+            seated = 'seated' in url
+            return 200, {'id': 'demo-seated' if seated else 'demo-general',
+                'inventory_type': 'SEATED' if seated else 'GENERAL', 'available': 100,
+                'seats': [f'A{n}' for n in range(1, 101)] if seated else None}
+        with patch.object(probe, 'ThreadPoolExecutor') as executor, \
+                patch.object(probe.threading, 'Event', Event), \
+                patch.object(probe.time, 'monotonic', side_effect=lambda: clock[0]), redirect_stdout(io.StringIO()):
+            executor.return_value.__enter__.return_value.map.side_effect = execute
+            row = probe.run('a' * 12, users=1000, duration=420, ramp_down=True, http=http)
+        self.assertEqual(row['users_with_requests'], 1000)
+        self.assertLessEqual(row['attempts'], 210000)
+        self.assertEqual(row['active_users_after_workload'], 0)
+        self.assertEqual(row['result'], 'BROWSE_SCALING_LOAD_FAILED')  # Sequential fixture cannot prove 1000 active users.
+        for i, times in observed.items():
+            arrival, departure = probe.user_window(i)
+            self.assertGreaterEqual(min(times), arrival)
+            self.assertLess(max(times), departure)
+        self.assertTrue(all(p['attempts'] > 0 for p in row['phases'].values()))
+
+    def test_profile_cli_is_distinct_from_previous_failed_jobs(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill-user-profile']), \
+                patch.object(scaling, 'drill_prewarmed') as call:
+            self.assertEqual(scaling.main(), 0)
+            call.assert_called_once_with(profile=True)
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'diagnose-user-profile']), \
+                patch.object(scaling, 'diagnose_500') as call:
+            self.assertEqual(scaling.main(), 0)
+            call.assert_called_once_with(users=1000, distribution=True, duration=420, prewarmed=True)
+
+    def test_profile_early_error_preserves_summary_and_unreached_phase_counts(self):
+        with redirect_stdout(io.StringIO()):
+            row = probe.run('a' * 12, users=1000, duration=420, ramp_down=True,
+                            http=Mock(return_value=(503, {'detail': {'code': 'DATABASE_BUSY'}})))
+        self.assertEqual(row['result'], 'BROWSE_SCALING_LOAD_FAILED')
+        self.assertEqual(row['active_users_after_workload'], 0)
+        self.assertEqual(row['first_failure']['service_error_code'], 'DATABASE_BUSY')
+        self.assertEqual(row['phases']['hold']['attempts'], 0)
+        self.assertEqual(row['phases']['hold']['latency_ms'], {})
+        self.assertEqual(row['phases']['ramp_down']['attempts'], 0)
+
+    def test_profile_interrupted_diagnostic_requires_ramp_down_argument(self):
+        run_id = 'a' * 12
+        job = {'metadata': {'name': 'browse-users-1000-autocommit-profile',
+                           'labels': {'trafficxx.io/run-id': run_id}},
+            'status': {'conditions': [{'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded'}]},
+            'spec': {'template': {'spec': {'containers': [
+                {'name': 'check', 'args': [run_id, '1000', '120', '420', 'ramp-down']}]}}}}
+        row = scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
+        self.assertEqual(row['scheduled_duration_seconds'], 420)
+        self.assertNotIn('attempts', row)
+        job['spec']['template']['spec']['containers'][0]['args'].pop()
+        with self.assertRaises(ValueError):
+            scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
     def test_image_release_changes_only_image_and_keeps_live_policy(self):
         initial = app()
         initial['metadata']['resourceVersion'] = '17'
@@ -127,7 +233,7 @@ class Scaling(unittest.TestCase):
                 scaling.warm_four(query, 'owned')
 
     def test_prewarmed_wrapper_restores_on_workload_and_patch_failures(self):
-        for failure_at in ('drill', 'patch'):
+        for profile, failure_at in ((False, 'drill'), (False, 'patch'), (True, 'drill')):
             with ExitStack() as stack:
                 for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
                                     (scaling.trial, 'health'), (scaling, 'database_pressure'), (scaling, 'owned_hpa')):
@@ -142,13 +248,13 @@ class Scaling(unittest.TestCase):
                 restore = stack.enter_context(patch.object(scaling, 'restore_prewarm'))
                 stack.enter_context(redirect_stdout(io.StringIO()))
                 with self.assertRaises(ValueError):
-                    scaling.drill_prewarmed()
+                    scaling.drill_prewarmed(profile=profile)
                 restore.assert_called_once()
                 self.assertEqual(policy.call_args.kwargs['expected_run'], restore.call_args.kwargs['expected_run'])
                 if failure_at == 'patch':
                     workload.assert_not_called()
                 else:
-                    workload.assert_called_once_with(users=1000, duration=300, prewarmed=True)
+                    workload.assert_called_once_with(users=1000, duration=420 if profile else 300, prewarmed=True)
 
     def test_prewarm_restore_refuses_active_load_and_cli_has_distinct_actions(self):
         with patch.object(scaling.trial, 'context'), \
@@ -1101,6 +1207,13 @@ class Scaling(unittest.TestCase):
         self.assertFalse(any('/resources' in p['path'] for p in patches))
         self.assertEqual(next(p['value'] for p in patches if p['path'] == '/metadata/name'),
                          'browse-users-500-autoscaling')
+
+        patches.clear()
+        with patch.object(scaling.base, 'kube', side_effect=kube):
+            scaling.create_job(initial, 'a' * 12, 'browse-users-1000-autocommit-profile', users=1000, duration=420)
+        self.assertEqual(next(p['value'] for p in patches if p['path'].endswith('/args')),
+                         ['a' * 12, '1000', '120', '420', 'ramp-down'])
+        self.assertEqual(next(p['value'] for p in patches if p['path'] == '/spec/activeDeadlineSeconds'), 690)
         patches.clear()
         with patch.object(scaling.base, 'kube', side_effect=kube):
             scaling.create_job(initial, 'a' * 12, 'browse-users-500-autoscaling-ramp120', users=500, slower_ramp=True)
@@ -1159,7 +1272,8 @@ class Scaling(unittest.TestCase):
                  ([4, 4, 4, 2], None, {'users': 500, 'verify_waiting_samples': True}, 'browse-users-500-autoscaling-sourcewait'),
                  ([4, 4, 4, 2], None, {'users': 1000}, 'browse-users-1000-autoscaling'),
                  ([4, 4, 4, 2], None, {'users': 1000, 'duration': 300}, 'browse-users-1000-autoscaling-5m'),
-                 ([4, 4, 4, 4], None, {'users': 1000, 'duration': 300, 'prewarmed': True}, 'browse-users-1000-prewarmed-5m'))
+                 ([4, 4, 4, 4], None, {'users': 1000, 'duration': 300, 'prewarmed': True}, 'browse-users-1000-prewarmed-5m'),
+                 ([4, 4, 4, 4], None, {'users': 1000, 'duration': 420, 'prewarmed': True}, 'browse-users-1000-autocommit-profile'))
         for scales, expected_error, options, job_name in cases:
             users = options.get('users', 250)
             duration = options.get('duration', 180)
@@ -1180,6 +1294,8 @@ class Scaling(unittest.TestCase):
             if users in (500, 1000):
                 outcome.update(users=users, scheduled_duration_seconds=duration, start_ramp_seconds=120 if slower or early or verify or fast else 60,
                                think_seconds=2, max_workload_attempts=users * (duration // 2))
+            if duration == 420:
+                outcome.update(self.profile_fields())
             states = iter([False, False, True])
             def kube(*args, **kwargs):
                 if args[:2] == ('get', 'scaledobject'):
