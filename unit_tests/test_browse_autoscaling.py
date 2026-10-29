@@ -832,6 +832,30 @@ class Scaling(unittest.TestCase):
                 scaling.main()
             context.assert_not_called()
 
+    def test_five_minute_cli_and_duration_evidence(self):
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '1000', '--seconds', '300']), \
+                patch.object(scaling, 'drill') as drill:
+            self.assertEqual(scaling.main(), 0)
+            self.assertEqual(drill.call_args.kwargs['duration'], 300)
+        row = {'result': 'BROWSE_SCALING_LOAD_OK', 'run_id': 'a' * 12, 'users': 1000,
+            'users_with_requests': 1000, 'scheduled_duration_seconds': 300, 'elapsed_seconds': 302,
+            'start_ramp_seconds': 120, 'think_seconds': 2, 'max_workload_attempts': 150000,
+            'attempts': 100000, 'status_counts': {'200': 100000}, 'errors': {}}
+        scaling.validate_load(row, 'a' * 12, 1000, True, duration=300)
+        for key, value in (('elapsed_seconds', 182), ('scheduled_duration_seconds', 180),
+                           ('max_workload_attempts', 90000), ('users_with_requests', 999)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                scaling.validate_load(dict(row, **{key: value}), 'a' * 12, 1000, True, duration=300)
+        with self.assertRaises(ValueError):
+            scaling.drill(users=500, duration=300)
+        with self.assertRaises(ValueError):
+            probe.run('a' * 12, users=500, duration=300, http=Mock())
+        with patch.object(sys, 'argv', ['browse-autoscaling.py', 'check', '--seconds', '300']), \
+                patch.object(scaling.trial, 'context') as context, \
+                patch.object(sys, 'stderr', io.StringIO()), self.assertRaises(SystemExit):
+            scaling.main()
+        context.assert_not_called()
+
     def test_500_cli_propagates_only_the_selected_supported_stage(self):
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500']), \
                 patch.object(scaling, 'drill') as drill:
@@ -868,18 +892,18 @@ class Scaling(unittest.TestCase):
             return 200, seated if 'demo-seated' in url else general
         # Execute every user and request with fake waits and time. This tests
         # scheduling/caps only; it is not real load or a latency measurement.
-        for users, ramp in ((500, 60), (500, 120), (1000, 120)):
+        for users, ramp, duration in ((500, 60, 180), (500, 120, 180), (1000, 120, 180), (1000, 120, 300)):
             waits.clear()
             with patch.object(probe, 'ThreadPoolExecutor') as executor, \
                     patch.object(probe.threading, 'Event', Event), \
                     patch.object(probe.time, 'monotonic', return_value=0), redirect_stdout(io.StringIO()):
                 executor.return_value.__enter__.return_value.map.side_effect = lambda fn, ids: [fn(i) for i in ids]
-                result = probe.run('a' * 12, users=users, ramp_seconds=ramp, http=http)
-            self.assertEqual(result['attempts'], users * 90)
+                result = probe.run('a' * 12, users=users, ramp_seconds=ramp, duration=duration, http=http)
+            self.assertEqual(result['attempts'], users * (duration // 2))
             self.assertEqual(result['users_with_requests'], users)
-            self.assertEqual(result['status_counts'], {'200': users * 90})
+            self.assertEqual(result['status_counts'], {'200': users * (duration // 2)})
             self.assertEqual(result['start_ramp_seconds'], ramp)
-            self.assertAlmostEqual(waits[(users - 1) * 91], (users - 1) * ramp / users)
+            self.assertAlmostEqual(waits[(users - 1) * (duration // 2 + 1)], (users - 1) * ramp / users)
             executor.assert_called_once_with(max_workers=users)
 
     def test_slow_ramp_must_be_verified_and_cannot_change_arbitrary_pacing(self):
@@ -926,6 +950,12 @@ class Scaling(unittest.TestCase):
             scaling.create_job(initial, 'a' * 12, 'browse-users-1000-autoscaling', users=1000)
         self.assertEqual(next(p['value'] for p in patches if p['path'].endswith('/args')), ['a' * 12, '1000', '120'])
         self.assertFalse(any('/resources' in p['path'] for p in patches))
+        patches.clear()
+        with patch.object(scaling.base, 'kube', side_effect=kube):
+            scaling.create_job(initial, 'a' * 12, 'browse-users-1000-autoscaling-5m', users=1000, duration=300)
+        self.assertEqual(next(p['value'] for p in patches if p['path'].endswith('/args')), ['a' * 12, '1000', '120', '300'])
+        self.assertEqual(next(p['value'] for p in patches if p['path'] == '/spec/activeDeadlineSeconds'), 570)
+        self.assertFalse(any('/resources' in p['path'] for p in patches))
 
     def test_native_paced_threads_stop_on_http_error(self):
         # Shortened clock fixture, real ThreadPoolExecutor, no cluster claims.
@@ -965,9 +995,11 @@ class Scaling(unittest.TestCase):
                  ([4, 4, 4, 2], None, {'users': 500, 'verify_early': True}, 'browse-users-500-autoscaling-pressure3-v2'),
                  ([4, 4, 4, 2], None, {'users': 500, 'faster_scale_up': True}, 'browse-users-500-autoscaling-step30'),
                  ([4, 4, 4, 2], None, {'users': 500, 'verify_waiting_samples': True}, 'browse-users-500-autoscaling-sourcewait'),
-                 ([4, 4, 4, 2], None, {'users': 1000}, 'browse-users-1000-autoscaling'))
+                 ([4, 4, 4, 2], None, {'users': 1000}, 'browse-users-1000-autoscaling'),
+                 ([4, 4, 4, 2], None, {'users': 1000, 'duration': 300}, 'browse-users-1000-autoscaling-5m'))
         for scales, expected_error, options, job_name in cases:
             users = options.get('users', 250)
+            duration = options.get('duration', 180)
             retry, verification = options.get('retry_metric_gap'), options.get('verification_run')
             slower, early, verify = options.get('slower_ramp'), options.get('earlier_scaling'), options.get('verify_early')
             fast = options.get('faster_scale_up') or options.get('verify_waiting_samples') or users == 1000
@@ -978,10 +1010,10 @@ class Scaling(unittest.TestCase):
             pods[2]['metadata']['labels']['job-name'] = job_name
             outcome = {'result': 'BROWSE_SCALING_LOAD_OK', 'run_id': 'a' * 12,
                 'users_with_requests': users, 'attempts': 21000, 'status_counts': {'200': 21000},
-                'errors': {}, 'elapsed_seconds': 180.1}
+                'errors': {}, 'elapsed_seconds': duration + .1}
             if users in (500, 1000):
-                outcome.update(users=users, scheduled_duration_seconds=180, start_ramp_seconds=120 if slower or early or verify or fast else 60,
-                               think_seconds=2, max_workload_attempts=users * 90)
+                outcome.update(users=users, scheduled_duration_seconds=duration, start_ramp_seconds=120 if slower or early or verify or fast else 60,
+                               think_seconds=2, max_workload_attempts=users * (duration // 2))
             states = iter([False, False, True])
             def kube(*args, **kwargs):
                 if args[:2] == ('get', 'job'):

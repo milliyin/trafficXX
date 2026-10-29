@@ -15,7 +15,8 @@ URL = 'http://browse.trafficxx.svc.cluster.local'
 
 def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=read.read_url):
     read.require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_RUN_ID')
-    read.require(type(users) is int and users in (250, 500, 1000) and duration == 180 and think == 2,
+    read.require(type(users) is int and users in (250, 500, 1000) and think == 2 and
+                 (duration == 180 or (users == 1000 and duration == 300)),
                  'UNSUPPORTED_DRILL')
     if ramp_seconds is None:
         ramp_seconds = 120 if users == 1000 else 60 if users == 500 else 2
@@ -30,7 +31,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
     def user(index):
         if stop.wait(index * ramp_seconds / users):
             return
-        for iteration in range(90):
+        for iteration in range(duration // think):
             if stop.is_set() or time.monotonic() >= deadline:
                 return
             route = ('general', 'seated')[(index + iteration) % 2]
@@ -63,7 +64,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
     result = {'result': 'BROWSE_SCALING_LOAD_OK' if not failures and len(participants) == users else 'BROWSE_SCALING_LOAD_FAILED',
         'run_id': run_id, 'users': users, 'users_with_requests': len(participants),
         'scheduled_duration_seconds': duration, 'start_ramp_seconds': ramp_seconds,
-        'think_seconds': think, 'max_workload_attempts': users * 90,
+        'think_seconds': think, 'max_workload_attempts': users * (duration // think),
         'attempts': len(rows), 'status_counts': dict(Counter(str(r[0]) for r in rows)), 'errors': dict(failures),
         'first_failure': first_failure[0] if first_failure else None,
         'latency_ms': read.percentiles([r[1] for r in rows]) if rows else {},
@@ -81,7 +82,8 @@ if __name__ == '__main__':
             read.require(time.monotonic() < deadline, 'RESOURCE_GATE_TIMEOUT')
             time.sleep(1)
         result = run(sys.argv[1], users=int(sys.argv[2]) if len(sys.argv) >= 3 else 250,
-                     ramp_seconds=int(sys.argv[3]) if len(sys.argv) == 4 else None)
+                     ramp_seconds=int(sys.argv[3]) if len(sys.argv) >= 4 else None,
+                     duration=int(sys.argv[4]) if len(sys.argv) == 5 else 180)
         raise SystemExit(0 if result['result'] == 'BROWSE_SCALING_LOAD_OK' else 1)
     except Exception as error:
         print(json.dumps({'result': 'BROWSE_SCALING_LOAD_FAILED', 'error_type': type(error).__name__}), flush=True)

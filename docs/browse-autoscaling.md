@@ -1060,6 +1060,47 @@ audit. Preserve this Job; do not increase the queue, database connections or
 pod ceiling solely to hide the observed rejection. Review scale-up timing
 and readiness/distribution evidence before choosing a distinct comparison.
 
+### Authorized five-minute comparison
+
+The operator requested a five-minute 1,000-user run. This explicitly changes
+the scheduled workload window to 300 seconds, keeping the same 120-second
+arrival ramp and two-second pauses. Thus all users participate for roughly
+the final three minutes, not five minutes at full population. The new preserved
+Job is `browse-users-1000-autoscaling-5m`; the failed first Job remains intact.
+The maximum is 150,000 GETs, not a target request count. The generator deadline
+is 570 seconds and parent load-observation deadline 600 seconds to include
+resource warmup; natural recovery remains separately bounded at 600 seconds.
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/check-browse-http.sh --demo &&
+bash scripts/check-operations-http.sh &&
+python3 scripts/browse-autoscaling.py check &&
+python3 scripts/browse-autoscaling.py drill --users 1000 --seconds 300
+```
+
+Keep Cloud Shell open through the final result, allowing about 20 minutes
+including warmup and recovery. Only the explicit 1,000-user drill supports
+300 seconds. No application rebuild or autoscaling configuration change is
+needed. Pod, queue, database connection and generator resource limits remain
+unchanged. The first-error and sustained-pressure stops remain in force:
+requesting a longer run does not fix the preceding queue rejection or
+guarantee that the workload reaches five minutes.
+
+If the run fails, do not repeat it or delete its evidence. Capture and recover:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-1000-5m &&
+python3 scripts/browse-autoscaling.py wait-idle
+```
+
+The diagnostic pins the new Job and exact `[run_id, "1000", "120", "300"]`
+arguments. A successful five-minute workload summary must prove all users,
+the full duration, correct pacing/bounds and zero HTTP errors. The complete
+drill additionally requires resource observation, real scale-up and natural
+recovery. This comparison has been prepared but has not yet run.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
