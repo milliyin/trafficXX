@@ -1224,6 +1224,36 @@ Operations remained healthy with no backlog or active alerts. No additional
 restore is needed for this reported run. The preserved Job remains available
 for historical counter and source-sample capture; do not repeat its name.
 
+The later diagnostic recovered the final workload summary for that same run:
+598 users participated, with 10,328 HTTP 200 responses and one HTTP 503
+`DATABASE_BUSY` among 10,329 attempts. The first rejection was at 71.785
+seconds (11.822 ms); elapsed workload time was 72.171 seconds. Reported
+latencies for this truncated mixed-result run were p50 139.508 ms,
+p95 196.869 ms, p99 244.122 ms and maximum 416.540 ms. This supersedes the
+earlier statement that those workload fields were unavailable.
+
+Queue-full and borrow-error counters increased approximately 1.040 on
+`10.244.3.206:8000`, with zero increase for timeouts, closed rejections,
+connection errors, lost connections and bad returns. All four instances had
+post-terminal coverage. Estimated borrow increases were approximately
+2,771, 2,767, 2,814 and 2,722 (including background traffic and counter tail),
+which do not suggest a large sustained distribution imbalance; they cannot
+exclude brief uneven routing. Sampled busy/opening connections peaked at
+29 of the 32-slot cap. Pool snapshots can miss the brief burst that fills a
+16-slot local queue.
+
+This confirms a real rejection in addition to the observer's conservative
+waiting stop. Relaxing that waiting guard alone would not produce a zero-error
+pass. Four ready, warm pods did not suffice for this tested arrival profile;
+that does not establish a fixed 598-user capacity limit or database saturation.
+Investigate connection holding time before another trial. Current Browse
+code executes a single availability statement but uses the shared transactional
+pool context and checkout liveness check. Earlier timings and the cross-region
+deployment suggest network/transaction round trips are worth measuring; they
+do not yet prove which optimization would complete 1,000 users. Any read-only
+transaction optimization must preserve SQL permissions, error handling and
+connection checks, and leave Booking write transactions unchanged.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
