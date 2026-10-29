@@ -130,6 +130,33 @@ class BrowsePool(unittest.TestCase):
         self.assertEqual(self.module.pool_parameters(), {'password': 'FIRST'})
         self.assertEqual(self.module.pool_parameters(), {'password': 'NEW'})
 
+    def test_autocommit_reads_keep_fresh_tokens_and_checkout_checks(self):
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', autocommit=True)
+        database.open()
+        self.parameters.assert_not_called()
+        options = self.factory.call_args.kwargs
+        self.assertIs(options['check'], self.factory.check_connection)
+        self.parameters.side_effect = [{'password': 'FIRST'}, {'password': 'NEXT'}]
+        self.assertEqual(options['kwargs'](), {'password': 'FIRST', 'autocommit': True})
+        self.assertEqual(options['kwargs'](), {'password': 'NEXT', 'autocommit': True})
+        connection = MagicMock()
+        self.pool.connection.return_value.__enter__.return_value = connection
+        with database.read_connection() as conn:
+            self.assertIs(conn, connection)
+        connection.transaction.assert_not_called()
+        with database.connection() as conn:
+            self.assertIs(conn, connection)
+        connection.transaction.assert_called_once_with()
+        connection.transaction.return_value.__exit__.assert_called_once()
+
+    def test_transactional_booking_does_not_opt_into_read_autocommit(self):
+        booking = self.module.DatabasePool('booking', 'BOOKING_DB_POOL_MAX')
+        booking.open()
+        self.assertNotIn('autocommit', self.factory.call_args.kwargs['kwargs']())
+        with self.assertRaises(RuntimeError):
+            with booking.read_connection():
+                self.fail('Booking must not use the single-statement path')
+
     def test_booking_capacity_is_independent_from_browse(self):
         booking = self.module.DatabasePool('booking', 'BOOKING_DB_POOL_MAX')
         with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '8', 'BOOKING_DB_POOL_MAX': '2'}):

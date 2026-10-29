@@ -38,6 +38,39 @@ def app():
 
 
 class Scaling(unittest.TestCase):
+    def test_image_release_changes_only_image_and_keeps_live_policy(self):
+        initial = app()
+        initial['metadata']['resourceVersion'] = '17'
+        initial['spec']['template']['spec']['containers'][0]['image'] = 'old'
+        reference = 'trafficxxacre8708a85.azurecr.io/trafficxx@sha256:' + 'a' * 64
+        current = deepcopy(initial)
+        current['spec']['template']['spec']['containers'][0]['image'] = reference
+        operations = []
+        def kube(*args, **kwargs):
+            operations.append(args)
+            return 'rollout ok'
+        with ExitStack() as stack:
+            for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                (scaling.trial, 'health'), (scaling, 'database_pressure'), (scaling, 'owned_hpa')):
+                stack.enter_context(patch.object(owner, name))
+            stack.enter_context(patch.object(Path, 'read_text', return_value=reference))
+            stack.enter_context(patch.object(scaling, 'wait_baseline', return_value=initial))
+            stack.enter_context(patch.object(scaling, 'deployment', return_value=current))
+            stack.enter_context(patch.object(scaling, 'prometheus'))
+            stack.enter_context(patch.object(scaling.base, 'kube', side_effect=kube))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            scaling.deploy_image()
+        patch_ops = json.loads(operations[0][operations[0].index('-p') + 1])
+        self.assertEqual([op for op in patch_ops if op['op'] != 'test'], [
+            {'op': 'replace', 'path': '/spec/template/spec/containers/0/image', 'value': reference}])
+        self.assertEqual(patch_ops[0]['path'], '/metadata/uid')
+        self.assertEqual(patch_ops[1]['path'], '/metadata/resourceVersion')
+        with patch.object(scaling.trial, 'context'), \
+                patch.object(scaling.trial, 'no_active_load', side_effect=ValueError('OTHER_READ_LOAD_ACTIVE')), \
+                patch.object(scaling.base, 'kube') as kube, self.assertRaises(ValueError):
+            scaling.deploy_image()
+        kube.assert_not_called()
+
     def test_prewarm_policy_only_patches_owned_marked_minimum_with_compare_and_swap(self):
         so = scaling.scaled_object('3', 30)
         so['metadata'].update(uid='so', resourceVersion='17', annotations={})

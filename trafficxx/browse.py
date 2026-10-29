@@ -22,7 +22,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='trafficXX Browse API', version='0.1.0', lifespan=lifespan)
-register(app, connection_factory=database.connection)
+register(app, connection_factory=database.read_connection)
 
 
 @app.get('/internal/database-pool', include_in_schema=False)
@@ -38,13 +38,13 @@ def metrics():
 
 @app.get('/events')
 def events():
-    with database.connection() as conn:
+    with database.read_connection() as conn:
         return conn.execute('SELECT * FROM events ORDER BY id').fetchall()
 
 
 @app.get('/events/{event_id}/availability')
 def availability(event_id: str):
-    with database.connection() as conn:
+    with database.read_connection() as conn:
         with database.timings.measure('availability_query'):
             event = fetch_availability(conn, event_id)
         if not event:

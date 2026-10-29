@@ -27,6 +27,31 @@ def test_sequential_requests_reuse_physical_connection(database):
         assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] == first
 
 
+def test_single_statement_read_returns_idle_without_an_explicit_transaction(database):
+    from psycopg.pq import TransactionStatus
+    with database.read_connection() as conn:
+        assert conn.autocommit is True
+        first = conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid']
+        assert conn.info.transaction_status == TransactionStatus.IDLE
+    with pytest.raises(psycopg.errors.DivisionByZero):
+        with database.read_connection() as conn:
+            conn.execute('SELECT 1 / 0')
+    with database.read_connection() as conn:
+        assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] == first
+        assert conn.info.transaction_status == TransactionStatus.IDLE
+
+
+def test_explicit_transaction_path_still_rolls_back_an_autocommit_pool(database):
+    from psycopg.pq import TransactionStatus
+    with pytest.raises(ValueError):
+        with database.connection() as conn:
+            assert conn.info.transaction_status == TransactionStatus.INTRANS
+            conn.execute("INSERT INTO events VALUES ('explicit-rollback', 'Must roll back', 'GENERAL')")
+            raise ValueError('abort request')
+    with database.read_connection() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM events WHERE id='explicit-rollback'").fetchone()['n'] == 0
+
+
 def test_failed_transaction_rolls_back_before_reuse(database):
     with pytest.raises(psycopg.errors.DivisionByZero):
         with database.connection() as conn:

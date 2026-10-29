@@ -41,6 +41,8 @@ def snapshot(call, index):
 def experiment(call):
     # Verify both have instrumentation before generating the measured reads.
     initial = [snapshot(call, index) for index in range(2)]
+    modes = [row['statistics'].get('single_statement_autocommit', 0) for row in initial]
+    flow.require(modes[0] in (0, 1) and modes[0] == modes[1], 'Browse replicas have different read modes')
     flow.require(phases(initial[0]['statistics']) == phases(initial[1]['statistics']),
                  'Browse replicas have different query timing policies')
     results = []
@@ -58,6 +60,7 @@ def experiment(call):
         after = snapshot(call, index)
         flow.require(after['instance_id'] == before['instance_id'], 'Browse process changed')
         final = after['statistics']
+        flow.require(final.get('single_statement_autocommit', 0) == modes[index], 'Read mode changed')
         for key in ('requests_errors', 'connections_errors', 'connections_lost', 'returns_bad',
                     'rejections_queue_full', 'rejections_timeout', 'rejections_closed'):
             flow.require(type(stats.get(key)) is int and final.get(key) == stats[key], 'Pool error changed')
@@ -72,6 +75,7 @@ def experiment(call):
         results.append({'reads': 12, 'timings': timings,
                         'mean_port_forward_http_ms': round(sum(wall) / len(wall), 3)})
     return {'result': 'BROWSE_TIMING_BASELINE_OK', 'per_pod': results,
+            'read_mode': 'single-statement-autocommit' if modes[0] else 'transaction',
             'query_mode': 'single-query' if 'availability_query' in phases(initial[0]['statistics']) else 'two-query',
             'inventory_writes': False, 'concurrent_workload_requests': 1,
             'note': 'Timing deltas may include background readiness/other traffic. Acquisition includes checkout checks; '

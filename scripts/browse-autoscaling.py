@@ -358,6 +358,33 @@ def configure_fast_scale_up():
          inventory_writes=False, note='Allows faster additions when metrics request them; no load was started.')
 
 
+def deploy_image():
+    """Roll only the reviewed image; preserve the live KEDA/pool/template policy."""
+    trial.context()
+    trial.no_active_load()
+    trial.health()
+    reference = (ROOT / 'browse-image.txt').read_text().strip()
+    require(re.fullmatch(r'trafficxxacre8708a85\.azurecr\.io/trafficxx@sha256:[0-9a-f]{64}', reference),
+            'INVALID_BROWSE_IMAGE')
+    database_pressure()
+    with prometheus() as query:
+        app = wait_baseline(query)
+        require(app['spec']['replicas'] == 2, 'START_WITH_TWO_REPLICAS')
+        owned_hpa(pressure_target='3', scale_up_seconds=30)
+        changes = [{'op': 'test', 'path': '/metadata/uid', 'value': app['metadata']['uid']},
+                   {'op': 'test', 'path': '/metadata/resourceVersion', 'value': app['metadata']['resourceVersion']},
+                   {'op': 'test', 'path': '/spec/template', 'value': app['spec']['template']},
+                   {'op': 'replace', 'path': '/spec/template/spec/containers/0/image', 'value': reference}]
+        base.kube('patch', 'deployment', 'browse', '-n', 'trafficxx', '--type=json', '-p', json.dumps(changes))
+        print(base.kube('rollout', 'status', 'deployment/browse', '-n', 'trafficxx', '--timeout=600s', timeout=620), flush=True)
+        wait_baseline(query)
+        current = deployment(app['metadata']['uid'])
+        require(current['spec']['template']['spec']['containers'][0]['image'] == reference, 'IMAGE_CHANGED')
+    trial.health()
+    emit('BROWSE_AUTOSCALED_IMAGE_DEPLOYED', image=reference, inventory_writes=False,
+         note='Only the running image changed. Verify per-pod read mode and timing before any load.')
+
+
 def prewarm_policy(desired, *, expected_run=None):
     """Compare-and-swap only our marked temporary minimum; never scale Deployment directly."""
     require(desired in (2, 4), 'UNREVIEWED_MINIMUM')
@@ -1127,7 +1154,7 @@ def main():
                                          'configure-early', 'diagnose-500-early', 'diagnose-500-verify',
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
                                          'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
-                                         'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed'))
+                                         'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1169,6 +1196,8 @@ def main():
     try:
         if action == 'deploy':
             deploy()
+        elif action == 'deploy-image':
+            deploy_image()
         elif action == 'drill-prewarmed':
             drill_prewarmed()
         elif action == 'restore-prewarm':

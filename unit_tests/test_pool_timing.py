@@ -52,7 +52,7 @@ class Timings(unittest.TestCase):
     def test_browse_boundaries_include_return_and_preserve_exceptions(self):
         events = []
         class Base:
-            def __init__(self, *args):
+            def __init__(self, *args, **kwargs):
                 pass
             def statistics(self):
                 return {'instance_id': 'a' * 32, 'statistics': {}}
@@ -102,6 +102,17 @@ class Timings(unittest.TestCase):
         self.assertEqual(counts, [12, 12])
         self.assertEqual(report['per_pod'][0]['timings']['availability_query']['mean_ms'], 1)
         self.assertEqual(report['query_mode'], 'single-query')
+        self.assertEqual(report['read_mode'], 'transaction')
+        def autocommit(index, path):
+            row = call(index, path)
+            if path == '/internal/database-pool':
+                row['statistics']['single_statement_autocommit'] = 1
+            return row
+        self.assertEqual(module.experiment(autocommit)['read_mode'], 'single-statement-autocommit')
+        before_modes = list(counts)
+        with self.assertRaisesRegex(module.flow.CheckFailed, 'different read modes'):
+            module.experiment(lambda i, p: autocommit(i, p) if i == 0 else call(i, p))
+        self.assertEqual(counts, before_modes)
 
         def legacy(index, path):
             row = call(index, path)

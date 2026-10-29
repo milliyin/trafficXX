@@ -1254,6 +1254,53 @@ do not yet prove which optimization would complete 1,000 users. Any read-only
 transaction optimization must preserve SQL permissions, error handling and
 connection checks, and leave Booking write transactions unchanged.
 
+### Browse single-statement read candidate
+
+The operator authorized work on connection holding time after that diagnosis.
+Browse now creates autocommit-capable pooled connections and uses a dedicated
+`read_connection()` path for its fixed single-statement event list,
+availability query and readiness SELECT. This avoids an explicit BEGIN/COMMIT
+around each such read. PostgreSQL still executes each statement atomically;
+the availability response continues to come from one SQL statement. This is
+not a cache and does not change the availability predicate or SQL grants.
+
+The existing `connection()` API still opens an explicit transaction for
+multi-statement callers, preserving rollback behavior in pool diagnostics.
+Booking continues to use its original transaction-based pool. Physical
+connection checkout checks, token resolution on each new connection,
+pool/queue sizes, timeouts, TLS settings and error responses remain enabled.
+`single_statement_autocommit: 1` appears in Browse's allowlisted numeric
+statistics. The timing checker reports `read_mode` and rejects mixed modes.
+
+The candidate passed local PostgreSQL reuse/error-recovery/rollback tests,
+including Booking tests. These functional checks do not establish a latency
+improvement or a 1,000-user pass. First deploy and measure from Cloud Shell:
+
+```bash
+cd ~/trafficxx &&
+git pull --ff-only origin main &&
+bash scripts/build-browse-image.sh &&
+python3 scripts/browse-autoscaling.py deploy-image &&
+bash scripts/check-browse-http.sh --demo &&
+python3 scripts/check-browse-timing.py
+```
+
+`deploy-image` requires the usual two-pod baseline and reviewed KEDA policy,
+blocks active read loads, validates the digest, and compare-and-swaps only
+the Deployment image. It preserves the running pool/replica policy instead
+of applying the old fixed-two-pod manifest. Do not use `deploy-browse.sh`
+while Browse has an HPA. No Booking or ClickClash image is updated.
+
+Review both replicas' acquire/body/return deltas against earlier timings
+before any distinct new load. Sequential port-forward timing includes client
+and network overhead and is not a production SLO. The previous failed Jobs
+remain intact; do not reuse their names. A seven-minute profile with a
+two-minute ramp up, three-minute hold and two-minute ramp down remains a
+separate future experiment, not part of this image/timing check.
+
+See Psycopg's [transaction behavior](https://www.psycopg.org/psycopg3/docs/basic/transactions.html)
+and [pool transaction contexts](https://www.psycopg.org/psycopg3/docs/advanced/pool.html).
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

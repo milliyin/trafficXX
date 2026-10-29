@@ -8,19 +8,32 @@ from trafficxx.pool_timing import PoolTimings
 
 class BrowseDatabase(DatabasePool):
     def __init__(self):
-        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING')
+        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING',
+                         autocommit=True)
         self.timings = PoolTimings()
 
     def statistics(self):
         row = super().statistics()
         row['statistics'].update(self.timings.statistics())
+        row['statistics']['single_statement_autocommit'] = 1
         return row
 
     @contextmanager
     def connection(self):
+        with self._timed_connection(single_statement=False) as conn:
+            yield conn
+
+    @contextmanager
+    def read_connection(self):
+        with self._timed_connection(single_statement=True) as conn:
+            yield conn
+
+    @contextmanager
+    def _timed_connection(self, *, single_statement):
         begun, returning = perf_counter(), None
         try:
-            with super().connection() as conn:
+            lease = super().read_connection() if single_statement else super().connection()
+            with lease as conn:
                 acquired = perf_counter()
                 self.timings.record('acquire', acquired - begun)
                 try:
