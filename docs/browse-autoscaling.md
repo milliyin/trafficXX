@@ -1119,6 +1119,29 @@ and participation remain unknown in that case. The original three-minute
 1,000-user Job does not qualify for this fallback. A still-active Job blocks
 the diagnostic and recovery checks; do not start a second load.
 
+After the shell reconnect, historical capture for this same run succeeded.
+The preserved Job interval was 12:44:40 to 12:47:32 UTC, including warmup,
+not five minutes of traffic. All three instances at termination had subsequent
+scrape coverage. Counter increases showed queue-full and borrow-error activity
+of approximately 1.165 on the newly observed `10.244.2.188:8000` instance;
+acquisition timeouts, closed rejections, connection errors, lost connections
+and bad returns showed zero increase. This is extrapolated counter evidence
+of a queue-full rejection, not an exact HTTP response count. Positive waiting
+source samples that stopped the observer were on a different instance,
+`10.244.3.206:8000`; do not conflate those two observations or infer a routing
+fault. The added instance had only one pre-terminal scrape, insufficient to
+reconstruct its warmup or moment-by-moment routing.
+
+Final workload logs were unavailable, and exact deadline-stop metadata was
+used to classify the workload as interrupted. Request totals, HTTP error
+counts, participant count and latency remain unknown. The disconnect did not
+turn this into a completed five-minute workload. Natural recovery passed:
+two ready Browse pods, zero current pressure, both event availabilities 100,
+healthy workers and no backlog or active Operations alerts. Recovery-window
+database maxima were CPU 5.950%, memory 21.217% and 38 connections including
+idle sessions; they do not describe the exact rejection instant. Preserve
+this failed run and its first three-minute predecessor for future comparisons.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
