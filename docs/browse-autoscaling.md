@@ -1410,6 +1410,37 @@ API reachability problems where the server message permits classification.
 Share its result before repeating the load command. No new image build is
 needed for the diagnostic.
 
+On 3 November the operator's server-side preflight passed with live minimum
+two and projected minimum four, but a subsequent real invocation again failed
+at `update_autoscaling_policy` before load started. Restoration passed with
+two ready pods and healthy Browse/Operations. The live patch previously used
+a generic wrapper that discarded stderr, unlike the dry run; therefore the
+successful preflight did not identify the later real rejection's cause.
+
+Both dry-run and live patches now use captured command results and fixed,
+redacted error categories. A live snapshot-conflict rejection may be retried
+at most three times after refetching the resource version. Every retry
+requires the same resource UID, full policy specification and annotations as
+the first attempt, as well as the controller/ownership guards. Operator edits,
+foreign markers, authorization/admission failures, transport errors and
+unclassified rejections are not silently retried or overridden. Returned
+object identity, desired minimum and preserved policy are verified after
+success. Setup failures now carry an explicit setup stage and load-start flag.
+
+Since this reported failure occurred before Job creation and restoration
+passed, the operator can pull this helper-only correction and invoke the same
+distinct profile command again:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py drill-user-profile
+```
+
+The existing-Job and active-load guards still refuse any overlapping or
+previously created run. No rebuild is needed. A future error category is
+evidence to investigate, not permission to remove compare-and-swap guards.
+No successful seven-minute workload has been supplied yet.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

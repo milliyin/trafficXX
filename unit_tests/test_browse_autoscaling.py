@@ -221,10 +221,18 @@ class Scaling(unittest.TestCase):
                 return json.dumps(so)
             if args[:2] == ('get', 'hpa'):
                 return json.dumps({'items': [hpa]})
-            self.assertEqual(args[:2], ('patch', 'scaledobject'))
-            changes.append(json.loads(args[args.index('-p') + 1]))
-            return '{}'
-        with patch.object(scaling.base, 'kube', side_effect=kube), redirect_stdout(io.StringIO()):
+            self.fail('Only policy reads may use the generic command wrapper')
+        def submit(operations, **kwargs):
+            changes.append(operations)
+            projected = deepcopy(so)
+            projected['spec']['minReplicaCount'] = operations[-2]['value']
+            if operations[-1]['op'] == 'remove':
+                projected['metadata']['annotations'].pop(scaling.PREWARM_ANNOTATION)
+            else:
+                projected['metadata']['annotations'][scaling.PREWARM_ANNOTATION] = operations[-1]['value']
+            return projected
+        with patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'submit_prewarm_patch', side_effect=submit), redirect_stdout(io.StringIO()):
             scaling.prewarm_policy(4, expected_run='a' * 12)
             self.assertEqual(changes[0][-2], {'op': 'replace', 'path': '/spec/minReplicaCount', 'value': 4})
             self.assertEqual(changes[0][0]['path'], '/metadata/uid')
@@ -240,6 +248,53 @@ class Scaling(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'FOREIGN_HPA'):
                 scaling.prewarm_policy(2, expected_run='a' * 12)
         self.assertEqual(len(changes), 2)
+
+    def test_live_patch_retry_is_bounded_and_requires_unchanged_policy_and_ownership(self):
+        marker = 'a' * 12
+        for change in (None, 'spec', 'annotations', 'uid', 'persistent', 'forbidden'):
+            so = scaling.scaled_object('3', 30)
+            so['metadata'].update(uid='so', resourceVersion='17', annotations={})
+            hpa = {'metadata': {'name': 'trafficxx-browse', 'ownerReferences': [{'uid': 'so', 'controller': True}]},
+                   'spec': {'scaleTargetRef': {'name': 'browse'}}}
+            submissions = []
+            def kube(*args):
+                self.assertEqual(args[0], 'get')
+                return json.dumps({'items': [hpa]} if args[1] == 'hpa' else so)
+            def submit(operations, **kwargs):
+                submissions.append(operations)
+                if len(submissions) == 1 or change == 'persistent':
+                    so['metadata']['resourceVersion'] = str(int(so['metadata']['resourceVersion']) + 1)
+                    if change == 'spec':
+                        so['spec']['maxReplicaCount'] = 5
+                    elif change == 'annotations':
+                        so['metadata']['annotations']['operator-change'] = 'new'
+                    elif change == 'uid':
+                        so['metadata']['uid'] = 'replacement'
+                    raise scaling.PrewarmPatchRejected('PREWARM_PATCH_NOT_AUTHORIZED' if change == 'forbidden'
+                                                       else 'PREWARM_SNAPSHOT_CONFLICT')
+                projected = deepcopy(so)
+                projected['spec']['minReplicaCount'] = 4
+                projected['metadata']['annotations'][scaling.PREWARM_ANNOTATION] = marker
+                return projected
+            with self.subTest(change=change), patch.object(scaling.base, 'kube', side_effect=kube), \
+                    patch.object(scaling, 'submit_prewarm_patch', side_effect=submit), \
+                    patch.object(scaling.time, 'sleep') as sleep, redirect_stdout(io.StringIO()):
+                if change is None:
+                    scaling.prewarm_policy(4, expected_run=marker)
+                    self.assertEqual(submissions[0][1]['value'], '17')
+                    self.assertEqual(submissions[1][1]['value'], '18')
+                else:
+                    with self.assertRaises(ValueError):
+                        scaling.prewarm_policy(4, expected_run=marker)
+            self.assertEqual(len(submissions), 2 if change is None else 3 if change == 'persistent' else 1)
+            self.assertEqual(sleep.call_count, 2 if change == 'persistent' else 0 if change == 'forbidden' else 1)
+
+    def test_live_patch_errors_are_captured_without_raw_response_or_dry_run_flag(self):
+        with patch.object(scaling.subprocess, 'run', return_value=Mock(returncode=1, stdout='PRIVATE_OBJECT',
+                stderr='Forbidden PRIVATE_RESPONSE')) as run, self.assertRaisesRegex(ValueError, 'NOT_AUTHORIZED') as error:
+            scaling.submit_prewarm_patch([{'op': 'test', 'path': '/metadata/uid', 'value': 'owned'}])
+        self.assertNotIn('--dry-run=server', run.call_args.args[0])
+        self.assertNotIn('PRIVATE', str(error.exception))
 
     def test_prewarm_requires_four_endpoints_and_full_idle_pools(self):
         ready = app()

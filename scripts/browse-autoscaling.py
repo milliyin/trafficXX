@@ -404,12 +404,47 @@ def prewarm_patch_failure(stderr):
     return 'PREWARM_PATCH_REJECTED'
 
 
+class PrewarmPatchRejected(ValueError):
+    pass
+
+
+def submit_prewarm_patch(operations, *, dry_run=False):
+    command = ['kubectl', '--request-timeout=20s', 'patch', 'scaledobject', 'browse', '-n', 'trafficxx',
+               '--type=json', '-p', json.dumps(operations), '-o', 'json']
+    if dry_run:
+        command.append('--dry-run=server')
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise PrewarmPatchRejected(prewarm_patch_failure(result.stderr)) from None
+    require(len(result.stdout) <= 262144, 'PREWARM_PATCH_RESPONSE_TOO_LARGE')
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise ValueError('PREWARM_PATCH_RESPONSE_INVALID') from None
+
+
 def prewarm_policy(desired, *, expected_run=None, dry_run=False):
+    baseline = None
+    for attempt in range(3):
+        try:
+            return prewarm_policy_once(desired, expected_run=expected_run, dry_run=dry_run, baseline=baseline)
+        except PrewarmPatchRejected as error:
+            if dry_run or str(error) != 'PREWARM_SNAPSHOT_CONFLICT' or attempt == 2:
+                raise
+            baseline = error.prewarm_baseline
+            emit('BROWSE_PREWARM_SNAPSHOT_RETRY', attempt=attempt + 1, maximum_attempts=3,
+                 note='Refetching the same owned policy after a rejected snapshot; no load has started.')
+            time.sleep(attempt + 1)
+
+
+def prewarm_policy_once(desired, *, expected_run=None, dry_run=False, baseline=None):
     """Compare-and-swap only our marked temporary minimum; never scale Deployment directly."""
     require(desired in (2, 4), 'UNREVIEWED_MINIMUM')
     require(not dry_run or desired == 4, 'UNREVIEWED_PREFLIGHT')
     so = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
     annotations = so['metadata'].get('annotations', {})
+    snapshot = {'uid': so['metadata']['uid'], 'spec': so['spec'], 'annotations': annotations}
+    require(baseline is None or snapshot == baseline, 'PREWARM_BASELINE_CHANGED_DURING_RETRY')
     marker = annotations.get(PREWARM_ANNOTATION)
     old = so['spec'].get('minReplicaCount')
     expected = scaled_object('3', 30)['spec']
@@ -443,16 +478,17 @@ def prewarm_policy(desired, *, expected_run=None, dry_run=False):
         {'op': 'add' if desired == 4 else 'remove',
          'path': '/metadata/annotations/trafficxx.io~1prewarm-run',
          **({'value': expected_run} if desired == 4 else {})}])
+    try:
+        projected = submit_prewarm_patch(operations, dry_run=dry_run)
+    except PrewarmPatchRejected as error:
+        error.prewarm_baseline = snapshot
+        raise
+    expected_spec = {**so['spec'], 'minReplicaCount': desired}
+    require(projected.get('metadata', {}).get('uid') == so['metadata']['uid']
+            and contains(projected.get('spec'), expected_spec)
+            and projected['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION)
+                == (expected_run if desired == 4 else None), 'PREWARM_PATCH_RESULT_MISMATCH')
     if dry_run:
-        command = ['kubectl', '--request-timeout=20s', 'patch', 'scaledobject', 'browse', '-n', 'trafficxx',
-                   '--type=json', '-p', json.dumps(operations), '--dry-run=server', '-o', 'json']
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-        require(result.returncode == 0, prewarm_patch_failure(result.stderr))
-        require(len(result.stdout) <= 262144, 'PREWARM_PREFLIGHT_RESPONSE_TOO_LARGE')
-        projected = json.loads(result.stdout)
-        require(projected['spec']['minReplicaCount'] == 4 and projected['spec']['maxReplicaCount'] == 4
-                and projected['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION) == expected_run,
-                'PREWARM_PREFLIGHT_RESULT_MISMATCH')
         current = json.loads(base.kube('get', 'scaledobject', 'browse', '-n', 'trafficxx', '-o', 'json'))
         require(current['metadata']['uid'] == so['metadata']['uid'] and current['spec'] == so['spec']
                 and current['metadata'].get('annotations', {}).get(PREWARM_ANNOTATION) == marker,
@@ -460,11 +496,6 @@ def prewarm_policy(desired, *, expected_run=None, dry_run=False):
         emit('BROWSE_PREWARM_PREFLIGHT_OK', server_dry_run=True, live_min_replicas=old,
              projected_min_replicas=4, max_replicas=4, load_started=False)
         return expected_run
-    try:
-        base.kube('patch', 'scaledobject', 'browse', '-n', 'trafficxx', '--type=json', '-p', json.dumps(operations))
-    except subprocess.CalledProcessError as error:
-        error.prewarm_patch_attempted = True
-        raise
     emit('BROWSE_PREWARM_MINIMUM_CHANGED', min_replicas=desired, max_replicas=4,
          run_id=expected_run or marker, inventory_writes=False)
     return expected_run or marker
@@ -523,6 +554,7 @@ def drill_prewarmed(*, profile=False):
                           '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     marker = uuid4().hex[:12]
     changed = False
+    stage = 'read_prewarm_baseline'
     try:
         with prometheus() as query:
             app = wait_baseline(query)
@@ -530,12 +562,19 @@ def drill_prewarmed(*, profile=False):
             owned_hpa(pressure_target='3', scale_up_seconds=30)
             # Set before patch: a lost response can still have applied the marked change.
             changed = True
+            stage = 'patch_prewarm_minimum'
             prewarm_policy(4, expected_run=marker)
+            stage = 'wait_four_warm_pods'
             wait_until(lambda: warm_four(query, app['metadata']['uid']), 300)
             database_pressure()
             emit('BROWSE_FOUR_PODS_PREWARMED', ready_replicas=4, connections_per_pod=8,
                  ready_service_endpoints=4, automatic_scale_up_tested=False)
+        stage = 'run_prewarmed_workload'
         drill(users=1000, duration=420 if profile else 300, prewarmed=True)
+    except (Exception, KeyboardInterrupt) as error:
+        if getattr(error, 'observer_context', None) is None:
+            error.observer_context = {'stage': stage, 'job': job_name, 'load_started': False}
+        raise
     finally:
         if changed:
             try:
