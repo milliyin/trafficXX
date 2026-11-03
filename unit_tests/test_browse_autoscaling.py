@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -670,6 +671,69 @@ class Scaling(unittest.TestCase):
                         [{'metric': {'instance': 'a'}, 'value': [240, 'NaN']}]):
             with self.assertRaises(ValueError):
                 scaling.instance_distribution(lambda _: invalid, {'test': 'query'})
+
+    def test_combined_timings_keep_tail_and_missing_means(self):
+        expressions = []
+        def query(expression):
+            expressions.append(expression)
+            if '_acquire_count_total' in expression and '/ 1000' not in expression:
+                return [{'metric': {'instance': 'a'}, 'value': [240, '10.5']}]
+            return []
+        row = scaling.timing_diagnostics(query, 240, '1060')
+        self.assertEqual(len(expressions), 8)
+        self.assertTrue(all('[240s] @ 1060' in e for e in expressions))
+        means = [e for e in expressions if '/ 1000' in e]
+        self.assertEqual(len(means), 4)
+        self.assertTrue(all(' > 0)' in e for e in means))
+        self.assertEqual(row['per_instance']['a']['acquire_observations_estimate'], 10.5)
+        self.assertIsNone(row['per_instance']['a']['acquire_mean_ms'])
+        self.assertIsNone(row['per_instance']['a']['body_mean_ms'])
+
+    def test_combined_database_window_is_historical_and_failure_redacted(self):
+        start = datetime(2026, 11, 3, 16, 46, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=5)
+        with patch.object(scaling.base, 'command', side_effect=subprocess.CalledProcessError(
+                1, ['az', 'monitor', 'metrics', 'list'], stderr='SECRET')) as call:
+            row = scaling.historical_database(start, end)
+        args = call.call_args.args[0]
+        self.assertEqual(args[args.index('--start-time') + 1], start.isoformat())
+        self.assertEqual(args[args.index('--end-time') + 1], end.isoformat())
+        self.assertFalse(row['available'])
+        self.assertNotIn('SECRET', json.dumps(row))
+        self.assertEqual(row['command_operation'], 'read_azure_database_metrics')
+
+    def test_combined_measurement_is_read_only_and_writes_single_report(self):
+        run_id = 'a' * 12
+        name = 'browse-users-1000-autocommit-profile'
+        job = {'metadata': {'uid': 'owned', 'name': name, 'labels': {'trafficxx.io/run-id': run_id}},
+               'spec': {'template': {'spec': {'containers': [{'name': 'check',
+                   'args': [run_id, '1000', '120', '420', 'ramp-down']}]}}},
+               'status': {'startTime': '2026-11-03T16:46:21Z', 'conditions': [
+                   {'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded',
+                    'lastTransitionTime': '2026-11-03T16:49:42Z'}]}}
+        def kube(*args):
+            self.assertIn(args[0], ('get', 'logs'))
+            return '' if args[0] == 'logs' else json.dumps(job)
+        with tempfile.TemporaryDirectory() as directory, patch.object(scaling, 'ROOT', Path(directory)), \
+                patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), \
+                patch.object(scaling, 'historical_database', return_value={'available': False}), \
+                patch.object(scaling, 'prometheus') as connection, \
+                patch.object(sys, 'argv', ['browse-autoscaling.py', 'measure-user-profile']), \
+                redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = lambda _: []
+            self.assertEqual(scaling.main(), 0)
+            row = json.loads(output.getvalue())
+            saved = json.loads(Path(row['report_file']).read_text())
+            self.assertEqual(saved['run_id'], run_id)
+            self.assertFalse(saved['observer_audit']['available'])
+            self.assertEqual(saved['pool_timings']['per_instance'], {})
+            self.assertEqual(saved['workload']['result'], 'BROWSE_SCALING_WORKLOAD_INTERRUPTED')
+            self.assertNotIn('attempts', saved['workload'])
+            path = scaling.observation_path(run_id)
+            path.write_text(json.dumps({'run_id': run_id, 'job': name, 'job_uid': 'wrong'}))
+            with self.assertRaisesRegex(ValueError, 'OBSERVATION_IDENTITY_MISMATCH'):
+                scaling.saved_observation(job, run_id)
 
     def test_distribution_queries_preserve_tail_and_peak_alignment(self):
         expressions = scaling.distribution_expressions(294, '1000', 354, '1060')

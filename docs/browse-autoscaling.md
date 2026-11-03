@@ -1504,6 +1504,42 @@ cause or permission to remove connection validation. Preserve this Job and
 use a distinct reviewed comparison rather than repeating its fixed name or
 loosening the failure guards.
 
+### Combined measurements in one command
+
+After the profile Job is terminal, collect the available evidence together:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py measure-user-profile
+```
+
+This is a read-only cloud operation: it does not create load, change policy or
+write inventory. It pins the existing profile Job identity and combines its
+workload summary (or explicit interrupted status), per-instance queue/error
+counters, source waiting samples, coverage and pool phase timings. Azure
+database CPU, memory and connection aggregates use the Job start through the
+post-terminal scrape tail, rather than a current five-minute window.
+
+Timing means are ratios of increases in total microseconds and observation
+counts, per instance. They include warmup, readiness and other traffic in the
+same window. Acquisition combines waiting and checkout checks; these metrics
+cannot isolate those two costs. Query time includes network and result
+fetching; it is not server execution time. Body includes the query, so do not
+add those phases together. No latency percentile can be reconstructed from
+these counters. Missing series or means without observations stay unknown.
+
+The command saves its JSON report at
+`test-results/browse-measurements/<run-id>-report.json` and prints that path.
+Future load invocations also save their resource, waiting and HPA metric
+observer summaries on normal completion or handled failure, keyed by run and
+Job UID. The combined command includes that audit only when identities match.
+Old runs have no saved audit, and Cloud Shell resets may remove these local
+files. Current pod usage is never presented as historical CPU/memory evidence.
+Download the report before leaving the session if it needs to be retained.
+An unavailable Azure metric section does not suppress the other measurements.
+No new image build is required. This command does not rerun the preserved Job
+or turn an interrupted workload into a pass.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).

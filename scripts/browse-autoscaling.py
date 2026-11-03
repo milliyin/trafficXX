@@ -916,8 +916,58 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
             'note': 'Deadline-stopped Job without a final summary. HTTP counts, errors and participation are unknown.'}
 
 
+def timing_diagnostics(query, window, when):
+    """Ratio of counter increases, not lifetime means or latency percentiles."""
+    expressions = {}
+    for phase in ('acquire', 'body', 'return', 'availability_query'):
+        count = 'increase(' + M + 'timing_' + phase + '_count_total' + F + '[' + str(window) + 's] @ ' + when + ')'
+        total = 'increase(' + M + 'timing_' + phase + '_microseconds_total' + F + '[' + str(window) + 's] @ ' + when + ')'
+        expressions[phase + '_observations_estimate'] = count
+        # Filter a zero denominator: no observations is unknown, not zero ms.
+        expressions[phase + '_mean_ms'] = '(' + total + ' / (' + count + ' > 0)) / 1000'
+    return {'per_instance': instance_distribution(query, expressions),
+            'note': 'Counter-increase weighted phase means over the Job window plus the 60-second scrape tail. '
+                    'Includes warmup, readiness and other traffic. Acquire includes queueing and checkout checks; '
+                    'body includes query and application work; query includes network/result fetching. '
+                    'Phases overlap: do not add body and query. No p95/p99 or isolated network/server time. '
+                    'Missing or zero-observation means are null, never zero latency.'}
+
+
+def historical_database(start, end):
+    capacity = load('inspect-browse-capacity')
+    try:
+        payload = json.loads(base.command(['az', 'monitor', 'metrics', 'list', '--resource', capacity.RESOURCE,
+            '--metric', 'cpu_percent', 'memory_percent', 'active_connections', '--aggregation', 'Average', 'Maximum',
+            '--interval', 'PT1M', '--start-time', start.isoformat(), '--end-time', end.isoformat(), '-o', 'json']))
+        rows = capacity.summarize_metrics(payload)
+        return {'available': all(r['observations'] > 0 for r in rows.values()), 'metrics': rows,
+                'start_utc': start.isoformat(), 'end_utc': end.isoformat(),
+                'note': 'Job-aligned minute aggregates including warmup; publication lag and brief peaks may be missed. '
+                        'Connections include idle sessions. Not a database saturation verdict.'}
+    except Exception as error:
+        return {'available': False, **failure_details(error)}
+
+
+def observation_path(run_id):
+    require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_OBSERVATION_RUN')
+    return ROOT / 'test-results' / 'browse-measurements' / (run_id + '-observer.json')
+
+
+def saved_observation(job, run_id):
+    path = observation_path(run_id)
+    if not path.exists():
+        return {'available': False, 'note': 'No saved observer audit in this Cloud Shell workspace. '
+                'Historical CPU/memory and controller observations cannot be recovered from current metrics.'}
+    require(path.stat().st_size <= 1_000_000, 'OBSERVATION_TOO_LARGE')
+    row = json.loads(path.read_text(encoding='utf-8'))
+    require(row.get('run_id') == run_id and row.get('job_uid') == job['metadata']['uid']
+            and row.get('job') == job['metadata']['name'], 'OBSERVATION_IDENTITY_MISMATCH')
+    return {'available': True, **row}
+
+
 def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False, distribution=False,
-                 faster_scale_up=False, verify_waiting_samples=False, users=500, duration=180, prewarmed=False):
+                 faster_scale_up=False, verify_waiting_samples=False, users=500, duration=180, prewarmed=False,
+                 measure_all=False):
     """Read-only historical evidence; no load, configuration or SQL mutation."""
     require(type(users) is int and users in (500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
@@ -1001,9 +1051,14 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
             extra['waiting_history_note'] = ('Actual stored source samples from the final 90 seconds before Job terminal. '
                 'Not observer poll timestamps or proof of continuously queued requests between scrapes. '
                 'Samples after the stop request may include recovery; missing history is not zero waiting.')
+        if measure_all:
+            extra['pool_timings'] = timing_diagnostics(query, counter_window, counter_when)
+    if measure_all:
+        extra['database'] = historical_database(start, counter_end)
+        extra['observer_audit'] = saved_observation(job, outcome['run_id'])
     current = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
     require(current['metadata']['uid'] == job['metadata']['uid'], 'JOB_REPLACED')
-    emit('BROWSE_' + str(users) + '_DIAGNOSTICS_OK', job=name, run_id=outcome['run_id'],
+    report = dict(job=name, run_id=outcome['run_id'],
          job_start_utc=start.isoformat(), job_terminal_utc=end.isoformat(),
          query_window_seconds=window, counter_increases=counters, sampled_peaks=peaks,
          counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
@@ -1013,6 +1068,12 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
               'after termination to capture the next scrapes. Both include warmup and 60 seconds before start. '
               'Check post-job coverage before interpreting zero counters. Increases are extrapolated estimates; '
               'peaks are sampled and missing data is null.')
+    if measure_all:
+        path = observation_path(outcome['run_id']).with_name(outcome['run_id'] + '-report.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        report['report_file'] = str(path)
+    emit('BROWSE_' + str(users) + '_DIAGNOSTICS_OK', **report)
 
 
 def validate_profile(outcome):
@@ -1264,6 +1325,23 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
             raise
         finally:
             if job is not None:
+                # Preserve audit evidence even when a guard stops the workload.
+                # Audit failure must never prevent stopping the Job/restoring policy.
+                try:
+                    path = observation_path(run_id)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    audit = {'run_id': run_id, 'job': job_name, 'job_uid': job['metadata']['uid'],
+                             'captured_utc': datetime.now(timezone.utc).isoformat(),
+                             'stage': stage, 'peak_ready_replicas': peak,
+                             'resources': resource_watch.summary(),
+                             'hpa_metric_observations': metric_readiness.summary(),
+                             'pool_waiting_observations': waiting_watch.summary(),
+                             'note': 'Observed during this invocation; CPU/memory peaks are sampled. '
+                                     'Local Cloud Shell file may be lost after a session reset.'}
+                    path.write_text(json.dumps(audit, indent=2) + '\n', encoding='utf-8')
+                except Exception:
+                    emit('BROWSE_OBSERVER_AUDIT_UNAVAILABLE', run_id=run_id)
+            if job is not None:
                 try:
                     cleanup = cleanup_load(job, job_name, terminal=job_terminal)
                     if primary_error is not None:
@@ -1283,7 +1361,7 @@ def main():
                                          'diagnose-500-distribution', 'configure-fast-scale-up', 'diagnose-500-step30',
                                          'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
                                          'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image',
-                                         'drill-user-profile', 'diagnose-user-profile', 'preflight-prewarm'))
+                                         'drill-user-profile', 'diagnose-user-profile', 'measure-user-profile', 'preflight-prewarm'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1369,6 +1447,8 @@ def main():
             diagnose_500(users=1000, distribution=True, duration=300, prewarmed=True)
         elif action == 'diagnose-user-profile':
             diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True)
+        elif action == 'measure-user-profile':
+            diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True, measure_all=True)
         else:
             trial.context()
             with prometheus() as query:
