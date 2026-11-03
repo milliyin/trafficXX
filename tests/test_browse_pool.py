@@ -21,10 +21,14 @@ def database(monkeypatch):
 
 
 def test_sequential_requests_reuse_physical_connection(database):
+    before = database.statistics()['statistics']['timing_health_check_count']
     with database.connection() as conn:
         first = conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid']
     with database.connection() as conn:
         assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] == first
+    stats = database.statistics()['statistics']
+    assert stats['timing_health_check_count'] == before + 2
+    assert stats['timing_health_check_total_us'] >= 0
 
 
 def test_single_statement_read_returns_idle_without_an_explicit_transaction(database):

@@ -8,9 +8,9 @@ from trafficxx.pool_timing import PoolTimings
 
 class BrowseDatabase(DatabasePool):
     def __init__(self):
-        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING',
-                         autocommit=True)
         self.timings = PoolTimings()
+        super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING',
+                         autocommit=True, check_observer=self.timings.measure)
 
     def statistics(self):
         row = super().statistics()

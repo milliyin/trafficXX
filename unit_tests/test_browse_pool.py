@@ -31,6 +31,24 @@ class PoolClosed(Exception):
 
 
 class BrowsePool(unittest.TestCase):
+    def test_observed_check_runs_original_check_and_preserves_failure(self):
+        from trafficxx.pool_timing import PoolTimings
+        timing = PoolTimings()
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', check_observer=timing.measure)
+        with patch.dict(os.environ, {'BROWSE_DB_POOL_MAX': '4'}):
+            database.open()
+        callback = self.factory.call_args.kwargs['check']
+        conn = object()
+        callback(conn)
+        self.factory.check_connection.assert_called_once_with(conn)
+        error = SqlError('PRIVATE')
+        self.factory.check_connection.side_effect = error
+        with self.assertRaises(SqlError) as caught:
+            callback(conn)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(timing.statistics()['timing_health_check_count'], 2)
+        self.assertNotIn('PRIVATE', str(timing.statistics()))
+
     def setUp(self):
         api, driver, pools, db = [ModuleType(name) for name in
                                   ('fastapi', 'psycopg', 'psycopg_pool', 'trafficxx.db')]

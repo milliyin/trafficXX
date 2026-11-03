@@ -39,10 +39,15 @@ def snapshot(call, index, *, pool_size=4):
     return row
 
 
-def experiment(call, *, pool_size=4):
+def experiment(call, *, pool_size=4, require_health_check=False):
     flow.require(type(pool_size) is int and pool_size in (4, 8), 'Unreviewed timing pool size')
     # Verify both have instrumentation before generating the measured reads.
     initial = [snapshot(call, index, pool_size=pool_size) for index in range(2)]
+    if require_health_check:
+        flow.require(all(all(type(row['statistics'].get('timing_health_check_' + key)) is int
+                             and row['statistics']['timing_health_check_' + key] >= 0
+                             for key in ('count', 'total_us', 'max_us')) for row in initial),
+                     'Deploy health check timing instrumentation first')
     modes = [row['statistics'].get('single_statement_autocommit', 0) for row in initial]
     flow.require(modes[0] in (0, 1) and modes[0] == modes[1], 'Browse replicas have different read modes')
     flow.require(phases(initial[0]['statistics']) == phases(initial[1]['statistics']),
@@ -68,7 +73,7 @@ def experiment(call, *, pool_size=4):
             flow.require(type(stats.get(key)) is int and final.get(key) == stats[key], 'Pool error changed')
         timings = {}
         flow.require(phases(final) == phases(stats), 'Query timing policy changed')
-        for phase in phases(stats):
+        for phase in phases(stats) + (('health_check',) if require_health_check else ()):
             prefix = 'timing_' + phase + '_'
             count = final[prefix + 'count'] - stats[prefix + 'count']
             micros = final[prefix + 'total_us'] - stats[prefix + 'total_us']
@@ -90,7 +95,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pool-size', type=int, choices=(4, 8), default=4,
                         help='Require this exact reviewed warm pool size on both pods (current autoscaled policy: 8).')
+    parser.add_argument('--require-health-check', action='store_true')
     args = parser.parse_args()
-    raise SystemExit(flow.main(experiment_function=lambda call: experiment(call, pool_size=args.pool_size),
+    raise SystemExit(flow.main(experiment_function=lambda call: experiment(call, pool_size=args.pool_size,
+                                                                         require_health_check=args.require_health_check),
                                failure_result='BROWSE_TIMING_BASELINE_FAILED',
                                preflight_check=no_active_load))

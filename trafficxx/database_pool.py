@@ -24,12 +24,14 @@ def pool_parameters():
 
 
 class DatabasePool:
-    def __init__(self, name, size_variable, minimum_variable=None, waiting_variable=None, *, autocommit=False):
+    def __init__(self, name, size_variable, minimum_variable=None, waiting_variable=None, *, autocommit=False,
+                 check_observer=None):
         self.name = name
         self.size_variable = size_variable
         self.minimum_variable = minimum_variable
         self.waiting_variable = waiting_variable
         self.autocommit = autocommit
+        self.check_observer = check_observer
         self._waiting_limit = 8
         self.pool = None
         self.instance_id = uuid4().hex
@@ -39,6 +41,11 @@ class DatabasePool:
     def _autocommit_parameters(self):
         # Still resolve a usable workload token for every physical connection.
         return {**pool_parameters(), 'autocommit': True}
+
+    def _observed_check(self, conn):
+        # Keep the driver's check and exception propagation exactly as before.
+        with self.check_observer('health_check'):
+            ConnectionPool.check_connection(conn)
 
     def statistics(self):
         if self.pool is None:
@@ -75,7 +82,7 @@ class DatabasePool:
             conninfo=pool_conninfo, kwargs=self._autocommit_parameters if self.autocommit else pool_parameters,
             min_size=minimum, max_size=maximum,
             timeout=3, max_waiting=waiting, max_lifetime=1800, max_idle=60,
-            check=ConnectionPool.check_connection, open=False,
+            check=self._observed_check if self.check_observer is not None else ConnectionPool.check_connection, open=False,
             name=self.name, num_workers=2,
         )
         try:

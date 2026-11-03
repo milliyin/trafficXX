@@ -45,6 +45,9 @@ class Timings(unittest.TestCase):
         self.assertEqual(row['pool_per_pod'], 8)
         self.assertEqual(row['read_mode'], 'single-statement-autocommit')
         self.assertEqual(counts, [12, 12])
+        counts[:], snapshots[:] = [0, 0], [0, 0]
+        row = module.experiment(call, pool_size=8, require_health_check=True)
+        self.assertEqual(row['per_pod'][0]['timings']['health_check']['observations'], 12)
         for failure in ('mixed', 'changed'):
             fault[0], counts[:], snapshots[:] = failure, [0, 0], [0, 0]
             with self.subTest(failure=failure), self.assertRaises(module.flow.CheckFailed):

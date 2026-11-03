@@ -680,14 +680,75 @@ class Scaling(unittest.TestCase):
                 return [{'metric': {'instance': 'a'}, 'value': [240, '10.5']}]
             return []
         row = scaling.timing_diagnostics(query, 240, '1060')
-        self.assertEqual(len(expressions), 8)
+        self.assertEqual(len(expressions), 10)
         self.assertTrue(all('[240s] @ 1060' in e for e in expressions))
         means = [e for e in expressions if '/ 1000' in e]
-        self.assertEqual(len(means), 4)
+        self.assertEqual(len(means), 5)
         self.assertTrue(all(' > 0)' in e for e in means))
         self.assertEqual(row['per_instance']['a']['acquire_observations_estimate'], 10.5)
         self.assertIsNone(row['per_instance']['a']['acquire_mean_ms'])
         self.assertIsNone(row['per_instance']['a']['body_mean_ms'])
+
+    def test_measurement_workflow_reports_after_restored_trial_and_keeps_failure(self):
+        for stopped, report_fails in ((False, False), (True, False), (True, True)):
+            events = []
+            primary = ValueError('SUSTAINED_POOL_WAITING')
+            def workload(**kwargs):
+                self.assertEqual(kwargs, {'profile': True, 'measured': True})
+                events.append('trial_and_restore')
+                if stopped:
+                    raise primary
+            def command(args, *, timeout):
+                events.append('build' if args[0] == 'bash' else 'verify_timing')
+                self.assertEqual(timeout, 900 if args[0] == 'bash' else 180)
+                if args[0] == 'python3':
+                    self.assertIn('--require-health-check', args)
+                return json.dumps({'result': 'BROWSE_TIMING_BASELINE_OK'})
+            def report(**kwargs):
+                events.append('report')
+                if report_fails:
+                    raise ValueError('CAPTURE_FAILED')
+            with ExitStack() as stack:
+                for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                    (scaling.trial, 'health')):
+                    stack.enter_context(patch.object(owner, name))
+                stack.enter_context(patch.object(scaling.base, 'kube', side_effect=['', 'job/existing']))
+                stack.enter_context(patch.object(scaling.base, 'command', side_effect=command))
+                stack.enter_context(patch.object(scaling, 'deploy_image', side_effect=lambda: events.append('deploy')))
+                stack.enter_context(patch.object(scaling, 'drill_prewarmed', side_effect=workload))
+                capture = stack.enter_context(patch.object(scaling, 'diagnose_500', side_effect=report))
+                output = stack.enter_context(redirect_stdout(io.StringIO()))
+                if stopped:
+                    with self.assertRaises(ValueError) as caught:
+                        scaling.measurement_workflow()
+                    self.assertIs(caught.exception, primary)
+                    self.assertNotIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
+                else:
+                    scaling.measurement_workflow()
+                    self.assertIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
+                self.assertEqual(events, ['build', 'deploy', 'verify_timing', 'trial_and_restore', 'report'])
+                capture.assert_called_once_with(users=1000, distribution=True, duration=420,
+                                                prewarmed=True, measure_all=True, measured=True)
+
+    def test_measurement_workflow_preserves_existing_job_before_build(self):
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', return_value='job/preserved'), \
+                patch.object(scaling.base, 'command') as command, \
+                self.assertRaisesRegex(ValueError, 'INSPECT_EXISTING_DRILL_JOB'):
+            scaling.measurement_workflow()
+        command.assert_not_called()
+
+    def test_measured_profile_fallback_pins_new_job_and_arguments(self):
+        run_id = 'a' * 12
+        job = {'metadata': {'name': scaling.MEASURED_PROFILE_JOB, 'labels': {'trafficxx.io/run-id': run_id}},
+               'spec': {'template': {'spec': {'containers': [{'name': 'check',
+                   'args': [run_id, '1000', '120', '420', 'ramp-down']}]}}},
+               'status': {'conditions': [{'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded'}]}}
+        row = scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
+        self.assertFalse(row['final_workload_summary_available'])
+        job['spec']['template']['spec']['containers'][0]['args'][3] = '300'
+        with self.assertRaisesRegex(ValueError, 'INTERRUPTED_JOB_ARGUMENTS_MISMATCH'):
+            scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
 
     def test_combined_database_window_is_historical_and_failure_redacted(self):
         start = datetime(2026, 11, 3, 16, 46, tzinfo=timezone.utc)

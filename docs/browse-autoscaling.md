@@ -1506,6 +1506,47 @@ loosening the failure guards.
 
 ### Combined measurements in one command
 
+For a new instrumented measurement trial, the entire release/test/report
+sequence is available as one Cloud Shell command:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py measurement-workflow
+```
+
+Keep the session open for the build, rollout, warmup, seven-minute profile
+and restoration (allow about 30 minutes). This builds a new Browse image,
+deploys only that image, verifies sequential health-check timing on both
+pods, and runs a distinct `browse-users-1000-healthcheck-profile` Job. It
+holds four warm pods with eight connections each for the same 120-second
+ramp, 180-second hold and 120-second withdrawal. Queue, resource, error and
+latency guards remain unchanged. Existing Jobs are preserved; invoking the
+workflow again with its Job present fails before building or deploying.
+
+The added `health_check` timer wraps the driver's existing check on every
+Browse borrow, including failed attempts. Checks are neither skipped nor
+made less frequent. Booking retains its original callback. This is an
+instrumentation trial, not an automatic optimization or a two-to-four pod
+autoscaling test. Health-check time overlaps acquisition and includes a
+different population when checks retry; do not subtract their means and
+label the difference exact queue time.
+
+After a completed or handled stopped load, the existing ownership-checked
+restoration returns the temporary minimum to two. The workflow attempts the
+combined report afterward, preserving the original failure if capture also
+fails. A report cannot turn a failed workload into a success. Setup failures
+without a Job emit an explicit unavailable report. If Cloud Shell disconnects,
+inspect the Job until terminal, then run:
+
+```bash
+python3 scripts/browse-autoscaling.py restore-prewarm
+python3 scripts/browse-autoscaling.py measure-healthcheck-profile
+```
+
+Restoration refuses active load or foreign policy ownership. Do not start
+another load or delete the preserved Job. The second command captures this
+new trial only; the older profile's report command below remains separate.
+
 After the profile Job is terminal, collect the available evidence together:
 
 ```bash
