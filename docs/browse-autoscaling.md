@@ -1441,6 +1441,40 @@ previously created run. No rebuild is needed. A future error category is
 evidence to investigate, not permission to remove compare-and-swap guards.
 No successful seven-minute workload has been supplied yet.
 
+The next supplied invocation did pass setup. Temporary policy marker
+`abbaf5d5fd24` held four ready, warm pods and four ready endpoints. Workload
+run `1a46e8803ef4` used the preserved Job
+`browse-users-1000-autocommit-profile` and released its resource gate. All
+four pods remained ready during the observed traffic, but the observer
+stopped at `observe_pool_pressure` / `SUSTAINED_POOL_WAITING`.
+
+Instance `10.244.3.255:8000` had positive waiting samples from
+16:49:22.779 to 16:49:37.779 UTC on 3 November, with last value three and
+sampled maximum five. Another instance had 11 waiting requests in its latest
+sample, against the configured per-pod limit of 16. The remaining instances'
+latest counts were four and one. These source timestamps differ; do not sum
+them into an instantaneous total, and do not infer continuous waiting between
+scrapes. No final workload summary was included in the supplied output, so
+HTTP counts, participation, latency, phase completion and error counts remain
+unknown pending historical capture.
+
+The wrapper requested the owned Job stop and successfully restored minimum
+two and two ready pods. Browse retained availability 100 for both events;
+Operations remained healthy with no backlog or active alerts. This confirms
+recovery, not a completed user-profile pass. Sampled CPU/memory and the
+database five-minute windows do not establish instantaneous saturation.
+
+Capture the exact stopped run without starting more traffic:
+
+```bash
+python3 scripts/browse-autoscaling.py diagnose-user-profile
+```
+
+No additional restore is required for this supplied result. Preserve the Job
+and review its HTTP/rejection counters before another configuration change or
+trial. The earlier sequential timing improvement remains valid within its
+measurement scope; it does not imply this traffic profile must pass.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
