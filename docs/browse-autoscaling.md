@@ -1475,6 +1475,35 @@ and review its HTTP/rejection counters before another configuration change or
 trial. The earlier sequential timing improvement remains valid within its
 measurement scope; it does not imply this traffic profile must pass.
 
+Historical capture for run `1a46e8803ef4` subsequently confirmed a queue-full
+and borrow-error counter increase of approximately 1.0134 on
+`10.244.3.255:8000`. All four original instances had post-terminal sample
+coverage. The fractional value is Prometheus extrapolation, not an exact
+HTTP error count. Acquisition timeouts, closed rejections, connection errors,
+lost connections and bad returns showed no increases in this window.
+
+Estimated borrow increases were similar across the four instances
+(approximately 7,762 to 7,831, including background traffic and the counter
+tail). This does not establish sustained routing imbalance; brief bursts
+remain possible. Sampled aggregate waiting peaked at 16 across pods, which
+must not be confused with a single pod's configured 16-slot queue limit.
+
+Final workload logs could not be captured. The diagnostic correctly reports
+`BROWSE_SCALING_WORKLOAD_INTERRUPTED`: HTTP totals, error counts, participant
+counts, latency and phase completion remain unknown. A successful diagnostic
+capture is not a successful seven-minute workload. The rejection confirms
+actual local pool pressure in addition to the observer waiting stop; it does
+not establish database CPU saturation. Recovery was already verified above.
+The last verified capacity pass remains the 500-user run.
+
+Before another trial, measure acquisition and query/body timings under load
+to distinguish time spent checking out a connection from time spent holding
+it for the query. The sequential baseline still includes a checkout health
+check on every borrow; its cost is a candidate to investigate, not a proven
+cause or permission to remove connection validation. Preserve this Job and
+use a distinct reviewed comparison rather than repeating its fixed name or
+loosening the failure guards.
+
 See the official [AKS managed KEDA setup](https://learn.microsoft.com/en-us/azure/aks/keda-deploy-add-on-cli),
 [KEDA Prometheus scaler](https://keda.sh/docs/2.18/scalers/prometheus/), and
 [Kubernetes HPA behavior](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/).
