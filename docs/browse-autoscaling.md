@@ -1604,6 +1604,35 @@ inspect the v2 Job until terminal, then run `restore-prewarm` and
 `measure-recentcheck-verify`. Any new monitoring failure should expose its
 original safe error category rather than being replaced by a recovery error.
 
+The v2 repeat (`68f1360bbe72`, 8 November UTC) produced a complete failure
+summary: all 1,000 users participated, with 59,560 HTTP 200 responses and one
+`DATABASE_BUSY` / HTTP 503 out of 59,561 attempts. The first error occurred at
+181.308 seconds; total elapsed time was 181.491 seconds. Thus it completed
+the two-minute arrival ramp and about 61 seconds of the planned 180-second
+hold, but none of the scheduled withdrawal. The final zero-active-users
+sample reflects stopping after the error, not a completed ramp-down.
+
+Workload p50/p95/p99 were 48.989/92.885/115.909 ms, maximum 186.651 ms.
+All four targets had post-terminal coverage. Queue-full and borrow-error
+increases of approximately 1.027123 were confined to `10.244.3.161:8000`;
+the other error categories did not increase. The fractional increase is a
+Prometheus estimate; the exact single HTTP error is from the workload log.
+Estimated per-instance borrow totals were broadly similar (15,172–15,657,
+including background traffic), which does not establish sustained imbalance.
+Source scrapes can miss the brief queue-full burst.
+
+Observed acquisition means remained 3.71–4.46 ms and query means
+25.96–28.32 ms. The one-second policy was present throughout each instance's
+stored window. Database minute-level maximum CPU was 10.02%, memory 20.24%,
+and active connections 44 including idle sessions. These averages/sampled
+peaks do not explain the precise timing of the burst or establish database
+CPU saturation. The observer correctly preserved `LOAD_JOB_FAILED`, with no
+HPA metric gaps, and restoration verified two healthy pods and healthy
+Browse/Operations with no backlog. This is still not a seven-minute pass.
+Any next queue/admission comparison must be explicit and retain latency/error
+acceptance criteria; do not silently rerun the preserved Job or ignore its
+single failed request.
+
 For a new instrumented measurement trial, the entire release/test/report
 sequence is available as one Cloud Shell command:
 
