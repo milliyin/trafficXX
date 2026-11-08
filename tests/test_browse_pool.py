@@ -1,5 +1,6 @@
 """Real PostgreSQL reuse/rollback/replacement tests in the dedicated CI database."""
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 import pytest
 import psycopg
@@ -11,6 +12,7 @@ from trafficxx.browse_db import BrowseDatabase
 @pytest.fixture
 def database(monkeypatch):
     monkeypatch.setenv('BROWSE_DB_POOL_MAX', '1')
+    monkeypatch.setenv('BROWSE_DB_CHECK_INTERVAL_SECONDS', '0')
     database = BrowseDatabase()
     database.open()
     try:
@@ -86,6 +88,55 @@ def test_closed_connection_is_replaced(database):
         conn.close()
     with database.connection() as conn:
         assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] != first
+
+
+def test_recent_checks_expire_and_sql_errors_invalidate_success(monkeypatch):
+    monkeypatch.setenv('BROWSE_DB_POOL_MAX', '1')
+    monkeypatch.setenv('BROWSE_DB_CHECK_INTERVAL_SECONDS', '1')
+    database = BrowseDatabase()
+    database.open()
+    try:
+        with patch('trafficxx.database_pool.monotonic', return_value=0) as clock:
+            for _ in range(3):
+                with database.read_connection() as conn:
+                    assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
+            stats = database.statistics()['statistics']
+            assert stats['timing_health_check_count'] == 1
+            assert stats['health_checks_skipped'] == 2
+            clock.return_value = 1
+            with pytest.raises(psycopg.errors.DivisionByZero):
+                with database.read_connection() as conn:
+                    conn.execute('SELECT 1 / 0')
+            with database.read_connection() as conn:
+                assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
+            assert database.statistics()['statistics']['timing_health_check_count'] == 3
+    finally:
+        database.close()
+
+
+def test_server_drop_inside_recent_window_does_not_prevent_replacement(monkeypatch):
+    import os
+    monkeypatch.setenv('BROWSE_DB_POOL_MAX', '1')
+    monkeypatch.setenv('BROWSE_DB_CHECK_INTERVAL_SECONDS', '1')
+    database = BrowseDatabase()
+    database.open()
+    try:
+        with patch('trafficxx.database_pool.monotonic', return_value=0):
+            with database.read_connection() as conn:
+                first = conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid']
+            with psycopg.connect(os.environ['DATABASE_URL'], autocommit=True) as admin:
+                assert admin.execute('SELECT pg_terminate_backend(%s)', (first,)).fetchone()[0]
+            # A connection dropped within the recency window may surface one
+            # failure. No application query is retried by this implementation.
+            try:
+                with database.read_connection() as conn:
+                    conn.execute('SELECT 1')
+            except psycopg.OperationalError:
+                pass
+            with database.read_connection() as conn:
+                assert conn.execute('SELECT pg_backend_pid() AS pid').fetchone()['pid'] != first
+    finally:
+        database.close()
 
 
 def test_serving_api_statistics_track_the_same_pool_as_reads():

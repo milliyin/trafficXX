@@ -1506,6 +1506,66 @@ loosening the failure guards.
 
 ### Combined measurements in one command
 
+#### One-second recent-check comparison
+
+The recovered instrumentation run `c4c8cc28797e` reached 1,000 paced users,
+then failed at 135.24 seconds with two `DATABASE_BUSY` responses (36,761
+HTTP 200 out of 36,763 attempts). It did not complete the hold or withdrawal.
+Per-instance health-check means were 26.12–28.24 ms versus query means of
+26.29–28.44 ms. These are overlapping phase measurements over the historical
+window, including background reads, not additive independent HTTP timings.
+Database minute-level CPU maximum was 10.51%, with 44 connections including
+idle sessions. Queue-full counter increases were concentrated on one pod;
+the exact two HTTP errors come from the workload summary, not extrapolation.
+Restoration to two healthy pods and zero Operations backlog was confirmed.
+
+Prepare and run the next distinct comparison with:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py recent-check-workflow
+```
+
+This reuses the build/image-only deployment/baseline verification/seven-minute
+load/restoration/report workflow, with a new preserved Job
+`browse-users-1000-recentcheck-profile`. Its image explicitly sets
+`BROWSE_DB_CHECK_INTERVAL_SECONDS=1` via a bounded build option. Ordinary
+Browse builds and the application default remain zero (check every borrow).
+Booking ignores this Browse-only setting and keeps its original callback.
+Both serving pods must report interval one before load starts; deployment
+environment overrides or stale images fail that check.
+
+A successful driver's check may be reused on the same open, unbroken
+connection for less than one second. A new connection, expired validation,
+closed/broken connection or clock anomaly forces the original check. Only
+successful checks establish a timestamp. Application/SQL errors invalidate
+cached validation. Weak per-connection records disappear when a connection
+is collected. Physical connection creation still resolves fresh credentials
+and retains TLS validation. No application statement or transaction is retried.
+
+This trades per-borrow liveness checking for bounded recent validation. A
+connection dropped remotely inside the window can fail its next read; pool
+replacement remains enabled and verified by a dedicated PostgreSQL test.
+It is not a guarantee of zero errors during database failures. Keep the same
+error, queue, request-latency and resource stop conditions for the comparison.
+
+The report includes performed check counts, skipped checks and observed check
+interval bounds. A sequential sample may perform no new checks; its mean is
+unknown (`null`), not zero milliseconds. Under-load evidence determines
+whether this change improves capacity. Pods remain eight connections each,
+four during the trial and two after restoration; the candidate image remains
+deployed. To return to every-borrow checking after the Job is terminal, use
+the ordinary build followed by the image-only deployment:
+
+```bash
+bash scripts/build-browse-image.sh &&
+python3 scripts/browse-autoscaling.py deploy-image
+```
+
+If the shell disconnects, inspect the new Job until terminal, then run
+`restore-prewarm` followed by `measure-recentcheck-profile`. Preserve the Job;
+the workflow refuses to reuse it. No new 1,000-user pass has been established.
+
 For a new instrumented measurement trial, the entire release/test/report
 sequence is available as one Cloud Shell command:
 

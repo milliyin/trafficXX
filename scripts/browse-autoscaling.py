@@ -42,6 +42,12 @@ BORROWS = ('sum(rate(' + M + 'borrows_total' + F + '[1m]))' + GUARD +
 JOB = 'browse-users-250-autoscaling'
 PREWARM_ANNOTATION = 'trafficxx.io/prewarm-run'
 MEASURED_PROFILE_JOB = 'browse-users-1000-healthcheck-profile'
+RECENT_CHECK_PROFILE_JOB = 'browse-users-1000-recentcheck-profile'
+
+
+def measured_job(mode):
+    require(mode in (False, True, 'recent'), 'UNSUPPORTED_MEASUREMENT_MODE')
+    return RECENT_CHECK_PROFILE_JOB if mode == 'recent' else MEASURED_PROFILE_JOB
 
 
 def require(condition, code):
@@ -555,7 +561,7 @@ def drill_prewarmed(*, profile=False, measured=False):
     trial.no_active_load()
     trial.health()
     database_pressure()
-    job_name = MEASURED_PROFILE_JOB if measured else 'browse-users-1000-autocommit-profile' if profile else 'browse-users-1000-prewarmed-5m'
+    job_name = measured_job(measured) if measured else 'browse-users-1000-autocommit-profile' if profile else 'browse-users-1000-prewarmed-5m'
     require(not base.kube('get', 'job', job_name, '-n', 'trafficxx',
                           '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     marker = uuid4().hex[:12]
@@ -577,7 +583,7 @@ def drill_prewarmed(*, profile=False, measured=False):
                  ready_service_endpoints=4, automatic_scale_up_tested=False)
         stage = 'run_prewarmed_workload'
         drill(users=1000, duration=420 if profile else 300, prewarmed=True,
-              **({'measured': True} if measured else {}))
+              **({'measured': measured} if measured else {}))
     except (Exception, KeyboardInterrupt) as error:
         if getattr(error, 'observer_context', None) is None:
             error.observer_context = {'stage': stage, 'job': job_name, 'load_started': False}
@@ -907,7 +913,7 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
                      if users == 500 and duration == 180 else
                      ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
                      if users == 1000 and duration == 300 else
-                     ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB) if users == 1000 and duration == 420 else ())
+                     ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB, RECENT_CHECK_PROFILE_JOB) if users == 1000 and duration == 420 else ())
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
@@ -932,6 +938,9 @@ def timing_diagnostics(query, window, when):
         expressions[phase + '_observations_estimate'] = count
         # Filter a zero denominator: no observations is unknown, not zero ms.
         expressions[phase + '_mean_ms'] = '(' + total + ' / (' + count + ' > 0)) / 1000'
+    expressions['health_checks_skipped_estimate'] = 'increase(' + M + 'health_checks_skipped_total' + F + '[' + str(window) + 's] @ ' + when + ')'
+    for aggregate in ('min', 'max'):
+        expressions['check_interval_seconds_' + aggregate] = aggregate + '_over_time(' + M + 'health_check_interval_seconds' + F + '[' + str(window) + 's] @ ' + when + ')'
     return {'per_instance': instance_distribution(query, expressions),
             'note': 'Counter-increase weighted phase means over the Job window plus the 60-second scrape tail. '
                     'Includes warmup, readiness and other traffic. Acquire includes queueing and checkout checks; '
@@ -987,7 +996,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                                     faster_scale_up, verify_waiting_samples)), 'CONFLICTING_DRILL_MODES')
     trial.context()
     trial.no_active_load()
-    name = (MEASURED_PROFILE_JOB if measured else 'browse-users-1000-autocommit-profile' if duration == 420 else
+    name = (measured_job(measured) if measured else 'browse-users-1000-autocommit-profile' if duration == 420 else
             'browse-users-1000-prewarmed-5m' if prewarmed else
             'browse-users-1000-autoscaling-5m' if duration == 300 else
             'browse-users-1000-autoscaling' if users == 1000 else
@@ -1154,7 +1163,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
     pressure_target = '3' if earlier_scaling else '5'
     scale_up_seconds = 30 if faster_scale_up else 60
     slower_ramp = slower_ramp or earlier_scaling
-    job_name = (MEASURED_PROFILE_JOB if measured else 'browse-users-1000-autocommit-profile' if duration == 420 else
+    job_name = (measured_job(measured) if measured else 'browse-users-1000-autocommit-profile' if duration == 420 else
                 'browse-users-1000-prewarmed-5m' if prewarmed else
                 'browse-users-1000-autoscaling-5m' if duration == 300 else
                 'browse-users-1000-autoscaling' if users == 1000 else
@@ -1366,35 +1375,39 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     primary_error.observer_context['load_cleanup'] = 'failed'
 
 
-def measurement_workflow():
+def measurement_workflow(*, recent_checks=False):
     """Cloud Shell: instrumented release, bounded trial, restore, combined report."""
     trial.context()
     trial.no_active_load()
-    require(not base.kube('get', 'job', MEASURED_PROFILE_JOB, '-n', 'trafficxx',
+    mode = 'recent' if recent_checks else True
+    job_name = measured_job(mode)
+    require(not base.kube('get', 'job', job_name, '-n', 'trafficxx',
                           '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     trial.health()
-    emit('BROWSE_MEASUREMENT_WORKFLOW_STARTED', job=MEASURED_PROFILE_JOB,
+    emit('BROWSE_MEASUREMENT_WORKFLOW_STARTED', job=job_name,
          note='Build/deploy timing instrumentation, verify it, run 120/180/120 profile, restore and report. '
-              'Connection checks still run on every borrow; no optimization is applied automatically.')
-    base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh')], timeout=900)
+              'The recent-check comparison verifies a one-second successful-validation window; no query retries.')
+    base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh')]
+                 + (['--recent-checks'] if recent_checks else []), timeout=900)
     deploy_image()
     baseline = json.loads(base.command(['python3', str(ROOT / 'scripts/check-browse-timing.py'),
-                                      '--pool-size', '8', '--require-health-check'], timeout=180).splitlines()[-1])
+                                      '--pool-size', '8', '--require-health-check', '--check-interval',
+                                      '1' if recent_checks else '0'], timeout=180).splitlines()[-1])
     require(baseline.get('result') == 'BROWSE_TIMING_BASELINE_OK', 'HEALTH_CHECK_TIMING_NOT_VERIFIED')
     emit('BROWSE_MEASUREMENT_BASELINE_OK', timing=baseline)
     primary = None
     try:
-        drill_prewarmed(profile=True, measured=True)
+        drill_prewarmed(profile=True, measured=mode)
     except (Exception, KeyboardInterrupt) as error:
         primary = error
     # Capture after the prewarm wrapper's restoration attempt, even for a
     # stopped workload. Never hide the original failure behind a report error.
     try:
-        exists = base.kube('get', 'job', MEASURED_PROFILE_JOB, '-n', 'trafficxx',
+        exists = base.kube('get', 'job', job_name, '-n', 'trafficxx',
                            '--ignore-not-found', '-o', 'name')
         if exists:
             diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True,
-                         measure_all=True, measured=True)
+                         measure_all=True, measured=mode)
         else:
             require(primary is not None, 'MEASUREMENT_JOB_MISSING')
             emit('BROWSE_MEASUREMENT_REPORT_UNAVAILABLE', check='NO_WORKLOAD_JOB_CREATED')
@@ -1416,7 +1429,8 @@ def main():
                                          'diagnose-500-sourcewait', 'diagnose-1000', 'diagnose-1000-5m',
                                          'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image',
                                          'drill-user-profile', 'diagnose-user-profile', 'measure-user-profile', 'preflight-prewarm',
-                                         'measurement-workflow', 'measure-healthcheck-profile'))
+                                         'measurement-workflow', 'measure-healthcheck-profile',
+                                         'recent-check-workflow', 'measure-recentcheck-profile'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1508,6 +1522,10 @@ def main():
             diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True, measure_all=True, measured=True)
         elif action == 'measurement-workflow':
             measurement_workflow()
+        elif action == 'recent-check-workflow':
+            measurement_workflow(recent_checks=True)
+        elif action == 'measure-recentcheck-profile':
+            diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True, measure_all=True, measured='recent')
         else:
             trial.context()
             with prometheus() as query:

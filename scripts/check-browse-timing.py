@@ -39,10 +39,15 @@ def snapshot(call, index, *, pool_size=4):
     return row
 
 
-def experiment(call, *, pool_size=4, require_health_check=False):
+def experiment(call, *, pool_size=4, require_health_check=False, check_interval=None):
     flow.require(type(pool_size) is int and pool_size in (4, 8), 'Unreviewed timing pool size')
     # Verify both have instrumentation before generating the measured reads.
     initial = [snapshot(call, index, pool_size=pool_size) for index in range(2)]
+    if check_interval is not None:
+        flow.require(check_interval in (0, 1) and all(
+            row['statistics'].get('health_check_interval_seconds') == check_interval
+            and type(row['statistics'].get('health_checks_skipped')) is int
+            for row in initial), 'Expected exact connection check policy on both pods')
     if require_health_check:
         flow.require(all(all(type(row['statistics'].get('timing_health_check_' + key)) is int
                              and row['statistics']['timing_health_check_' + key] >= 0
@@ -68,6 +73,10 @@ def experiment(call, *, pool_size=4, require_health_check=False):
         flow.require(after['instance_id'] == before['instance_id'], 'Browse process changed')
         final = after['statistics']
         flow.require(final.get('single_statement_autocommit', 0) == modes[index], 'Read mode changed')
+        if check_interval is not None:
+            flow.require(final.get('health_check_interval_seconds') == check_interval
+                         and final.get('health_checks_skipped', -1) >= stats['health_checks_skipped'],
+                         'Connection check policy or counters changed')
         for key in ('requests_errors', 'connections_errors', 'connections_lost', 'returns_bad',
                     'rejections_queue_full', 'rejections_timeout', 'rejections_closed'):
             flow.require(type(stats.get(key)) is int and final.get(key) == stats[key], 'Pool error changed')
@@ -77,8 +86,13 @@ def experiment(call, *, pool_size=4, require_health_check=False):
             prefix = 'timing_' + phase + '_'
             count = final[prefix + 'count'] - stats[prefix + 'count']
             micros = final[prefix + 'total_us'] - stats[prefix + 'total_us']
-            flow.require(count >= 12 and micros >= 0, 'Timing evidence incomplete or reset')
-            timings[phase] = {'observations': count, 'mean_ms': round(micros / count / 1000, 3)}
+            minimum = 0 if phase == 'health_check' and check_interval == 1 else 12
+            flow.require(count >= minimum and micros >= 0, 'Timing evidence incomplete or reset')
+            timings[phase] = {'observations': count, 'mean_ms': round(micros / count / 1000, 3) if count else None}
+        if check_interval == 1:
+            skipped = final['health_checks_skipped'] - stats['health_checks_skipped']
+            flow.require(skipped + timings['health_check']['observations'] >= 12, 'Check policy evidence incomplete')
+            timings['health_checks_skipped'] = skipped
         results.append({'reads': 12, 'timings': timings,
                         'mean_port_forward_http_ms': round(sum(wall) / len(wall), 3)})
     return {'result': 'BROWSE_TIMING_BASELINE_OK', 'per_pod': results,
@@ -96,8 +110,10 @@ if __name__ == '__main__':
     parser.add_argument('--pool-size', type=int, choices=(4, 8), default=4,
                         help='Require this exact reviewed warm pool size on both pods (current autoscaled policy: 8).')
     parser.add_argument('--require-health-check', action='store_true')
+    parser.add_argument('--check-interval', type=int, choices=(0, 1))
     args = parser.parse_args()
     raise SystemExit(flow.main(experiment_function=lambda call: experiment(call, pool_size=args.pool_size,
-                                                                         require_health_check=args.require_health_check),
+                                                                         require_health_check=args.require_health_check,
+                                                                         check_interval=args.check_interval),
                                failure_result='BROWSE_TIMING_BASELINE_FAILED',
                                preflight_check=no_active_load))

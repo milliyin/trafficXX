@@ -31,6 +31,57 @@ class PoolClosed(Exception):
 
 
 class BrowsePool(unittest.TestCase):
+    def test_recent_success_only_skips_inside_window_and_failed_check_is_not_cached(self):
+        class Conn:
+            closed = broken = False
+        conn = Conn()
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', check_interval_seconds=1)
+        with patch.object(self.module, 'monotonic', return_value=0) as clock:
+            database._observed_check(conn)
+            clock.return_value = .999
+            database._observed_check(conn)
+            self.assertEqual(self.factory.check_connection.call_count, 1)
+            self.assertEqual(database.check_statistics()['health_checks_skipped'], 1)
+            clock.return_value = 1
+            database._observed_check(conn)
+            self.assertEqual(self.factory.check_connection.call_count, 2)
+            conn.closed = True
+            self.factory.check_connection.side_effect = SqlError('private')
+            with self.assertRaises(SqlError):
+                database._observed_check(conn)
+            conn.closed = False
+            self.factory.check_connection.side_effect = None
+            database._observed_check(conn)
+            self.assertEqual(self.factory.check_connection.call_count, 4)
+            clock.return_value = .5  # Clock anomaly never extends validation.
+            database._observed_check(conn)
+            self.assertEqual(self.factory.check_connection.call_count, 5)
+
+    def test_recent_validation_is_per_connection_weak_and_invalidated_on_body_error(self):
+        import gc
+        class Conn:
+            closed = broken = False
+        conn, other = Conn(), Conn()
+        database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', check_interval_seconds=1)
+        database.pool = self.pool
+        with patch.object(self.module, 'monotonic', return_value=0):
+            database._observed_check(conn)
+            database._observed_check(other)
+            self.assertEqual(len(database._checked_at), 2)
+            del other
+            gc.collect()
+            # The mocked call history holds arguments until explicitly reset.
+            self.factory.reset_mock()
+            gc.collect()
+            self.assertEqual(len(database._checked_at), 1)
+            self.pool.connection.return_value.__enter__.return_value = conn
+            with self.assertRaises(ValueError):
+                with database.read_connection() if database.autocommit else database.connection():
+                    raise ValueError('failed SQL/application work')
+            self.assertNotIn(conn, database._checked_at)
+            database._observed_check(conn)
+            self.factory.check_connection.assert_called_once_with(conn)
+
     def test_observed_check_runs_original_check_and_preserves_failure(self):
         from trafficxx.pool_timing import PoolTimings
         timing = PoolTimings()

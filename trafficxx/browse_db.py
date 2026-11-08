@@ -1,5 +1,6 @@
 """Browse pool policy; preserve the existing import used by diagnostics."""
 from contextlib import contextmanager
+import os
 from time import perf_counter
 
 from trafficxx.database_pool import DatabasePool
@@ -9,12 +10,17 @@ from trafficxx.pool_timing import PoolTimings
 class BrowseDatabase(DatabasePool):
     def __init__(self):
         self.timings = PoolTimings()
+        raw_interval = os.environ.get('BROWSE_DB_CHECK_INTERVAL_SECONDS', '0')
+        if raw_interval not in ('0', '1'):
+            raise ValueError('Browse check interval must be zero or one second')
         super().__init__('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX_WAITING',
-                         autocommit=True, check_observer=self.timings.measure)
+                         autocommit=True, check_observer=self.timings.measure,
+                         check_interval_seconds=int(raw_interval))
 
     def statistics(self):
         row = super().statistics()
         row['statistics'].update(self.timings.statistics())
+        row['statistics'].update(self.check_statistics())
         row['statistics']['single_statement_autocommit'] = 1
         return row
 

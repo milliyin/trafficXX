@@ -26,6 +26,7 @@ class Timings(unittest.TestCase):
         counts = [0, 0]
         snapshots = [0, 0]
         fault = [None]
+        recent_skip = [False]
         def call(index, path):
             if path != '/internal/database-pool':
                 counts[index] += 1
@@ -35,11 +36,14 @@ class Timings(unittest.TestCase):
             stats = dict(pool_min=size, pool_max=size, pool_size=size, pool_available=size,
                 requests_waiting=0, pool_waiting_limit=16, requests_num=counts[index], requests_errors=0,
                 connections_num=size, connections_errors=0, connections_lost=0, returns_bad=0,
-                rejections_queue_full=0, rejections_timeout=0, rejections_closed=0, single_statement_autocommit=1)
+                rejections_queue_full=0, rejections_timeout=0, rejections_closed=0, single_statement_autocommit=1,
+                health_check_interval_seconds=1, health_checks_skipped=counts[index] if recent_skip[0] else 0)
             for phase in PHASES:
                 stats.update({'timing_' + phase + '_count': counts[index],
                     'timing_' + phase + '_total_us': counts[index] * 1000,
                     'timing_' + phase + '_max_us': 1000})
+            if recent_skip[0]:
+                stats.update(timing_health_check_count=0, timing_health_check_total_us=0, timing_health_check_max_us=0)
             return {'instance_id': 'ab'[index] * 32, 'statistics': stats}
         row = module.experiment(call, pool_size=8)
         self.assertEqual(row['pool_per_pod'], 8)
@@ -48,6 +52,12 @@ class Timings(unittest.TestCase):
         counts[:], snapshots[:] = [0, 0], [0, 0]
         row = module.experiment(call, pool_size=8, require_health_check=True)
         self.assertEqual(row['per_pod'][0]['timings']['health_check']['observations'], 12)
+        recent_skip[0] = True
+        counts[:], snapshots[:] = [0, 0], [0, 0]
+        row = module.experiment(call, pool_size=8, require_health_check=True, check_interval=1)
+        self.assertIsNone(row['per_pod'][0]['timings']['health_check']['mean_ms'])
+        self.assertEqual(row['per_pod'][0]['timings']['health_checks_skipped'], 12)
+        recent_skip[0] = False
         for failure in ('mixed', 'changed'):
             fault[0], counts[:], snapshots[:] = failure, [0, 0], [0, 0]
             with self.subTest(failure=failure), self.assertRaises(module.flow.CheckFailed):
@@ -96,6 +106,8 @@ class Timings(unittest.TestCase):
                 pass
             def statistics(self):
                 return {'instance_id': 'a' * 32, 'statistics': {}}
+            def check_statistics(self):
+                return {'health_check_interval_seconds': 1, 'health_checks_skipped': 0}
             @contextmanager
             def connection(self):
                 try:

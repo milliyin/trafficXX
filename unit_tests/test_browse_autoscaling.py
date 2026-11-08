@@ -680,7 +680,7 @@ class Scaling(unittest.TestCase):
                 return [{'metric': {'instance': 'a'}, 'value': [240, '10.5']}]
             return []
         row = scaling.timing_diagnostics(query, 240, '1060')
-        self.assertEqual(len(expressions), 10)
+        self.assertEqual(len(expressions), 13)
         self.assertTrue(all('[240s] @ 1060' in e for e in expressions))
         means = [e for e in expressions if '/ 1000' in e]
         self.assertEqual(len(means), 5)
@@ -690,19 +690,23 @@ class Scaling(unittest.TestCase):
         self.assertIsNone(row['per_instance']['a']['body_mean_ms'])
 
     def test_measurement_workflow_reports_after_restored_trial_and_keeps_failure(self):
-        for stopped, report_fails in ((False, False), (True, False), (True, True)):
+        for stopped, report_fails, recent in ((False, False, False), (True, False, False),
+                                            (True, True, False), (False, False, True)):
             events = []
             primary = ValueError('SUSTAINED_POOL_WAITING')
             def workload(**kwargs):
-                self.assertEqual(kwargs, {'profile': True, 'measured': True})
+                self.assertEqual(kwargs, {'profile': True, 'measured': 'recent' if recent else True})
                 events.append('trial_and_restore')
                 if stopped:
                     raise primary
             def command(args, *, timeout):
                 events.append('build' if args[0] == 'bash' else 'verify_timing')
                 self.assertEqual(timeout, 900 if args[0] == 'bash' else 180)
+                if args[0] == 'bash':
+                    self.assertEqual('--recent-checks' in args, recent)
                 if args[0] == 'python3':
                     self.assertIn('--require-health-check', args)
+                    self.assertEqual(args[args.index('--check-interval') + 1], '1' if recent else '0')
                 return json.dumps({'result': 'BROWSE_TIMING_BASELINE_OK'})
             def report(**kwargs):
                 events.append('report')
@@ -720,15 +724,15 @@ class Scaling(unittest.TestCase):
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if stopped:
                     with self.assertRaises(ValueError) as caught:
-                        scaling.measurement_workflow()
+                        scaling.measurement_workflow(recent_checks=recent)
                     self.assertIs(caught.exception, primary)
                     self.assertNotIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
                 else:
-                    scaling.measurement_workflow()
+                    scaling.measurement_workflow(recent_checks=recent)
                     self.assertIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
                 self.assertEqual(events, ['build', 'deploy', 'verify_timing', 'trial_and_restore', 'report'])
                 capture.assert_called_once_with(users=1000, distribution=True, duration=420,
-                                                prewarmed=True, measure_all=True, measured=True)
+                                                prewarmed=True, measure_all=True, measured='recent' if recent else True)
 
     def test_measurement_workflow_preserves_existing_job_before_build(self):
         with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \

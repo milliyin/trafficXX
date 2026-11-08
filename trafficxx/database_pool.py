@@ -2,6 +2,8 @@
 from contextlib import contextmanager
 import os
 from threading import Lock
+from time import monotonic
+from weakref import WeakKeyDictionary
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -25,13 +27,19 @@ def pool_parameters():
 
 class DatabasePool:
     def __init__(self, name, size_variable, minimum_variable=None, waiting_variable=None, *, autocommit=False,
-                 check_observer=None):
+                 check_observer=None, check_interval_seconds=0):
+        if type(check_interval_seconds) is not int or check_interval_seconds not in (0, 1):
+            raise ValueError('Check interval must be zero or one second')
         self.name = name
         self.size_variable = size_variable
         self.minimum_variable = minimum_variable
         self.waiting_variable = waiting_variable
         self.autocommit = autocommit
         self.check_observer = check_observer
+        self.check_interval_seconds = check_interval_seconds
+        self._checked_at = WeakKeyDictionary()
+        self._check_lock = Lock()
+        self._checks_skipped = 0
         self._waiting_limit = 8
         self.pool = None
         self.instance_id = uuid4().hex
@@ -43,9 +51,31 @@ class DatabasePool:
         return {**pool_parameters(), 'autocommit': True}
 
     def _observed_check(self, conn):
-        # Keep the driver's check and exception propagation exactly as before.
-        with self.check_observer('health_check'):
+        now = monotonic()
+        with self._check_lock:
+            checked = self._checked_at.get(conn) if self.check_interval_seconds else None
+            if (self.check_interval_seconds and checked is not None
+                    and 0 <= now - checked < self.check_interval_seconds
+                    and not conn.closed and not conn.broken):
+                self._checks_skipped += 1
+                return
+            if self.check_interval_seconds:
+                self._checked_at.pop(conn, None)
+        # Timestamp only a successful original driver check. Failed checks
+        # propagate so psycopg_pool discards/replaces the connection normally.
+        if self.check_observer is not None:
+            with self.check_observer('health_check'):
+                ConnectionPool.check_connection(conn)
+        else:
             ConnectionPool.check_connection(conn)
+        if self.check_interval_seconds:
+            with self._check_lock:
+                self._checked_at[conn] = monotonic()
+
+    def check_statistics(self):
+        with self._check_lock:
+            return {'health_check_interval_seconds': self.check_interval_seconds,
+                    'health_checks_skipped': self._checks_skipped}
 
     def statistics(self):
         if self.pool is None:
@@ -82,7 +112,7 @@ class DatabasePool:
             conninfo=pool_conninfo, kwargs=self._autocommit_parameters if self.autocommit else pool_parameters,
             min_size=minimum, max_size=maximum,
             timeout=3, max_waiting=waiting, max_lifetime=1800, max_idle=60,
-            check=self._observed_check if self.check_observer is not None else ConnectionPool.check_connection, open=False,
+            check=self._observed_check if self.check_observer is not None or self.check_interval_seconds else ConnectionPool.check_connection, open=False,
             name=self.name, num_workers=2,
         )
         try:
@@ -124,6 +154,7 @@ class DatabasePool:
         pool = self.pool
         if pool is None:
             raise OperationalError('Database pool is not running')
+        conn = None
         try:
             # Pool context commits/rolls back and RETURNS the connection; using
             # the raw connection context here instead would close the socket.
@@ -135,3 +166,9 @@ class DatabasePool:
             with self._rejection_lock:
                 self._rejections[key] += 1
             raise HTTPException(503, detail={'code': 'DATABASE_BUSY'}) from None
+        except BaseException:
+            # Do not reuse validation after a failed application/SQL operation.
+            if conn is not None and self.check_interval_seconds:
+                with self._check_lock:
+                    self._checked_at.pop(conn, None)
+            raise

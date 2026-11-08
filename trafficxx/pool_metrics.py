@@ -25,6 +25,8 @@ def render(statistics, component='browse'):
     lines = []
     definitions = dict(METRICS)
     if component == 'browse':
+        definitions['health_checks_skipped_total'] = ('counter', 'health_checks_skipped', 'Borrows using a recently validated connection.')
+        definitions['health_check_interval_seconds'] = ('gauge', 'health_check_interval_seconds', 'Maximum successful validation age for skipping a checkout check.')
         for phase in PHASES:
             for suffix, key_suffix, kind in (('count_total', 'count', 'counter'),
                                             ('microseconds_total', 'total_us', 'counter'),
