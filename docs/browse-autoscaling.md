@@ -1566,6 +1566,44 @@ If the shell disconnects, inspect the new Job until terminal, then run
 `restore-prewarm` followed by `measure-recentcheck-profile`. Preserve the Job;
 the workflow refuses to reuse it. No new 1,000-user pass has been established.
 
+The first recent-check trial (`8b8a327ad5db`, 8 November UTC) was interrupted
+while the observer was at `observe_database_metrics`. Its exact original
+exception was masked by a later restoration refusal while the stopped Job
+was still becoming terminal. Stored counters with post-terminal coverage for
+all four instances showed no pool rejection, timeout, lost-connection or bad
+return increases. Acquisition means were 2.92–3.55 ms, versus 28.70–33.08 ms
+in the earlier every-borrow instrumentation run. Query means remained
+24.88–28.68 ms. Roughly 89% of checks reused recent validation, based on
+extrapolated counter increases. These are promising observations from different
+windows, not proof of a completed profile or an isolated causal capacity gain.
+
+Final workload logs were unavailable, so HTTP totals/errors, participant
+counts, latency and phase completion remain unknown. Manual owned restoration
+subsequently confirmed two healthy pods and no Operations backlog or active
+alerts. The original observer audit recorded the stage but not its error;
+that exact cause cannot be reconstructed from the supplied output.
+
+The wrapper now preserves the original exception if restoration also fails,
+and saves fixed, redacted primary-failure details in the observer audit. After
+requesting a stop, it waits up to 60 seconds for that exact Job UID and run
+label to become terminal before attempting restoration. It never waits for,
+stops or adopts another Job. Failure/metric guards remain unchanged.
+
+Repeat the same comparison against the already deployed interval-one image:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-autoscaling.py verify-recent-check-profile
+```
+
+This verifies both serving pods' current read/check policy, creates the distinct
+`browse-users-1000-recentcheck-profile-v2`, runs the same bounded profile,
+restores the temporary minimum and captures the report. It performs no build
+or image rollout. The original trial stays preserved. After a disconnect,
+inspect the v2 Job until terminal, then run `restore-prewarm` and
+`measure-recentcheck-verify`. Any new monitoring failure should expose its
+original safe error category rather than being replaced by a recovery error.
+
 For a new instrumented measurement trial, the entire release/test/report
 sequence is available as one Cloud Shell command:
 

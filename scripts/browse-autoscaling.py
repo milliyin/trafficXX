@@ -43,11 +43,12 @@ JOB = 'browse-users-250-autoscaling'
 PREWARM_ANNOTATION = 'trafficxx.io/prewarm-run'
 MEASURED_PROFILE_JOB = 'browse-users-1000-healthcheck-profile'
 RECENT_CHECK_PROFILE_JOB = 'browse-users-1000-recentcheck-profile'
+RECENT_CHECK_VERIFY_JOB = 'browse-users-1000-recentcheck-profile-v2'
 
 
 def measured_job(mode):
-    require(mode in (False, True, 'recent'), 'UNSUPPORTED_MEASUREMENT_MODE')
-    return RECENT_CHECK_PROFILE_JOB if mode == 'recent' else MEASURED_PROFILE_JOB
+    require(mode in (False, True, 'recent', 'recent-v2'), 'UNSUPPORTED_MEASUREMENT_MODE')
+    return RECENT_CHECK_VERIFY_JOB if mode == 'recent-v2' else RECENT_CHECK_PROFILE_JOB if mode == 'recent' else MEASURED_PROFILE_JOB
 
 
 def require(condition, code):
@@ -567,6 +568,7 @@ def drill_prewarmed(*, profile=False, measured=False):
     marker = uuid4().hex[:12]
     changed = False
     stage = 'read_prewarm_baseline'
+    primary = None
     try:
         with prometheus() as query:
             app = wait_baseline(query)
@@ -585,19 +587,41 @@ def drill_prewarmed(*, profile=False, measured=False):
         drill(users=1000, duration=420 if profile else 300, prewarmed=True,
               **({'measured': measured} if measured else {}))
     except (Exception, KeyboardInterrupt) as error:
+        primary = error
         if getattr(error, 'observer_context', None) is None:
             error.observer_context = {'stage': stage, 'job': job_name, 'load_started': False}
         raise
     finally:
         if changed:
             try:
+                context = getattr(primary, 'observer_context', {}) if primary is not None else {}
+                if context.get('load_cleanup') == 'stop_requested':
+                    wait_stopped_load(context)
                 restore_prewarm(expected_run=marker)
             except (Exception, KeyboardInterrupt) as error:
                 emit('BROWSE_PREWARM_RESTORE_REQUIRED', **failure_details(error),
                      note='Run restore-prewarm after the Job stops. The marked temporary minimum may remain four.')
-                raise
+                if primary is None:
+                    raise
+                primary.observer_context['prewarm_restore_failure'] = failure_details(error)
     emit('BROWSE_PREWARMED_DRILL_OK', ready_replicas_after=2, users=1000,
          scheduled_duration_seconds=420 if profile else 300, inventory_writes=False, automatic_scale_up_tested=False)
+
+
+def wait_stopped_load(context):
+    """Wait only for the owned stop already requested, never stop another Job."""
+    deadline = time.monotonic() + 60
+    require(context.get('job_uid') and context.get('run_id'), 'STOPPED_LOAD_IDENTITY_MISSING')
+    while True:
+        row = json.loads(base.kube('get', 'job', context['job'], '-n', 'trafficxx', '-o', 'json'))
+        require(row['metadata']['uid'] == context['job_uid']
+                and row['metadata'].get('labels', {}).get('trafficxx.io/run-id') == context['run_id'],
+                'STOPPED_LOAD_IDENTITY_CHANGED')
+        if any(c.get('status') == 'True' and c.get('type') in ('Failed', 'Complete')
+               for c in row.get('status', {}).get('conditions', [])):
+            return
+        require(time.monotonic() < deadline, 'STOPPED_LOAD_NOT_TERMINAL')
+        time.sleep(2)
 
 
 def contains(actual, expected):
@@ -913,7 +937,8 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
                      if users == 500 and duration == 180 else
                      ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
                      if users == 1000 and duration == 300 else
-                     ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB, RECENT_CHECK_PROFILE_JOB) if users == 1000 and duration == 420 else ())
+                     ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB, RECENT_CHECK_PROFILE_JOB,
+                      RECENT_CHECK_VERIFY_JOB) if users == 1000 and duration == 420 else ())
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
@@ -1341,6 +1366,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         except (Exception, KeyboardInterrupt) as error:
             primary_error = error
             error.observer_context = {'stage': stage, 'job': job_name, 'run_id': run_id,
+                                      'job_uid': job['metadata']['uid'] if job is not None else None,
                                       'resource_gate_released': released, 'resources': resource_watch.summary(),
                                       'pool_waiting_observations': waiting_watch.summary()}
             raise
@@ -1354,6 +1380,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     audit = {'run_id': run_id, 'job': job_name, 'job_uid': job['metadata']['uid'],
                              'captured_utc': datetime.now(timezone.utc).isoformat(),
                              'stage': stage, 'peak_ready_replicas': peak,
+                             'primary_failure': failure_details(primary_error) if primary_error is not None else None,
                              'resources': resource_watch.summary(),
                              'hpa_metric_observations': metric_readiness.summary(),
                              'pool_waiting_observations': waiting_watch.summary(),
@@ -1375,21 +1402,24 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     primary_error.observer_context['load_cleanup'] = 'failed'
 
 
-def measurement_workflow(*, recent_checks=False):
+def measurement_workflow(*, recent_checks=False, verification=False):
     """Cloud Shell: instrumented release, bounded trial, restore, combined report."""
     trial.context()
     trial.no_active_load()
-    mode = 'recent' if recent_checks else True
+    require(not verification or recent_checks, 'UNSUPPORTED_MEASUREMENT_MODE')
+    mode = 'recent-v2' if verification else 'recent' if recent_checks else True
     job_name = measured_job(mode)
     require(not base.kube('get', 'job', job_name, '-n', 'trafficxx',
                           '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     trial.health()
     emit('BROWSE_MEASUREMENT_WORKFLOW_STARTED', job=job_name,
-         note='Build/deploy timing instrumentation, verify it, run 120/180/120 profile, restore and report. '
+         note=('Verify the currently deployed candidate, run 120/180/120 profile, restore and report. ' if verification else
+               'Build/deploy timing instrumentation, verify it, run 120/180/120 profile, restore and report. ') +
               'The recent-check comparison verifies a one-second successful-validation window; no query retries.')
-    base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh')]
-                 + (['--recent-checks'] if recent_checks else []), timeout=900)
-    deploy_image()
+    if not verification:
+        base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh')]
+                     + (['--recent-checks'] if recent_checks else []), timeout=900)
+        deploy_image()
     baseline = json.loads(base.command(['python3', str(ROOT / 'scripts/check-browse-timing.py'),
                                       '--pool-size', '8', '--require-health-check', '--check-interval',
                                       '1' if recent_checks else '0'], timeout=180).splitlines()[-1])
@@ -1430,7 +1460,8 @@ def main():
                                          'drill-prewarmed', 'restore-prewarm', 'diagnose-1000-prewarmed', 'deploy-image',
                                          'drill-user-profile', 'diagnose-user-profile', 'measure-user-profile', 'preflight-prewarm',
                                          'measurement-workflow', 'measure-healthcheck-profile',
-                                         'recent-check-workflow', 'measure-recentcheck-profile'))
+                                         'recent-check-workflow', 'measure-recentcheck-profile',
+                                         'verify-recent-check-profile', 'measure-recentcheck-verify'))
     parser.add_argument('--seconds', type=int, choices=(180, 300), default=180,
                         help='300 seconds is supported only for the explicit 1000-user drill.')
     parser.add_argument('--users', type=int, choices=(250, 500, 1000), default=250,
@@ -1526,6 +1557,10 @@ def main():
             measurement_workflow(recent_checks=True)
         elif action == 'measure-recentcheck-profile':
             diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True, measure_all=True, measured='recent')
+        elif action == 'verify-recent-check-profile':
+            measurement_workflow(recent_checks=True, verification=True)
+        elif action == 'measure-recentcheck-verify':
+            diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True, measure_all=True, measured='recent-v2')
         else:
             trial.context()
             with prometheus() as query:

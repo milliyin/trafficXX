@@ -356,6 +356,49 @@ class Scaling(unittest.TestCase):
                 self.assertEqual(scaling.main(), 0)
                 call.assert_called_once_with()
 
+    def test_restore_failure_does_not_replace_original_monitoring_failure(self):
+        primary = subprocess.CalledProcessError(1, ['az', 'monitor', 'metrics', 'list'])
+        primary.observer_context = {'stage': 'observe_database_metrics'}
+        with ExitStack() as stack:
+            for owner, name in ((scaling.trial, 'context'), (scaling.trial, 'no_active_load'),
+                                (scaling.trial, 'health'), (scaling, 'database_pressure'),
+                                (scaling, 'owned_hpa'), (scaling, 'wait_until'), (scaling, 'prewarm_policy')):
+                stack.enter_context(patch.object(owner, name))
+            stack.enter_context(patch.object(scaling.base, 'kube', return_value=''))
+            stack.enter_context(patch.object(scaling, 'wait_baseline', return_value=app()))
+            stack.enter_context(patch.object(scaling, 'prometheus'))
+            stack.enter_context(patch.object(scaling, 'drill', side_effect=primary))
+            stack.enter_context(patch.object(scaling, 'restore_prewarm', side_effect=ValueError('OTHER_READ_LOAD_ACTIVE')))
+            output = stack.enter_context(redirect_stdout(io.StringIO()))
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                scaling.drill_prewarmed(profile=True, measured='recent-v2')
+            self.assertIs(caught.exception, primary)
+            self.assertEqual(primary.observer_context['prewarm_restore_failure']['check'], 'OTHER_READ_LOAD_ACTIVE')
+            self.assertEqual(primary.observer_context['stage'], 'observe_database_metrics')
+            self.assertNotIn('BROWSE_PREWARMED_DRILL_OK', output.getvalue())
+
+    def test_stop_wait_is_read_only_bounded_and_checks_run_identity(self):
+        context = {'job': scaling.RECENT_CHECK_VERIFY_JOB, 'job_uid': 'owned', 'run_id': 'a' * 12}
+        running = {'metadata': {'uid': 'owned', 'labels': {'trafficxx.io/run-id': 'a' * 12}}}
+        terminal = deepcopy(running)
+        terminal['status'] = {'conditions': [{'type': 'Failed', 'status': 'True'}]}
+        with patch.object(scaling.base, 'kube', side_effect=[json.dumps(running), json.dumps(terminal)]) as kube, \
+                patch.object(scaling.time, 'sleep') as sleep:
+            scaling.wait_stopped_load(context)
+            self.assertTrue(all(call.args[:2] == ('get', 'job') for call in kube.call_args_list))
+            sleep.assert_called_once_with(2)
+        for uid, run_id in (('foreign', 'a' * 12), ('owned', 'b' * 12)):
+            row = deepcopy(running)
+            row['metadata']['uid'] = uid
+            row['metadata']['labels']['trafficxx.io/run-id'] = run_id
+            with patch.object(scaling.base, 'kube', return_value=json.dumps(row)), \
+                    self.assertRaisesRegex(ValueError, 'STOPPED_LOAD_IDENTITY_CHANGED'):
+                scaling.wait_stopped_load(context)
+        with patch.object(scaling.base, 'kube', return_value=json.dumps(running)), \
+                patch.object(scaling.time, 'monotonic', side_effect=[0, 61]), \
+                self.assertRaisesRegex(ValueError, 'STOPPED_LOAD_NOT_TERMINAL'):
+            scaling.wait_stopped_load(context)
+
     @staticmethod
     def waiting_rows(a_stamp, a_value, b_stamp=None, b_value=0):
         return [{'metric': {'instance': name}, 'values': [[stamp, str(value)]]}
@@ -690,12 +733,13 @@ class Scaling(unittest.TestCase):
         self.assertIsNone(row['per_instance']['a']['body_mean_ms'])
 
     def test_measurement_workflow_reports_after_restored_trial_and_keeps_failure(self):
-        for stopped, report_fails, recent in ((False, False, False), (True, False, False),
-                                            (True, True, False), (False, False, True)):
+        for stopped, report_fails, recent, verification in ((False, False, False, False), (True, False, False, False),
+                                            (True, True, False, False), (False, False, True, False),
+                                            (False, False, True, True)):
             events = []
             primary = ValueError('SUSTAINED_POOL_WAITING')
             def workload(**kwargs):
-                self.assertEqual(kwargs, {'profile': True, 'measured': 'recent' if recent else True})
+                self.assertEqual(kwargs, {'profile': True, 'measured': 'recent-v2' if verification else 'recent' if recent else True})
                 events.append('trial_and_restore')
                 if stopped:
                     raise primary
@@ -724,15 +768,15 @@ class Scaling(unittest.TestCase):
                 output = stack.enter_context(redirect_stdout(io.StringIO()))
                 if stopped:
                     with self.assertRaises(ValueError) as caught:
-                        scaling.measurement_workflow(recent_checks=recent)
+                        scaling.measurement_workflow(recent_checks=recent, verification=verification)
                     self.assertIs(caught.exception, primary)
                     self.assertNotIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
                 else:
-                    scaling.measurement_workflow(recent_checks=recent)
+                    scaling.measurement_workflow(recent_checks=recent, verification=verification)
                     self.assertIn('BROWSE_MEASUREMENT_WORKFLOW_OK', output.getvalue())
-                self.assertEqual(events, ['build', 'deploy', 'verify_timing', 'trial_and_restore', 'report'])
+                self.assertEqual(events, ([] if verification else ['build', 'deploy']) + ['verify_timing', 'trial_and_restore', 'report'])
                 capture.assert_called_once_with(users=1000, distribution=True, duration=420,
-                                                prewarmed=True, measure_all=True, measured='recent' if recent else True)
+                                                prewarmed=True, measure_all=True, measured='recent-v2' if verification else 'recent' if recent else True)
 
     def test_measurement_workflow_preserves_existing_job_before_build(self):
         with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
@@ -883,6 +927,8 @@ class Scaling(unittest.TestCase):
                 return json.dumps({'metadata': {'uid': 'job'}, 'status': {}})
             raise AssertionError(args)
         with ExitStack() as stack:
+            directory = stack.enter_context(tempfile.TemporaryDirectory())
+            stack.enter_context(patch.object(scaling, 'ROOT', Path(directory)))
             for owner, name, kwargs in (
                 (scaling.trial, 'context', {}), (scaling.trial, 'no_active_load', {}),
                 (scaling.trial, 'health', {}), (scaling, 'database_pressure', {}),
@@ -905,6 +951,10 @@ class Scaling(unittest.TestCase):
             self.assertEqual(context['job'], 'browse-users-500-autoscaling-pressure3-v2')
             self.assertIn('BROWSE_AUTOSCALING_CLEANUP_FAILED', output.getvalue())
             self.assertNotIn('hidden-payload', output.getvalue())
+            audit = json.loads(scaling.observation_path(context['run_id']).read_text())
+            self.assertEqual(audit['primary_failure']['command_operation'], 'read_pod_resource_metrics')
+            self.assertEqual(audit['primary_failure']['command_exit_code'], 1)
+            self.assertNotIn('hidden-payload', json.dumps(audit))
 
     def test_verification_cli_is_explicit_and_cannot_raise_the_stage(self):
         with patch.object(sys, 'argv', ['browse-autoscaling.py', 'drill', '--users', '500', '--verify-early']), \
