@@ -102,10 +102,10 @@ class DatabasePool:
             raise ValueError('Pool bounds must be integers with 1 <= minimum <= maximum <= 8') from None
         try:
             waiting = int(os.environ.get(self.waiting_variable, '8')) if self.waiting_variable else 8
-            if waiting not in (8, 16):
+            if waiting not in ((8, 16, 32) if self.name == 'browse' else (8, 16)):
                 raise ValueError
         except ValueError:
-            raise ValueError('Pool waiting limit must be 8 or 16') from None
+            raise ValueError('Pool waiting limit is outside the reviewed bounds') from None
         # Callable kwargs run on EVERY physical connection attempt, not once at
         # startup. No token/password is frozen in the pool configuration.
         pool = ConnectionPool(

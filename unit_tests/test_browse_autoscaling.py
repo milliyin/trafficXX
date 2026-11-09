@@ -723,7 +723,7 @@ class Scaling(unittest.TestCase):
                 return [{'metric': {'instance': 'a'}, 'value': [240, '10.5']}]
             return []
         row = scaling.timing_diagnostics(query, 240, '1060')
-        self.assertEqual(len(expressions), 13)
+        self.assertEqual(len(expressions), 15)
         self.assertTrue(all('[240s] @ 1060' in e for e in expressions))
         means = [e for e in expressions if '/ 1000' in e]
         self.assertEqual(len(means), 5)

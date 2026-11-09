@@ -27,11 +27,12 @@ def no_active_load():
                          'Another read load is active; inspect it first')
 
 
-def snapshot(call, index, *, pool_size=4):
-    row = flow.snapshot(call, index, expected_pool_max=pool_size)
+def snapshot(call, index, *, pool_size=4, queue_limit=16):
+    row = flow.snapshot(call, index, expected_pool_max=pool_size,
+                        **({'expected_queue_limit': queue_limit} if queue_limit != 16 else {}))
     stats = row['statistics']
     flow.require(stats['pool_min'] == pool_size and stats['pool_size'] == pool_size
-                 and stats.get('pool_waiting_limit') == 16, 'Expected unchanged warm pool policy')
+                 and stats.get('pool_waiting_limit') == queue_limit, 'Expected unchanged warm pool policy')
     flow.require(all(type(stats.get('timing_' + phase + '_' + suffix)) is int
                      and stats['timing_' + phase + '_' + suffix] >= 0
                      for phase in phases(stats) for suffix in ('count', 'total_us', 'max_us')),
@@ -39,10 +40,11 @@ def snapshot(call, index, *, pool_size=4):
     return row
 
 
-def experiment(call, *, pool_size=4, require_health_check=False, check_interval=None):
+def experiment(call, *, pool_size=4, require_health_check=False, check_interval=None, queue_limit=16):
     flow.require(type(pool_size) is int and pool_size in (4, 8), 'Unreviewed timing pool size')
     # Verify both have instrumentation before generating the measured reads.
-    initial = [snapshot(call, index, pool_size=pool_size) for index in range(2)]
+    flow.require(type(queue_limit) is int and queue_limit in (16, 32), 'Unreviewed timing queue size')
+    initial = [snapshot(call, index, pool_size=pool_size, queue_limit=queue_limit) for index in range(2)]
     if check_interval is not None:
         flow.require(check_interval in (0, 1) and all(
             row['statistics'].get('health_check_interval_seconds') == check_interval
@@ -69,7 +71,7 @@ def experiment(call, *, pool_size=4, require_health_check=False, check_interval=
             wall.append((time.perf_counter() - begun) * 1000)
             flow.require(body.get('id') == 'demo-' + route and body.get('available') == 100,
                          'Demo inventory changed')
-        after = snapshot(call, index, pool_size=pool_size)
+        after = snapshot(call, index, pool_size=pool_size, queue_limit=queue_limit)
         flow.require(after['instance_id'] == before['instance_id'], 'Browse process changed')
         final = after['statistics']
         flow.require(final.get('single_statement_autocommit', 0) == modes[index], 'Read mode changed')
@@ -111,9 +113,11 @@ if __name__ == '__main__':
                         help='Require this exact reviewed warm pool size on both pods (current autoscaled policy: 8).')
     parser.add_argument('--require-health-check', action='store_true')
     parser.add_argument('--check-interval', type=int, choices=(0, 1))
+    parser.add_argument('--queue-limit', type=int, choices=(16, 32), default=16)
     args = parser.parse_args()
     raise SystemExit(flow.main(experiment_function=lambda call: experiment(call, pool_size=args.pool_size,
                                                                          require_health_check=args.require_health_check,
-                                                                         check_interval=args.check_interval),
+                                                                         check_interval=args.check_interval,
+                                                                         queue_limit=args.queue_limit),
                                failure_result='BROWSE_TIMING_BASELINE_FAILED',
                                preflight_check=no_active_load))

@@ -27,6 +27,7 @@ class Timings(unittest.TestCase):
         snapshots = [0, 0]
         fault = [None]
         recent_skip = [False]
+        queue_limit = [16]
         def call(index, path):
             if path != '/internal/database-pool':
                 counts[index] += 1
@@ -34,7 +35,7 @@ class Timings(unittest.TestCase):
             snapshots[index] += 1
             size = 4 if (fault[0] == 'mixed' and index == 1) or (fault[0] == 'changed' and snapshots[index] > 1) else 8
             stats = dict(pool_min=size, pool_max=size, pool_size=size, pool_available=size,
-                requests_waiting=0, pool_waiting_limit=16, requests_num=counts[index], requests_errors=0,
+                requests_waiting=0, pool_waiting_limit=queue_limit[0], requests_num=counts[index], requests_errors=0,
                 connections_num=size, connections_errors=0, connections_lost=0, returns_bad=0,
                 rejections_queue_full=0, rejections_timeout=0, rejections_closed=0, single_statement_autocommit=1,
                 health_check_interval_seconds=1, health_checks_skipped=counts[index] if recent_skip[0] else 0)
@@ -57,6 +58,14 @@ class Timings(unittest.TestCase):
         row = module.experiment(call, pool_size=8, require_health_check=True, check_interval=1)
         self.assertIsNone(row['per_pod'][0]['timings']['health_check']['mean_ms'])
         self.assertEqual(row['per_pod'][0]['timings']['health_checks_skipped'], 12)
+        queue_limit[0] = 32
+        counts[:], snapshots[:] = [0, 0], [0, 0]
+        module.experiment(call, pool_size=8, require_health_check=True, check_interval=1, queue_limit=32)
+        counts[:], snapshots[:] = [0, 0], [0, 0]
+        with self.assertRaises(module.flow.CheckFailed):
+            module.experiment(call, pool_size=8)
+        self.assertEqual(counts, [0, 0])
+        queue_limit[0] = 16
         recent_skip[0] = False
         for failure in ('mixed', 'changed'):
             fault[0], counts[:], snapshots[:] = failure, [0, 0], [0, 0]

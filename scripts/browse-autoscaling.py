@@ -1,6 +1,7 @@
 """Cloud Shell only: bounded Browse KEDA installation, checks and real-load drill."""
 import argparse
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
@@ -44,10 +45,24 @@ PREWARM_ANNOTATION = 'trafficxx.io/prewarm-run'
 MEASURED_PROFILE_JOB = 'browse-users-1000-healthcheck-profile'
 RECENT_CHECK_PROFILE_JOB = 'browse-users-1000-recentcheck-profile'
 RECENT_CHECK_VERIFY_JOB = 'browse-users-1000-recentcheck-profile-v2'
+QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-profile'
+EXPECTED_QUEUE = ContextVar('expected_browse_queue', default=16)
+
+
+@contextmanager
+def queue_expectation(limit):
+    require(type(limit) is int and limit in (16, 32), 'UNREVIEWED_QUEUE_LIMIT')
+    token = EXPECTED_QUEUE.set(limit)
+    try:
+        yield
+    finally:
+        EXPECTED_QUEUE.reset(token)
 
 
 def measured_job(mode):
-    require(mode in (False, True, 'recent', 'recent-v2'), 'UNSUPPORTED_MEASUREMENT_MODE')
+    require(mode in (False, True, 'recent', 'recent-v2', 'queue32'), 'UNSUPPORTED_MEASUREMENT_MODE')
+    if mode == 'queue32':
+        return QUEUE32_PROFILE_JOB
     return RECENT_CHECK_VERIFY_JOB if mode == 'recent-v2' else RECENT_CHECK_PROFILE_JOB if mode == 'recent' else MEASURED_PROFILE_JOB
 
 
@@ -534,6 +549,7 @@ def warm_four(query, uid):
         require(scalar(query, 'min(' + M + field + F + ')') == 8
                 and scalar(query, 'count(' + M + field + F + ')') == 4, 'PREWARM_POOL_NOT_WARM')
     check_pool_errors(query)
+    check_queue_metrics(query, 4)
     return app
 
 
@@ -658,7 +674,7 @@ def deployment(expected_uid=None):
             'UNEXPECTED_BROWSE_PROCESS_COUNT')
     env = {r['name']: r.get('value') for r in container['env']}
     require(all(env.get(k) == '8' for k in ('BROWSE_DB_POOL_MIN', 'BROWSE_DB_POOL_MAX'))
-            and env.get('BROWSE_DB_POOL_MAX_WAITING') == '16', 'POOL_POLICY_CHANGED')
+            and env.get('BROWSE_DB_POOL_MAX_WAITING') == str(EXPECTED_QUEUE.get()), 'POOL_POLICY_CHANGED')
     require(app['spec']['strategy']['rollingUpdate'] == {'maxSurge': 0, 'maxUnavailable': 1},
             'ROLLOUT_BUDGET_CHANGED')
     return app
@@ -675,15 +691,26 @@ def check(query, *, min_replicas=2):
     rows = query('up' + F)
     require(len(rows) == count, 'DISCOVERY_NOT_CONVERGED')
     values = {'pressure': scalar(query, PRESSURE), 'borrows_per_second': scalar(query, BORROWS)}
+    check_queue_metrics(query, count)
     emit('BROWSE_AUTOSCALING_OK', replicas=count, pool_per_pod=8, steady_browse_connection_cap=32,
          planning_connection_budget=128, signals=values, notification_delivery_configured=False)
     return app
 
 
+def check_queue_metrics(query, count):
+    if EXPECTED_QUEUE.get() == 32:
+        field = M + 'waiting_limit' + F
+        require(scalar(query, 'count(' + field + ')') == count
+                and scalar(query, 'min(' + field + ')') == 32
+                and scalar(query, 'max(' + field + ')') == 32
+                and scalar(query, 'min(timestamp(' + field + '))') > time.time() - 45,
+                'QUEUE_POLICY_METRICS_MISMATCH')
+
+
 def wait_baseline(query, seconds=180, *, clock=time.monotonic, sleep=time.sleep, min_replicas=2):
     """Wait for asynchronous readiness/discovery without relaxing final evidence."""
     transient = {'DISCOVERY_NOT_CONVERGED', 'BROWSE_NOT_READY',
-                 'SCALING_METRIC_MISSING', 'HPA_METRIC_NOT_ACTIVE'}
+                 'SCALING_METRIC_MISSING', 'HPA_METRIC_NOT_ACTIVE', 'QUEUE_POLICY_METRICS_MISMATCH'}
     deadline, previous = clock() + seconds, None
     while True:
         try:
@@ -938,7 +965,7 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
                      ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
                      if users == 1000 and duration == 300 else
                      ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB, RECENT_CHECK_PROFILE_JOB,
-                      RECENT_CHECK_VERIFY_JOB) if users == 1000 and duration == 420 else ())
+                      RECENT_CHECK_VERIFY_JOB, QUEUE32_PROFILE_JOB) if users == 1000 and duration == 420 else ())
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
             and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
                     for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
@@ -966,6 +993,7 @@ def timing_diagnostics(query, window, when):
     expressions['health_checks_skipped_estimate'] = 'increase(' + M + 'health_checks_skipped_total' + F + '[' + str(window) + 's] @ ' + when + ')'
     for aggregate in ('min', 'max'):
         expressions['check_interval_seconds_' + aggregate] = aggregate + '_over_time(' + M + 'health_check_interval_seconds' + F + '[' + str(window) + 's] @ ' + when + ')'
+        expressions['queue_limit_' + aggregate] = aggregate + '_over_time(' + M + 'waiting_limit' + F + '[' + str(window) + 's] @ ' + when + ')'
     return {'per_instance': instance_distribution(query, expressions),
             'note': 'Counter-increase weighted phase means over the Job window plus the 60-second scrape tail. '
                     'Includes warmup, readiness and other traffic. Acquire includes queueing and checkout checks; '
@@ -1322,6 +1350,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     emit('BROWSE_SCALING_RESOURCE_GATE_RELEASED', run_id=run_id)
                 if released:
                     stage = 'observe_pool_pressure'
+                    check_queue_metrics(query, ready)
                     waiting_watch.observe(query(M + 'waiting' + F + '[45s]'), time.time())
                     check_pool_errors(query)
                 if time.monotonic() - last_database >= 60:
@@ -1380,6 +1409,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     audit = {'run_id': run_id, 'job': job_name, 'job_uid': job['metadata']['uid'],
                              'captured_utc': datetime.now(timezone.utc).isoformat(),
                              'stage': stage, 'peak_ready_replicas': peak,
+                             'expected_queue_per_pod': EXPECTED_QUEUE.get(),
                              'primary_failure': failure_details(primary_error) if primary_error is not None else None,
                              'resources': resource_watch.summary(),
                              'hpa_metric_observations': metric_readiness.summary(),

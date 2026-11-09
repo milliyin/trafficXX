@@ -114,6 +114,22 @@ def test_recent_checks_expire_and_sql_errors_invalidate_success(monkeypatch):
         database.close()
 
 
+def test_queue32_keeps_eight_warm_connections_and_serves_single_select(monkeypatch):
+    monkeypatch.setenv('BROWSE_DB_POOL_MAX', '8')
+    monkeypatch.setenv('BROWSE_DB_POOL_MIN', '8')
+    monkeypatch.setenv('BROWSE_DB_POOL_MAX_WAITING', '32')
+    monkeypatch.setenv('BROWSE_DB_CHECK_INTERVAL_SECONDS', '1')
+    database = BrowseDatabase()
+    database.open()
+    try:
+        stats = database.statistics()['statistics']
+        assert (stats['pool_max'], stats['pool_min'], stats['pool_size'], stats['pool_waiting_limit']) == (8, 8, 8, 32)
+        with database.read_connection() as conn:
+            assert conn.execute('SELECT 1 AS n').fetchone()['n'] == 1
+    finally:
+        database.close()
+
+
 def test_server_drop_inside_recent_window_does_not_prevent_replacement(monkeypatch):
     import os
     monkeypatch.setenv('BROWSE_DB_POOL_MAX', '1')

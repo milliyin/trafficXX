@@ -1633,6 +1633,56 @@ Any next queue/admission comparison must be explicit and retain latency/error
 acceptance criteria; do not silently rerun the preserved Job or ignore its
 single failed request.
 
+#### Temporary queue-32 comparison
+
+The next comparison gives short bursts 32 waiting slots per pod while keeping
+eight warm connections, the one-second check policy, four prewarmed pods and
+all existing failure/latency/resource criteria. More waiting room can increase
+latency; it does not establish more database capacity or guarantee a pass.
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-queue-comparison.py run
+```
+
+Allow about 30 minutes for the build, rollouts, seven-minute profile and
+restoration. The command builds the recent-check image with Browse-only
+support for queue 32, deploys it at queue 16 first, then makes an owned,
+temporary Deployment queue change. UID/resourceVersion/template/annotation
+compare-and-swap guards protect that change. Its durable marker records the
+run, Deployment UID and exact temporary template fingerprint; restoration
+refuses foreign runs, recreated Deployments or operator template changes.
+HPA ownership, eight-connection policy and rollout connection budgets remain
+enforced. Booking cannot use the new 32-slot option.
+
+Both serving pods must report queue 32 and check interval one before load;
+all four warm targets must then expose fresh queue-32 metrics. Queue limits
+remain checked during observation. Default helper expectations stay at 16;
+only this explicit process-local comparison context admits 32. The Job is
+`browse-users-1000-queue32-profile`, with the same 120-second arrival ramp,
+180-second hold and 120-second withdrawal. The report includes observed
+queue-limit bounds and the expected policy in the observer audit.
+
+After the workload, the workflow restores the owned temporary minimum to two,
+captures the historical report, then restores queue 16 with a rollout and
+health checks. It preserves the new image, existing failed Jobs, credentials
+and inventory. A primary failure survives a report or restore failure. A
+successful workload alone is insufficient for `BROWSE_QUEUE32_COMPARISON_OK`;
+report collection and baseline restoration must also pass.
+
+If Cloud Shell disconnects, wait until the new Job is terminal, then use:
+
+```bash
+python3 scripts/browse-queue-comparison.py diagnose
+python3 scripts/browse-queue-comparison.py restore
+```
+
+Attempt restoration even if report capture fails. These actions refuse active
+load and never reset inventory or manually scale the Deployment. Use this
+queue-specific restore command: it recovers both the marked prewarm minimum
+and the marked queue policy. Do not restart the comparison or delete its Job.
+The queue-32 outcome remains pending until actual Cloud Shell evidence arrives.
+
 For a new instrumented measurement trial, the entire release/test/report
 sequence is available as one Cloud Shell command:
 

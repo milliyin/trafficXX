@@ -46,7 +46,7 @@ def select_pods(deployment, items, replica_set, *, name='browse'):
     return sorted(items, key=lambda pod: pod['metadata']['name'])
 
 
-def snapshot(call, index, *, expected_pool_max=4):
+def snapshot(call, index, *, expected_pool_max=4, expected_queue_limit=None):
     require(type(expected_pool_max) is int and expected_pool_max in (4, 8), 'Unexpected expected pool size')
     row = call(index, '/internal/database-pool')
     require(isinstance(row.get('instance_id'), str) and len(row['instance_id']) == 32,
@@ -58,7 +58,10 @@ def snapshot(call, index, *, expected_pool_max=4):
     require(all(type(stats.get(key)) is int and stats[key] >= 0 for key in keys),
             'Invalid numeric pool statistics')
     waiting_limit = stats.get('pool_waiting_limit', 8)
-    require(type(waiting_limit) is int and waiting_limit in (8, 16), 'Unexpected queue limit')
+    require(expected_queue_limit is None or (type(expected_queue_limit) is int
+            and expected_queue_limit in (16, 32)), 'Unexpected expected queue limit')
+    require(type(waiting_limit) is int and waiting_limit in (
+        (expected_queue_limit,) if expected_queue_limit is not None else (8, 16)), 'Unexpected queue limit')
     require(stats['pool_min'] in ((1, 4) if expected_pool_max == 4 else (8,))
             and stats['pool_max'] == expected_pool_max
             and 1 <= stats['pool_size'] <= expected_pool_max

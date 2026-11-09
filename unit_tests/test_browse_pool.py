@@ -31,6 +31,18 @@ class PoolClosed(Exception):
 
 
 class BrowsePool(unittest.TestCase):
+    def test_queue32_is_browse_only_and_does_not_increase_connections(self):
+        environment = {'BROWSE_DB_POOL_MAX': '8', 'BROWSE_DB_POOL_MIN': '8', 'BROWSE_DB_POOL_MAX_WAITING': '32'}
+        with patch.dict(os.environ, environment):
+            database = self.module.DatabasePool('browse', 'BROWSE_DB_POOL_MAX', 'BROWSE_DB_POOL_MIN',
+                                                'BROWSE_DB_POOL_MAX_WAITING')
+            database.open()
+            options = self.factory.call_args.kwargs
+            self.assertEqual((options['max_size'], options['min_size'], options['max_waiting']), (8, 8, 32))
+            booking = self.module.DatabasePool('booking', 'BROWSE_DB_POOL_MAX', waiting_variable='BROWSE_DB_POOL_MAX_WAITING')
+            with self.assertRaises(ValueError):
+                booking.open()
+
     def test_recent_success_only_skips_inside_window_and_failed_check_is_not_cached(self):
         class Conn:
             closed = broken = False
