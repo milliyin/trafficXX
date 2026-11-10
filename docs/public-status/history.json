@@ -1,22 +1,22 @@
 {
   "origin": "https://clickclash.milliyin.dev",
   "started_at": "2026-10-28T14:05:47.179210+00:00",
-  "checked_at": "2026-11-10T18:21:00.722120+00:00",
+  "checked_at": "2026-11-10T23:34:27.700669+00:00",
   "components": [
     {
       "name": "Website",
       "ok": true,
-      "latency_ms": 203.0
+      "latency_ms": 131.8
     },
     {
       "name": "Click API readiness",
       "ok": true,
-      "latency_ms": 261.3
+      "latency_ms": 185.0
     },
     {
       "name": "Leaderboard",
       "ok": true,
-      "latency_ms": 311.4
+      "latency_ms": 248.1
     }
   ],
   "history": [
@@ -1235,6 +1235,27 @@
           "name": "Leaderboard",
           "ok": true,
           "latency_ms": 311.4
+        }
+      ]
+    },
+    {
+      "checked_at": "2026-11-10T23:34:27.700669+00:00",
+      "ok": true,
+      "components": [
+        {
+          "name": "Website",
+          "ok": true,
+          "latency_ms": 131.8
+        },
+        {
+          "name": "Click API readiness",
+          "ok": true,
+          "latency_ms": 185.0
+        },
+        {
+          "name": "Leaderboard",
+          "ok": true,
+          "latency_ms": 248.1
         }
       ]
     }
