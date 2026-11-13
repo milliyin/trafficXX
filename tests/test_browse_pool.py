@@ -1,5 +1,6 @@
 """Real PostgreSQL reuse/rollback/replacement tests in the dedicated CI database."""
 from concurrent.futures import ThreadPoolExecutor
+import time
 from unittest.mock import patch
 
 import pytest
@@ -31,6 +32,26 @@ def test_sequential_requests_reuse_physical_connection(database):
     stats = database.statistics()['statistics']
     assert stats['timing_health_check_count'] == before + 2
     assert stats['timing_health_check_total_us'] >= 0
+
+
+def test_driver_queue_wait_counter_measures_blocked_assignment(database):
+    before = database.statistics()['statistics']
+    def queued_read():
+        with database.read_connection() as conn:
+            return conn.execute('SELECT 1 AS n').fetchone()['n']
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with database.read_connection():
+            future = executor.submit(queued_read)
+            deadline = time.monotonic() + 2
+            while database.statistics()['statistics']['requests_waiting'] != 1:
+                assert time.monotonic() < deadline, 'Borrow did not enter the bounded queue'
+                time.sleep(.005)
+            time.sleep(.05)
+        assert future.result(timeout=3) == 1
+    after = database.statistics()['statistics']
+    assert after['requests_queued'] == before['requests_queued'] + 1
+    assert after['requests_wait_ms'] - before['requests_wait_ms'] >= 40
+    assert after['requests_errors'] == before['requests_errors']
 
 
 def test_single_statement_read_returns_idle_without_an_explicit_transaction(database):

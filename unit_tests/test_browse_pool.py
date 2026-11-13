@@ -31,6 +31,16 @@ class PoolClosed(Exception):
 
 
 class BrowsePool(unittest.TestCase):
+    def test_driver_wait_statistics_are_exposed_without_reset_or_new_borrow(self):
+        self.database.pool = self.pool
+        self.pool.get_stats.return_value = {'requests_queued': 4, 'requests_wait_ms': 96,
+                                           'private': 'must-not-be-exposed'}
+        values = self.database.statistics()['statistics']
+        self.assertEqual((values['requests_queued'], values['requests_wait_ms']), (4, 96))
+        self.assertNotIn('private', values)
+        self.pool.pop_stats.assert_not_called()
+        self.pool.connection.assert_not_called()
+
     def test_queue32_is_browse_only_and_does_not_increase_connections(self):
         environment = {'BROWSE_DB_POOL_MAX': '8', 'BROWSE_DB_POOL_MIN': '8', 'BROWSE_DB_POOL_MAX_WAITING': '32'}
         with patch.dict(os.environ, environment):

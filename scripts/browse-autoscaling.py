@@ -29,6 +29,7 @@ trial = load('run-browse-pool-comparison')
 base = trial.base
 evidence = load('browse_evidence')
 DURABLE_EVIDENCE = False
+WAIT_TIME_MEASUREMENT = False
 F = '{job="trafficxx-browse-pool"}'
 M = 'trafficxx_browse_pool_'
 # Do not turn missing targets/fields into a zero-pressure downscale signal.
@@ -707,6 +708,12 @@ def check_queue_metrics(query, count):
                 and scalar(query, 'max(' + field + ')') == 32
                 and scalar(query, 'min(timestamp(' + field + '))') > time.time() - 45,
                 'QUEUE_POLICY_METRICS_MISMATCH')
+        if WAIT_TIME_MEASUREMENT:
+            for suffix in ('queued_total', 'queue_wait_milliseconds_total'):
+                field = M + suffix + F
+                require(scalar(query, 'count(' + field + ')') == count
+                        and scalar(query, 'min(timestamp(' + field + '))') > time.time() - 45,
+                        'QUEUE_POLICY_METRICS_MISMATCH')
 
 
 def wait_baseline(query, seconds=180, *, clock=time.monotonic, sleep=time.sleep, min_replicas=2):
@@ -824,6 +831,7 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
         pod = row['spec']['template']['spec']
         pod['serviceAccountName'] = resource
         pod['automountServiceAccountToken'] = True
+        pod['terminationGracePeriodSeconds'] = 15
         pod['containers'][0].setdefault('env', []).extend([
             {'name': 'BROWSE_EVIDENCE_CONFIGMAP', 'value': resource},
             {'name': 'BROWSE_EVIDENCE_RUN', 'value': run_id}])
@@ -955,6 +963,25 @@ def instance_distribution(query, expressions):
     # Missing series are null, never a claim of zero traffic or zero errors.
     return {instance: {field: values.get(instance) for field, values in fields.items()}
             for instance in sorted(instances)}
+
+
+def queue_wait_diagnostics(query, window, when, counter_window, counter_when):
+    def increase(suffix):
+        return 'increase(' + M + suffix + F + '[' + str(counter_window) + 's] @ ' + counter_when + ')'
+    queued, waited = increase('queued_total'), increase('queue_wait_milliseconds_total')
+    queued_rate = 'rate(' + M + 'queued_total' + F + '[1m])'
+    wait_rate = 'rate(' + M + 'queue_wait_milliseconds_total' + F + '[1m])'
+    rows = instance_distribution(query, {
+        'queue_entries_estimate': queued, 'queue_wait_milliseconds_estimate': waited,
+        'queue_wait_mean_ms': '(' + waited + ' / ' + queued + ') and (' + queued + ' > 0)',
+        'sampled_peak_1m_queue_wait_mean_ms': 'max_over_time(((' + wait_rate + ' / ' + queued_rate
+            + ') and (' + queued_rate + ' > 0))[' + str(window) + 's:15s] @ ' + when + ')'})
+    return {'per_instance': rows,
+            'note': 'Driver queue-assignment wait only; excludes checkout validation and query time. '
+                    'Integer milliseconds per wait are truncated by the driver. Estimates include background/warmup '
+                    'traffic and a 60-second counter tail. Queue entries can still be in flight at window boundaries. '
+                    'Mean per queue entry is approximate; no queue-wait p95/p99. Rolling one-minute mean peaks are '
+                    'sampled at 15 seconds and can miss bursts. Missing or zero-denominator means are null.'}
 
 
 def waiting_history(query, end):
@@ -1220,6 +1247,8 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
                 'Samples after the stop request may include recovery; missing history is not zero waiting.')
         if measure_all:
             extra['pool_timings'] = timing_diagnostics(query, counter_window, counter_when)
+            if WAIT_TIME_MEASUREMENT:
+                extra['queue_wait'] = queue_wait_diagnostics(query, window, when, counter_window, counter_when)
     if measure_all:
         extra['database'] = historical_database(start, counter_end)
         extra['observer_audit'] = saved_observation(job, outcome['run_id'])

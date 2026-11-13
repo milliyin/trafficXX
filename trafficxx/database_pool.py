@@ -82,7 +82,7 @@ class DatabasePool:
             raise HTTPException(503, detail={'code': 'DATABASE_UNAVAILABLE'})
         values = self.pool.get_stats()  # Non-destructive; do not reset counters.
         keys = ('pool_min', 'pool_max', 'pool_size', 'pool_available',
-                'requests_waiting', 'requests_num', 'requests_errors',
+                'requests_waiting', 'requests_num', 'requests_errors', 'requests_queued', 'requests_wait_ms',
                 'connections_num', 'connections_errors', 'connections_lost', 'returns_bad')
         with self._rejection_lock:
             rejections = dict(self._rejections)

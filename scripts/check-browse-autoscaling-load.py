@@ -6,6 +6,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import signal
 import sys
 import threading
 import time
@@ -34,7 +35,7 @@ def profile_phase(elapsed):
     return 'ramp_up' if elapsed < 120 else 'hold' if elapsed < 300 else 'ramp_down'
 
 
-def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=read.read_url, ramp_down=False):
+def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=read.read_url, ramp_down=False, stop_event=None):
     read.require(re.fullmatch(r'[0-9a-f]{12}', run_id) is not None, 'INVALID_RUN_ID')
     read.require(type(users) is int and users in (250, 500, 1000) and think == 2 and
                  (duration == 180 or (users == 1000 and duration == 300) or
@@ -46,8 +47,9 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
     read.require(type(ramp_seconds) is int and
                  (ramp_seconds == 120 if users == 1000 else
                   ramp_seconds in (60, 120) if users == 500 else ramp_seconds == 2), 'UNSUPPORTED_RAMP')
-    stop, lock = threading.Event(), threading.Lock()
+    stop, lock = stop_event if stop_event is not None else threading.Event(), threading.Lock()
     rows, failures, participants, first_failure = [], Counter(), set(), []
+    statuses = Counter()
     active, peak_active, progress = 0, 0, []
     start = time.monotonic()
     deadline = start + duration
@@ -94,11 +96,14 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
                     participants.add(index)
                     elapsed = time.monotonic() - start
                     rows.append((status, time.monotonic() - began, profile_phase(began - start)))
+                    statuses[str(status)] += 1
                     if ramp_down and (not progress or elapsed - progress[-1]['elapsed_seconds'] >= 5):
                         sample = {'elapsed_seconds': round(elapsed, 3), 'phase': profile_phase(elapsed),
                                   'active_users': active, 'attempts': len(rows)}
                         progress.append(sample)
-                        record = {'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample}
+                        window_start = progress[-2]['attempts'] if len(progress) > 1 else 0
+                        record = progress_record(run_id, sample, rows, failures, participants, peak_active,
+                                                 first_failure, window_start, status_counts=statuses)
                         print(json.dumps(record), flush=True)
                         try:
                             publish('progress.json', record)
@@ -112,7 +117,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
     with ThreadPoolExecutor(max_workers=users) as executor:
         list(executor.map(user, range(users)))
     profile_ok = (not ramp_down or (peak_active == users and active == 0 and time.monotonic() - start >= duration))
-    result = {'result': 'BROWSE_SCALING_LOAD_OK' if not failures and len(participants) == users and profile_ok else 'BROWSE_SCALING_LOAD_FAILED',
+    result = {'result': 'BROWSE_SCALING_LOAD_OK' if not stop.is_set() and not failures and len(participants) == users and profile_ok else 'BROWSE_SCALING_LOAD_FAILED',
         'run_id': run_id, 'users': users, 'users_with_requests': len(participants),
         'scheduled_duration_seconds': duration, 'start_ramp_seconds': ramp_seconds,
         'think_seconds': think, 'max_workload_attempts': users * (duration // think),
@@ -120,6 +125,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
         'first_failure': first_failure[0] if first_failure else None,
         'latency_ms': read.percentiles([r[1] for r in rows]) if rows else {},
         'elapsed_seconds': round(time.monotonic() - start, 3), 'inventory_writes': False,
+        'stop_requested': stop.is_set(),
         'latency_slo_tested': False}
     if ramp_down:
         progress.append({'elapsed_seconds': round(time.monotonic() - start, 3), 'phase': 'ramp_down',
@@ -136,18 +142,34 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
     return result
 
 
+def progress_record(run_id, sample, rows, failures, participants, peak_active, first_failure, window_start, *, status_counts=None):
+    """Exact completed-attempt counts plus recent HTTP latency, even if killed later."""
+    recent = rows[window_start:]
+    return {'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample,
+            'users_with_requests': len(participants), 'peak_active_users': peak_active,
+            'status_counts': dict(status_counts if status_counts is not None else Counter(str(row[0]) for row in rows)), 'errors': dict(failures),
+            'first_failure': first_failure[0] if first_failure else None,
+            'recent_http': {'attempts': len(recent),
+                            'status_counts': dict(Counter(str(row[0]) for row in recent)),
+                            'latency_ms': read.percentiles([row[1] for row in recent]) if recent else {}},
+            'final_workload_summary_available': False}
+
+
 if __name__ == '__main__':
+    shutdown = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: shutdown.set())
     try:
         deadline = time.monotonic() + 240
         publish('progress.json', {'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES', 'run_id': sys.argv[1]})
         print(json.dumps({'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES'}), flush=True)
         while not Path('/state/start').exists():
+            read.require(not shutdown.is_set(), 'OBSERVER_STOP_REQUESTED')
             read.require(time.monotonic() < deadline, 'RESOURCE_GATE_TIMEOUT')
             time.sleep(1)
         result = run(sys.argv[1], users=int(sys.argv[2]) if len(sys.argv) >= 3 else 250,
                      ramp_seconds=int(sys.argv[3]) if len(sys.argv) >= 4 else None,
                      duration=int(sys.argv[4]) if len(sys.argv) >= 5 else 180,
-                     ramp_down=len(sys.argv) == 6 and sys.argv[5] == 'ramp-down')
+                     ramp_down=len(sys.argv) == 6 and sys.argv[5] == 'ramp-down', stop_event=shutdown)
         raise SystemExit(0 if result['result'] == 'BROWSE_SCALING_LOAD_OK' else 1)
     except Exception as error:
         failure = {'result': 'BROWSE_SCALING_LOAD_FAILED', 'run_id': sys.argv[1],

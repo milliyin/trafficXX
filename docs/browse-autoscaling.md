@@ -1635,6 +1635,61 @@ single failed request.
 
 #### Temporary queue-32 comparison
 
+The next measured comparison is a new, preserved Job:
+
+```bash
+python3 scripts/browse-queue-comparison.py run-wait-measured
+```
+
+It builds/deploys Browse queue-wait instrumentation, verifies fresh counters
+on every warm target, then uses the same four-pod, eight-connection, queue-32
+120/180/120 profile and existing stop rules. The fixed Job name is
+`browse-users-1000-queue32-waittime`; previous Jobs are never reused. This is a
+measurement comparison, not a capacity fix or a promise of seven-minute success.
+
+Browse now exports the driver's `requests_queued` and `requests_wait_ms` through
+`trafficxx_browse_pool_queued_total` and
+`trafficxx_browse_pool_queue_wait_milliseconds_total`. These measure queue entries
+and accumulated time waiting for assignment, before checkout validation. See the
+[Psycopg pool statistics](https://www.psycopg.org/psycopg3/docs/advanced/pool.html#pool-stats).
+The report adds per-instance counter increases, estimated mean queue wait and
+sampled peak one-minute mean. Driver durations truncate each wait to integer
+milliseconds; entries may be in flight at window boundaries, so the ratio is
+approximate. Background traffic/warmup and the existing counter tail are included.
+Zero-denominator means are null; these counters cannot yield queue-wait p95/p99.
+
+Retained progress now includes cumulative completed HTTP status/error counts,
+participation, peak active users and recent-window HTTP latency percentiles.
+These describe only requests completed by that snapshot, not a full-run result.
+The generator handles SIGTERM by stopping paced workers and attempting to publish
+its partial final summary, with a 15-second grace period in retained modes. A
+hard kill or failed evidence API can still prevent that write. Stopped workloads
+cannot pass merely because their recorded HTTP responses were successful.
+
+After a disconnect, wait for this exact Job to become terminal, then run both:
+
+```bash
+python3 scripts/browse-queue-comparison.py diagnose-wait-measured
+python3 scripts/browse-queue-comparison.py restore
+```
+
+Do not relax the repeated-positive-waiting guard from this instrumentation change.
+Compare actual wait duration with HTTP latency/errors first; two positive depth
+samples do not establish continuously queued requests between scrapes.
+
+The preceding retained run `207a2f726c48` stopped on that guard, with waiting 1
+then 5 on `10.244.3.103:8000` at source timestamps 17:41:46 and 17:42:01 UTC on
+13 November. Its last retained progress was 300.405 seconds, 117,657 attempts,
+997 active users at the beginning of ramp-down. It had no final HTTP summary,
+so no full-run HTTP success count, percentile or complete profile is established.
+All four original instances had post-terminal coverage and zero recorded pool
+error-counter increases. Mean acquisition was 4.02–4.92 ms, query 26.07–27.95 ms;
+job-aligned minute database CPU peaked at 14.03%, connections 46 including idle.
+The retained observer identifies `SUSTAINED_POOL_WAITING` as the primary stop;
+the later Job deadline is cleanup evidence, not proof of a natural workload
+timeout. Queue 16, two ready pods, demo availability 100 and healthy operations
+were verified after restoration. This was not an automatic scale-up test.
+
 The recovered run `729adc848e73` recorded no increases in pool rejection,
 timeout or connection-error counters, with post-terminal coverage for all four
 instances. It still failed with `BackoffLimitExceeded`; no workload summary,

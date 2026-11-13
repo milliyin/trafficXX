@@ -163,13 +163,18 @@ def run():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('run', 'restore', 'diagnose', 'run-retained', 'diagnose-retained'))
+    parser.add_argument('action', choices=('run', 'restore', 'diagnose', 'run-retained', 'diagnose-retained',
+                                         'run-wait-measured', 'diagnose-wait-measured'))
     args = parser.parse_args()
     if args.action.endswith('-retained'):
         s.DURABLE_EVIDENCE = True
         s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-retained'
+    if args.action.endswith('-wait-measured'):
+        s.DURABLE_EVIDENCE = True
+        s.WAIT_TIME_MEASUREMENT = True
+        s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-waittime'
     try:
-        if args.action in ('run', 'run-retained'):
+        if args.action in ('run', 'run-retained', 'run-wait-measured'):
             run()
         elif args.action == 'restore':
             restore()
