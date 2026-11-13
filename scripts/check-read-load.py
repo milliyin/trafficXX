@@ -2,10 +2,13 @@
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import ipaddress
+import errno
+import http.client
 import json
 import math
 from pathlib import Path
 import re
+import socket
 import threading
 import time
 import urllib.error
@@ -13,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 HTTP_CLIENT_POLICY = 'thread-local-http-only-fresh-connections-v1'
+TRANSPORT_DIAGNOSTICS_POLICY = 'typed-errors-operation-v1'
 PERIOD = 0.5
 DURATION = 30
 REJECTION_KEYS = ('rejections_queue_full', 'rejections_timeout', 'rejections_closed')
@@ -69,10 +73,61 @@ def read_url(url, customer):
         response = opener.open(request, timeout=5)
     except urllib.error.HTTPError as error:
         response = error
-    with response:
-        body = response.read(65537)
-        require(len(body) <= 65536, 'RESPONSE_TOO_LARGE')
-        return response.code, json.loads(body)
+    except (OSError, http.client.HTTPException) as error:
+        error.trafficxx_operation = 'open_or_headers'
+        raise
+    try:
+        with response:
+            body = response.read(65537)
+            require(len(body) <= 65536, 'RESPONSE_TOO_LARGE')
+            return response.code, json.loads(body)
+    except (OSError, http.client.HTTPException) as error:
+        error.trafficxx_operation = 'read_body'
+        error.trafficxx_http_status = response.code
+        raise
+
+
+def transport_failure(error):
+    """Fixed labels only: never inspect messages, URLs, headers or response data."""
+    if isinstance(error, urllib.error.HTTPError):
+        return None  # A received HTTP response is handled by status validation.
+    if not isinstance(error, (OSError, http.client.HTTPException)):
+        return None
+    operation = getattr(error, 'trafficxx_operation', 'unknown')
+    if operation not in ('open_or_headers', 'read_body'):
+        operation = 'unknown'
+    reason = error
+    for _ in range(3):
+        if not isinstance(reason, urllib.error.URLError):
+            break
+        reason = reason.reason
+    category, code = 'unknown_transport_error', None
+    if isinstance(reason, socket.gaierror):
+        code = next((name for name in ('EAI_AGAIN', 'EAI_NONAME', 'EAI_FAIL')
+                     if getattr(socket, name, None) == reason.errno), None)
+        category = 'dns_temporary_failure' if code == 'EAI_AGAIN' else 'dns_resolution_failure'
+    elif isinstance(reason, TimeoutError):
+        category = 'timeout'
+    elif isinstance(reason, http.client.RemoteDisconnected):
+        category = 'remote_disconnected'
+    elif isinstance(reason, http.client.IncompleteRead):
+        category = 'incomplete_response'
+    elif isinstance(reason, http.client.HTTPException):
+        category = 'http_protocol_error'
+    elif isinstance(reason, OSError):
+        labels = {'ECONNREFUSED': 'connection_refused', 'ECONNRESET': 'connection_reset',
+                  'ECONNABORTED': 'connection_aborted', 'ETIMEDOUT': 'timeout',
+                  'EHOSTUNREACH': 'host_unreachable', 'ENETUNREACH': 'network_unreachable',
+                  'EPIPE': 'broken_pipe', 'EMFILE': 'client_resource_exhausted',
+                  'ENFILE': 'client_resource_exhausted', 'ENOBUFS': 'client_resource_exhausted',
+                  'EADDRNOTAVAIL': 'client_address_unavailable'}
+        code = next((name for name in labels if getattr(errno, name, None) == reason.errno), None)
+        category = labels.get(code, 'unknown_transport_error')
+    status = getattr(error, 'trafficxx_http_status', None)
+    return {'category': category, 'operation': operation, 'errno_name': code,
+            'received_http_status': status if type(status) is int and 100 <= status <= 599 else None,
+            'note': 'open_or_headers includes DNS, connection establishment and response headers; '
+                    'a timeout here does not isolate the stalled phase. No raw error text is recorded.'}
 
 
 def targets_from(config):

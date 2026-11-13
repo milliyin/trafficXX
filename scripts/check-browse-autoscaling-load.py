@@ -88,6 +88,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
                         code = detail.get('code') if isinstance(detail, dict) else None
                         first_failure.append({'http_status': status, 'route': route,
                             'service_error_code': code if code in ('DATABASE_BUSY', 'DATABASE_UNAVAILABLE') else None,
+                            'transport': read.transport_failure(error),
                             'phase_elapsed_seconds': round(time.monotonic() - start, 3),
                             'latency_ms': round((time.monotonic() - began) * 1000, 3)})
                 stop.set()
@@ -126,6 +127,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
         'latency_ms': read.percentiles([r[1] for r in rows]) if rows else {},
         'elapsed_seconds': round(time.monotonic() - start, 3), 'inventory_writes': False,
         'stop_requested': stop.is_set(),
+        'transport_diagnostics_policy': read.TRANSPORT_DIAGNOSTICS_POLICY,
         'latency_slo_tested': False}
     if ramp_down:
         progress.append({'elapsed_seconds': round(time.monotonic() - start, 3), 'phase': 'ramp_down',
@@ -146,6 +148,7 @@ def progress_record(run_id, sample, rows, failures, participants, peak_active, f
     """Exact completed-attempt counts plus recent HTTP latency, even if killed later."""
     recent = rows[window_start:]
     return {'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample,
+            'transport_diagnostics_policy': read.TRANSPORT_DIAGNOSTICS_POLICY,
             'users_with_requests': len(participants), 'peak_active_users': peak_active,
             'status_counts': dict(status_counts if status_counts is not None else Counter(str(row[0]) for row in rows)), 'errors': dict(failures),
             'first_failure': first_failure[0] if first_failure else None,

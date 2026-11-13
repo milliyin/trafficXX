@@ -109,7 +109,7 @@ def restore(*, expected_run=None):
     s.emit('BROWSE_QUEUE_COMPARISON_RESTORED', queue_per_pod=16, ready_replicas=2, connections_per_pod=8)
 
 
-def run():
+def run(*, reuse_image=False):
     s.trial.context()
     s.trial.no_active_load()
     s.require(not s.base.kube('get', 'job', s.QUEUE32_PROFILE_JOB, '-n', 'trafficxx',
@@ -118,11 +118,13 @@ def run():
     s.trial.health()
     s.emit('BROWSE_QUEUE32_WORKFLOW_STARTED', job=s.QUEUE32_PROFILE_JOB,
            queue_per_pod=[16, 32, 16], connections_per_pod=8,
-           note='Building recent-check image, deploying, running the 120/180/120 profile, reporting and restoring. Keep Cloud Shell open.')
+           note=('Using the deployed instrumented image; ' if reuse_image else 'Building and deploying recent-check image; ')
+                + 'running the 120/180/120 profile, reporting and restoring. Keep Cloud Shell open.')
     # New app code admits queue 32 only for Browse. Build the recent-check
     # variant, but initially retain queue 16 and the live KEDA policy.
-    s.base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh'), '--recent-checks'], timeout=900)
-    s.deploy_image()
+    if not reuse_image:
+        s.base.command(['bash', str(ROOT / 'scripts/build-browse-image.sh'), '--recent-checks'], timeout=900)
+        s.deploy_image()
     run_id = uuid4().hex[:12]
     primary = None
     changed = False
@@ -164,7 +166,8 @@ def run():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('run', 'restore', 'diagnose', 'run-retained', 'diagnose-retained',
-                                         'run-wait-measured', 'diagnose-wait-measured'))
+                                         'run-wait-measured', 'diagnose-wait-measured',
+                                         'run-network-measured', 'diagnose-network-measured'))
     args = parser.parse_args()
     if args.action.endswith('-retained'):
         s.DURABLE_EVIDENCE = True
@@ -173,8 +176,14 @@ def main():
         s.DURABLE_EVIDENCE = True
         s.WAIT_TIME_MEASUREMENT = True
         s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-waittime'
+    if args.action.endswith('-network-measured'):
+        s.DURABLE_EVIDENCE = True
+        s.WAIT_TIME_MEASUREMENT = True
+        s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-network'
     try:
-        if args.action in ('run', 'run-retained', 'run-wait-measured'):
+        if args.action == 'run-network-measured':
+            run(reuse_image=True)
+        elif args.action in ('run', 'run-retained', 'run-wait-measured'):
             run()
         elif args.action == 'restore':
             restore()

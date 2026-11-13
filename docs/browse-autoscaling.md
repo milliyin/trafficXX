@@ -1635,6 +1635,61 @@ single failed request.
 
 #### Temporary queue-32 comparison
 
+To investigate the first transport failure without rebuilding the application:
+
+```bash
+python3 scripts/browse-queue-comparison.py run-network-measured
+```
+
+This uses the currently deployed instrumented image, verifies its pool/check
+baseline and fresh wait counters, and starts the distinct Job
+`browse-users-1000-queue32-network`. All prior Jobs remain preserved. It retains
+the same temporary queue 32, four warm pods, eight connections per pod,
+120/180/120 user profile, five-second client timeout and existing two-second
+response/failure/resource/waiting stop rules. There are no new HTTP retries,
+DNS bypasses, proxy changes or extra database connections. Normal queue 16 and
+the two-pod minimum are restored after a handled finish. Keep Cloud Shell open.
+
+The first failure now includes a `transport` object with fixed categories and
+symbolic errno names, plus the HTTP-client operation (`open_or_headers`,
+`read_body`, or `unknown`). Categories include typed DNS failures, timeouts,
+refused/reset connections, unreachable hosts/networks, client resource/address
+exhaustion, remote disconnects and incomplete/protocol responses. A body-read
+failure also records a received HTTP status when available. HTTP status failures
+and application validation failures are not reclassified as transport failures.
+Raw messages, hostnames, URLs, response data and headers are never included.
+
+Python's [`URLError.reason`](https://docs.python.org/3.12/library/urllib.error.html#urllib.error.URLError.reason)
+can contain an exception or a string. Only structured types/known errno codes
+are classified; strings stay unknown. `open_or_headers` includes DNS, connection
+establishment and receiving headers, so a timeout there cannot isolate the
+precise stalled phase or prove the network/server is at fault. The capture
+policy marker is `typed-errors-operation-v1` in retained progress/final records.
+
+After a disconnect, wait for this exact Job to become terminal, then collect
+and restore independently (neither command starts load):
+
+```bash
+python3 scripts/browse-queue-comparison.py diagnose-network-measured
+python3 scripts/browse-queue-comparison.py restore
+```
+
+The preceding wait-measured run `31620f3ee573` reached all 1,000 participants
+and peak active users, but stopped at 249.253 seconds on one `URLError` without
+an HTTP status (first failure at 249.027 seconds, 5,025.297 ms). Of 92,659 attempts,
+92,658 returned HTTP 200. The run's p95 was 87.150 ms, p99 112.009 ms; it completed
+the arrival ramp and about 129 seconds of the planned hold, with no planned
+ramp-down. Driver estimated mean queue waits were 9.39–11.20 ms per entry,
+sampled peak one-minute means 10.27–13.36 ms. These are means, not worst-case waits.
+All four original targets had post-terminal coverage with zero pool error-counter
+increases. Database minute CPU peaked at 10.81%, connections at 45 including idle.
+The exact URL-error reason was not retained by the old capture and remains
+unknown; neither queue saturation nor a DNS fault is established as its cause.
+The full HTTP summary and observer audit survived. Restoration verified queue 16,
+two ready pods and healthy Browse/operations. A secondary initial prewarm patch
+failure did not mask the primary workload failure; the outer restoration
+subsequently completed. The seven-minute capacity pass remains pending.
+
 The next measured comparison is a new, preserved Job:
 
 ```bash
