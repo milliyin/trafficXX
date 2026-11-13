@@ -1635,6 +1635,68 @@ single failed request.
 
 #### Temporary queue-32 comparison
 
+To attempt the entire seven-minute profile with the revised queue criterion:
+
+```bash
+python3 scripts/browse-queue-comparison.py run-full-profile
+```
+
+This is a new experimental policy, `bounded-queue-http-2s-v1`, and a distinct
+preserved Job, `browse-users-1000-full7m-v1`. The earlier depth-based modes retain
+their original stop behavior and their interrupted runs remain interrupted.
+The current instrumented image is reused: no application rebuild, database
+change or extra pod/connection capacity is introduced. Four pods are prewarmed,
+each with eight connections and a temporary queue limit of 32. The user schedule
+remains 120 seconds up, 180 seconds at 1,000 active users, 120 seconds down.
+
+**Changed criterion:** positive queue-depth samples are retained as observations,
+and no longer stop this mode by themselves. Small queues are allowed within the
+existing bound. The existing end-to-end request guard still rejects any completed
+request taking two seconds or more; any HTTP/transport/validation error, driver
+pool error, missing/stale measurement, resource violation or database-budget
+breach still fails the run. HTTP errors are not retried, dropped or tolerated.
+Driver queue-wait measurements, HTTP percentiles, typed transport failures and
+resource/HPA audits are still collected. No production latency SLO is claimed.
+
+The changed policy is printed before the trial, pinned in the Job annotation and
+generator environment, and saved as `policy.json` in its per-run evidence record.
+Passing requires a matching final policy, no stop request, all 1,000 participants,
+only HTTP 200 responses, maximum recorded HTTP latency below two seconds,
+420–435 seconds elapsed, verified full hold and gradual withdrawal to zero users.
+The final combined report must also establish zero pool error-counter increases,
+post-terminal scrape coverage and a retained observer audit without a primary
+failure. A short all-successful run remains a failure; missing evidence cannot
+be substituted with a pass. One pass would establish this bounded experiment,
+not repeatable capacity or automatic scale-up under load.
+
+Keep Cloud Shell open through testing and restoration. After a disconnect, wait
+for the exact Job to become terminal before running both commands independently:
+
+```bash
+python3 scripts/browse-queue-comparison.py diagnose-full-profile
+python3 scripts/browse-queue-comparison.py restore
+```
+
+The normal queue limit of 16 and the two-pod minimum are restored after handled
+completion/failure. This setup cannot guarantee a full seven-minute pass: a real
+HTTP or resource failure still stops it and must be investigated.
+Only a fully verified and restored run emits `BROWSE_FULL_PROFILE_OK` with its
+request count and latency measurements. A partial observer snapshot cannot
+substitute for the final observer audit.
+
+The previous network-measured run `47515a88bef1` reached all 1,000 participants
+with 89,845 HTTP 200 responses, no recorded errors and a null first failure. Its
+p95 was 89.713 ms, p99 113.054 ms, maximum 232.525 ms. It stopped at 243.598 seconds
+when the observer saw waiting 1 at both 20:25:16.797 and 20:25:31.797 UTC on
+13 November for `10.244.2.179:8000`. Those are separate source samples, not proof
+of one request waiting 15 seconds. Mean driver queue waits were 9.98–12.29 ms;
+all four original targets had post-terminal coverage and zero pool error-counter
+increases. The typed network capture was enabled, but the earlier URL error did
+not recur, so its cause remains unknown. The partial summary survived graceful
+shutdown. Queue 16, two ready pods and healthy operations were restored. These
+observations motivate the explicit revised criterion; they are not a seven-minute
+success claim and are not retroactively reclassified.
+
 To investigate the first transport failure without rebuilding the application:
 
 ```bash

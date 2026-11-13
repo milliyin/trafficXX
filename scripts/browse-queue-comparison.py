@@ -109,6 +109,23 @@ def restore(*, expected_run=None):
     s.emit('BROWSE_QUEUE_COMPARISON_RESTORED', queue_per_pod=16, ready_replicas=2, connections_per_pod=8)
 
 
+def validate_full_report(report):
+    s.require(isinstance(report, dict), 'FULL_PROFILE_REPORT_MISSING')
+    s.validate_load(report.get('workload', {}), report.get('run_id'), 1000, True, duration=420)
+    counters = report.get('counter_increases', {})
+    expected = {'queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
+                'borrow_errors_total', 'connection_errors_total', 'connections_lost_total', 'bad_returns_total'}
+    s.require(set(counters) == expected and all(type(v) in (int, float) and v == 0 for v in counters.values()),
+              'FULL_PROFILE_POOL_ERRORS_OR_MISSING_COUNTERS')
+    audit = report.get('observer_audit', {})
+    coverage = report.get('post_job_sample_coverage', {})
+    s.require(coverage.get('all_original_instances_sampled_after_terminal') is True
+              and coverage.get('instances_at_terminal') == 4
+              and audit.get('available') is True and 'primary_failure' in audit and audit['primary_failure'] is None
+              and audit.get('stage') == 'verify_final_database_metrics' and audit.get('peak_ready_replicas') == 4
+              and audit.get('queue_stop_policy') == s.FULL_PROFILE_POLICY, 'FULL_PROFILE_AUDIT_OR_COVERAGE_MISSING')
+
+
 def run(*, reuse_image=False):
     s.trial.context()
     s.trial.no_active_load()
@@ -116,6 +133,12 @@ def run(*, reuse_image=False):
                               '--ignore-not-found', '-o', 'name'), 'INSPECT_EXISTING_DRILL_JOB')
     s.require(MARKER not in s.trial.deployment()['metadata'].get('annotations', {}), 'INSPECT_EXISTING_QUEUE_MARKER')
     s.trial.health()
+    if s.QUEUE_DEPTH_OBSERVATION_ONLY:
+        s.require(s.DURABLE_EVIDENCE and s.WAIT_TIME_MEASUREMENT, 'FULL_PROFILE_REQUIRES_RETAINED_MEASUREMENTS')
+        s.emit('BROWSE_FULL_PROFILE_CRITERIA', queue_stop_policy=s.FULL_PROFILE_POLICY,
+               queue_per_pod=32, request_stop_seconds=2, http_error_tolerance=0,
+               note='Changed criterion: queue depth alone is recorded, not a stop. HTTP, pool errors, '
+                    'resource, database and metric guards remain. Earlier runs are not reclassified.')
     s.emit('BROWSE_QUEUE32_WORKFLOW_STARTED', job=s.QUEUE32_PROFILE_JOB,
            queue_per_pod=[16, 32, 16], connections_per_pod=8,
            note=('Using the deployed instrumented image; ' if reuse_image else 'Building and deploying recent-check image; ')
@@ -127,6 +150,7 @@ def run(*, reuse_image=False):
         s.deploy_image()
     run_id = uuid4().hex[:12]
     primary = None
+    report = None
     changed = False
     try:
         changed = True  # Covers a lost patch response that actually applied.
@@ -144,8 +168,8 @@ def run(*, reuse_image=False):
         # Preserve the queue-32 historical window before its rollout to queue 16.
         try:
             if s.base.kube('get', 'job', s.QUEUE32_PROFILE_JOB, '-n', 'trafficxx', '--ignore-not-found', '-o', 'name'):
-                s.diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True,
-                               measure_all=True, measured='queue32')
+                report = s.diagnose_500(users=1000, distribution=True, duration=420, prewarmed=True,
+                                       measure_all=True, measured='queue32')
         except Exception as error:
             s.emit('BROWSE_QUEUE32_REPORT_UNAVAILABLE', **s.failure_details(error))
             if primary is None:
@@ -160,14 +184,23 @@ def run(*, reuse_image=False):
                     primary = error
     if primary is not None:
         raise primary
-    s.emit('BROWSE_QUEUE32_COMPARISON_OK', queue_restored=16, ready_replicas=2, inventory_writes=False)
+    if s.QUEUE_DEPTH_OBSERVATION_ONLY:
+        validate_full_report(report)
+        s.emit('BROWSE_FULL_PROFILE_OK', run_id=report['run_id'], users=1000,
+               scheduled_duration_seconds=420, phases_seconds=[120, 180, 120],
+               attempts=report['workload']['attempts'], latency_ms=report['workload']['latency_ms'],
+               queue_stop_policy=s.FULL_PROFILE_POLICY, automatic_scale_up_tested=False,
+               queue_restored=16, ready_replicas=2, inventory_writes=False, latency_slo_tested=False)
+    else:
+        s.emit('BROWSE_QUEUE32_COMPARISON_OK', queue_restored=16, ready_replicas=2, inventory_writes=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('run', 'restore', 'diagnose', 'run-retained', 'diagnose-retained',
                                          'run-wait-measured', 'diagnose-wait-measured',
-                                         'run-network-measured', 'diagnose-network-measured'))
+                                         'run-network-measured', 'diagnose-network-measured',
+                                         'run-full-profile', 'diagnose-full-profile'))
     args = parser.parse_args()
     if args.action.endswith('-retained'):
         s.DURABLE_EVIDENCE = True
@@ -180,8 +213,13 @@ def main():
         s.DURABLE_EVIDENCE = True
         s.WAIT_TIME_MEASUREMENT = True
         s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-network'
+    if args.action.endswith('-full-profile'):
+        s.DURABLE_EVIDENCE = True
+        s.WAIT_TIME_MEASUREMENT = True
+        s.QUEUE_DEPTH_OBSERVATION_ONLY = True
+        s.QUEUE32_PROFILE_JOB = 'browse-users-1000-full7m-v1'
     try:
-        if args.action == 'run-network-measured':
+        if args.action in ('run-network-measured', 'run-full-profile'):
             run(reuse_image=True)
         elif args.action in ('run', 'run-retained', 'run-wait-measured'):
             run()

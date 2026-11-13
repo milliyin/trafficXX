@@ -16,6 +16,12 @@ import read_probe as read
 URL = 'http://browse.trafficxx.svc.cluster.local'
 
 
+def queue_policy():
+    value = os.environ.get('BROWSE_QUEUE_STOP_POLICY', 'depth-10s-v1')
+    read.require(value in ('depth-10s-v1', 'bounded-queue-http-2s-v1'), 'UNREVIEWED_QUEUE_STOP_POLICY')
+    return value
+
+
 def publish(key, row):
     if os.environ.get('BROWSE_EVIDENCE_CONFIGMAP'):
         spec = importlib.util.spec_from_file_location('evidence', Path(__file__).with_name('browse_evidence.py'))
@@ -128,6 +134,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
         'elapsed_seconds': round(time.monotonic() - start, 3), 'inventory_writes': False,
         'stop_requested': stop.is_set(),
         'transport_diagnostics_policy': read.TRANSPORT_DIAGNOSTICS_POLICY,
+        'queue_stop_policy': queue_policy(),
         'latency_slo_tested': False}
     if ramp_down:
         progress.append({'elapsed_seconds': round(time.monotonic() - start, 3), 'phase': 'ramp_down',
@@ -149,6 +156,7 @@ def progress_record(run_id, sample, rows, failures, participants, peak_active, f
     recent = rows[window_start:]
     return {'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample,
             'transport_diagnostics_policy': read.TRANSPORT_DIAGNOSTICS_POLICY,
+            'queue_stop_policy': queue_policy(),
             'users_with_requests': len(participants), 'peak_active_users': peak_active,
             'status_counts': dict(status_counts if status_counts is not None else Counter(str(row[0]) for row in rows)), 'errors': dict(failures),
             'first_failure': first_failure[0] if first_failure else None,
@@ -163,6 +171,7 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, lambda *_: shutdown.set())
     try:
         deadline = time.monotonic() + 240
+        queue_policy()
         publish('progress.json', {'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES', 'run_id': sys.argv[1]})
         print(json.dumps({'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES'}), flush=True)
         while not Path('/state/start').exists():

@@ -30,6 +30,8 @@ base = trial.base
 evidence = load('browse_evidence')
 DURABLE_EVIDENCE = False
 WAIT_TIME_MEASUREMENT = False
+QUEUE_DEPTH_OBSERVATION_ONLY = False
+FULL_PROFILE_POLICY = 'bounded-queue-http-2s-v1'
 F = '{job="trafficxx-browse-pool"}'
 M = 'trafficxx_browse_pool_'
 # Do not turn missing targets/fields into a zero-pressure downscale signal.
@@ -228,7 +230,9 @@ class MetricReadiness:
 
 class PoolWaitingWatch:
     """Hold evidence comes from distinct source samples on the same instance."""
-    def __init__(self):
+    def __init__(self, *, stop_on_depth=True):
+        require(type(stop_on_depth) is bool, 'INVALID_WAITING_WATCH_POLICY')
+        self.stop_on_depth = stop_on_depth
         self.instances = {}
         self.not_before = None
 
@@ -264,7 +268,7 @@ class PoolWaitingWatch:
                 self.instances[instance] = {'last': stamp, 'value': value, 'since': since,
                     'samples': (state['samples'] if state is not None else 0) + 1,
                     'maximum': max(value, state['maximum'] if state is not None else 0)}
-                if since is not None:
+                if since is not None and self.stop_on_depth:
                     require(stamp - since < 10, 'SUSTAINED_POOL_WAITING')
         # Missing/stale series are never replaced by a zero or a recovery.
         require(set(self.instances) <= seen, 'POOL_WAITING_SERIES_MISSING')
@@ -798,6 +802,9 @@ def wait_until(function, seconds):
 
 
 def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, duration=180):
+    require(not QUEUE_DEPTH_OBSERVATION_ONLY or (DURABLE_EVIDENCE and WAIT_TIME_MEASUREMENT
+            and users == 1000 and duration == 420 and EXPECTED_QUEUE.get() == 32),
+            'FULL_PROFILE_REQUIRES_RETAINED_MEASUREMENTS')
     require(type(users) is int and users in (250, 500, 1000), 'UNSUPPORTED_USER_COUNT')
     require(not slower_ramp or users in (500, 1000), 'UNSUPPORTED_RAMP')
     require(duration == 180 or (users == 1000 and duration in (300, 420)), 'UNSUPPORTED_DURATION')
@@ -835,6 +842,9 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
         pod['containers'][0].setdefault('env', []).extend([
             {'name': 'BROWSE_EVIDENCE_CONFIGMAP', 'value': resource},
             {'name': 'BROWSE_EVIDENCE_RUN', 'value': run_id}])
+        if QUEUE_DEPTH_OBSERVATION_ONLY:
+            row['metadata'].setdefault('annotations', {})['trafficxx.io/queue-stop-policy'] = FULL_PROFILE_POLICY
+            pod['containers'][0]['env'].append({'name': 'BROWSE_QUEUE_STOP_POLICY', 'value': FULL_PROFILE_POLICY})
         manifest = json.dumps(row)
     try:
         candidate = json.loads(base.kube('create', '-f', '-', '-o', 'json', data=manifest))
@@ -845,6 +855,12 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
                 'AMBIGUOUS_JOB_OWNERSHIP')
     if DURABLE_EVIDENCE:
         evidence.bind(base, candidate)
+        if QUEUE_DEPTH_OBSERVATION_ONLY:
+            evidence.save(base, run_id, 'policy.json', {
+                'run_id': run_id, 'job': job_name, 'job_uid': candidate['metadata']['uid'],
+                'queue_stop_policy': FULL_PROFILE_POLICY, 'queue_per_pod': 32,
+                'request_stop_seconds': 2, 'http_error_tolerance': 0,
+                'note': 'Queue depth is observed; HTTP, pool-error, resource and metric guards still stop the run.'})
         emit('BROWSE_EVIDENCE_CREATED', configmap=evidence.name(run_id), run_id=run_id,
              note='Retained independently of the Job and Cloud Shell; no automatic deletion.')
     return candidate
@@ -1172,6 +1188,9 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
             'browse-users-500-autoscaling-pressure3' if earlier_scaling else
             'browse-users-500-autoscaling-ramp120' if slower_ramp else 'browse-users-500-autoscaling')
     job = json.loads(base.kube('get', 'job', name, '-n', 'trafficxx', '-o', 'json'))
+    if QUEUE_DEPTH_OBSERVATION_ONLY:
+        require(job['metadata'].get('annotations', {}).get('trafficxx.io/queue-stop-policy') == FULL_PROFILE_POLICY,
+                'PROFILE_POLICY_MISMATCH')
     if users == 1000:
         run_id = job['metadata'].get('labels', {}).get('trafficxx.io/run-id')
         containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
@@ -1212,7 +1231,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
         extra = {}
         if DURABLE_EVIDENCE:
             extra['retained_records'] = {}
-            for key in ('progress.json', 'summary.json', 'pod.json'):
+            for key in ('progress.json', 'summary.json', 'pod.json') + (('policy.json',) if QUEUE_DEPTH_OBSERVATION_ONLY else ()):
                 try:
                     extra['retained_records'][key] = evidence.read(base, job, key)
                 except Exception as error:
@@ -1260,6 +1279,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
          counter_query_end_utc=counter_end.isoformat(), counter_query_window_seconds=counter_window,
          post_terminal_observation_seconds=60, post_job_sample_coverage=coverage,
          workload=outcome, workload_log_capture=log_capture, inventory_writes=False, **extra,
+         queue_stop_policy=FULL_PROFILE_POLICY if QUEUE_DEPTH_OBSERVATION_ONLY else 'depth-10s-v1',
          note='Read-only capture, not a load pass. Peaks end at Job termination; counters include 60 seconds '
               'after termination to capture the next scrapes. Both include warmup and 60 seconds before start. '
               'Check post-job coverage before interpreting zero counters. Increases are extrapolated estimates; '
@@ -1270,6 +1290,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
         path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
         report['report_file'] = str(path)
     emit('BROWSE_' + str(users) + '_DIAGNOSTICS_OK', **report)
+    return report
 
 
 def validate_profile(outcome):
@@ -1315,6 +1336,13 @@ def validate_load(outcome, run_id, users, released, *, slower_ramp=False, durati
                 outcome.get('max_workload_attempts') == users * (duration // 2), 'HIGHER_STAGE_PACING_NOT_VERIFIED')
     if duration == 420:
         validate_profile(outcome)
+    if QUEUE_DEPTH_OBSERVATION_ONLY:
+        maximum = outcome.get('latency_ms', {}).get('max')
+        require(duration == 420 and users == 1000 and outcome.get('queue_stop_policy') == FULL_PROFILE_POLICY
+                and outcome.get('stop_requested') is False and outcome.get('first_failure') is None
+                and outcome['attempts'] >= users
+                and type(maximum) in (float, int) and math.isfinite(maximum) and 0 <= maximum < 2000,
+                'FULL_PROFILE_LATENCY_OR_POLICY_NOT_VERIFIED')
 
 
 def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_ramp=False, earlier_scaling=False,
@@ -1378,7 +1406,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
         run_id = uuid4().hex[:12]
         peak, released, last_database = 4 if prewarmed else 2, False, time.monotonic()
         samples, first_seen, resource_watch = {}, {}, trial.users.ResourceWatch()
-        waiting_watch = PoolWaitingWatch()
+        waiting_watch = PoolWaitingWatch(stop_on_depth=False) if QUEUE_DEPTH_OBSERVATION_ONLY else PoolWaitingWatch()
         metric_readiness = MetricReadiness()
         stage, primary_error, job_terminal = 'create_load_job', None, False
         try:
@@ -1489,6 +1517,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                         'resource_gate_released': released, 'peak_ready_replicas': peak,
                         'resources': resource_watch.summary(),
                         'hpa_metric_observations': metric_readiness.summary(),
+                        'queue_stop_policy': FULL_PROFILE_POLICY if QUEUE_DEPTH_OBSERVATION_ONLY else 'depth-10s-v1',
                         'pool_waiting_observations': waiting_watch.summary()})
                 time.sleep(5)
             stage = 'validate_completed_workload'
@@ -1522,6 +1551,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                  automatic_scale_up_tested=not prewarmed,
                  resources=resource_watch.summary(),
                  pool_waiting_observations=waiting_watch.summary(),
+                 queue_stop_policy=FULL_PROFILE_POLICY if QUEUE_DEPTH_OBSERVATION_ONLY else 'depth-10s-v1',
                  hpa_metric_observations=gaps,
                  latency_slo_tested=False, notification_delivery_configured=False)
         except (Exception, KeyboardInterrupt) as error:
@@ -1542,6 +1572,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                              'captured_utc': datetime.now(timezone.utc).isoformat(),
                              'stage': stage, 'peak_ready_replicas': peak,
                              'expected_queue_per_pod': EXPECTED_QUEUE.get(),
+                             'queue_stop_policy': FULL_PROFILE_POLICY if QUEUE_DEPTH_OBSERVATION_ONLY else 'depth-10s-v1',
                              'primary_failure': failure_details(primary_error) if primary_error is not None else None,
                              'resources': resource_watch.summary(),
                              'hpa_metric_observations': metric_readiness.summary(),
