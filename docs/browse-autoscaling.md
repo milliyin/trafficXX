@@ -1635,6 +1635,55 @@ single failed request.
 
 #### Temporary queue-32 comparison
 
+The recovered run `729adc848e73` recorded no increases in pool rejection,
+timeout or connection-error counters, with post-terminal coverage for all four
+instances. It still failed with `BackoffLimitExceeded`; no workload summary,
+retained pod exit details or observer audit survived. HTTP totals, participation,
+latency and seven-minute completion remain unknown. This is not a capacity pass.
+
+For the next comparison, use the distinct retained-evidence Job:
+
+```bash
+python3 scripts/browse-queue-comparison.py run-retained
+```
+
+This retains the same four warm pods, eight connections per pod, temporary
+queue 32, one-second validation interval, 120/180/120-second user profile and
+all existing stop/pass criteria. It builds/deploys the candidate and restores
+queue 16 and the two-pod minimum after a handled finish. The old Job is preserved.
+Allow roughly 15–25 minutes including build, metric warmup and recovery.
+
+Each run creates `browse-evidence-<run-id>` in namespace `trafficxx`: a ConfigMap,
+ServiceAccount, Role and RoleBinding. The generator has only `patch` permission
+on that exact ConfigMap, verifies API-server TLS, and writes progress at about
+five-second intervals plus its final summary. An initial evidence write must
+succeed before the resource gate can be used. Evidence writes are bounded to
+three seconds and fail the generator on error; API availability is therefore
+also a test dependency. No response bodies, email, SQL text or credentials are
+recorded. The controller also snapshots its resource/HPA/waiting observations
+and attempts to capture sanitized pod termination metadata before cleanup.
+
+The records have no Job owner or automatic expiry, so deleting a pod or losing
+Cloud Shell does not delete them. They are cluster-local evidence, not a backup
+or a guarantee that a hard-killed process publishes a final summary. A disconnect
+also interrupts the external observer: the last stored observation is partial,
+and a generator success alone cannot replace the continuous resource audit.
+Keep Cloud Shell open for the full workflow. Do not remove the record/RBAC until
+the report has been reviewed and exported.
+
+After a disconnect, inspect `browse-users-1000-queue32-retained` until terminal;
+then, from an authenticated fresh Cloud Shell, collect and restore separately:
+
+```bash
+python3 scripts/browse-queue-comparison.py diagnose-retained
+python3 scripts/browse-queue-comparison.py restore
+```
+
+Run restoration even if diagnostic capture fails. No new test starts in either
+command. Reads pin the record's run label, Job name and Job UID; identity mismatch
+is an error. An incomplete exception record or missing summary never becomes
+zero errors or a pass. Reusing the new fixed Job is refused as well.
+
 The next comparison gives short bursts 32 waiting slots per pod while keeping
 eight warm connections, the one-second check policy, four prewarmed pods and
 all existing failure/latency/resource criteria. More waiting room can increase

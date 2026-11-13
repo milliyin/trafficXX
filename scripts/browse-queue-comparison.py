@@ -163,10 +163,13 @@ def run():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('run', 'restore', 'diagnose'))
+    parser.add_argument('action', choices=('run', 'restore', 'diagnose', 'run-retained', 'diagnose-retained'))
     args = parser.parse_args()
+    if args.action.endswith('-retained'):
+        s.DURABLE_EVIDENCE = True
+        s.QUEUE32_PROFILE_JOB = 'browse-users-1000-queue32-retained'
     try:
-        if args.action == 'run':
+        if args.action in ('run', 'run-retained'):
             run()
         elif args.action == 'restore':
             restore()

@@ -27,6 +27,8 @@ def load(name):
 
 trial = load('run-browse-pool-comparison')
 base = trial.base
+evidence = load('browse_evidence')
+DURABLE_EVIDENCE = False
 F = '{job="trafficxx-browse-pool"}'
 M = 'trafficxx_browse_pool_'
 # Do not turn missing targets/fields into a zero-pressure downscale signal.
@@ -796,6 +798,7 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
     base.kube('apply', '-f', str(ROOT / 'kubernetes/checks/read-load-serviceaccount.yaml'))
     cm = base.kube('create', 'configmap', files, '-n', 'trafficxx',
         '--from-file=probe.py=' + str(ROOT / 'scripts/check-browse-autoscaling-load.py'),
+        '--from-file=browse_evidence.py=' + str(ROOT / 'scripts/browse_evidence.py'),
         '--from-file=read_probe.py=' + str(ROOT / 'scripts/check-read-load.py'), '--dry-run=client', '-o', 'json')
     base.kube('create', '-f', '-', data=cm)
     pods = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-l',
@@ -815,14 +818,43 @@ def create_job(app, run_id, job_name=JOB, *, users=250, slower_ramp=False, durat
                        + (['ramp-down'] if duration == 420 else [])}]
     manifest = base.kube('patch', '--local', '-f', str(ROOT / 'kubernetes/checks/browse-users.yaml'),
         '--type=json', '--patch', json.dumps(patch), '-o', 'json')
+    if DURABLE_EVIDENCE:
+        resource = evidence.prepare(base, run_id, job_name)
+        row = json.loads(manifest)
+        pod = row['spec']['template']['spec']
+        pod['serviceAccountName'] = resource
+        pod['automountServiceAccountToken'] = True
+        pod['containers'][0].setdefault('env', []).extend([
+            {'name': 'BROWSE_EVIDENCE_CONFIGMAP', 'value': resource},
+            {'name': 'BROWSE_EVIDENCE_RUN', 'value': run_id}])
+        manifest = json.dumps(row)
     try:
-        return json.loads(base.kube('create', '-f', '-', '-o', 'json', data=manifest))
+        candidate = json.loads(base.kube('create', '-f', '-', '-o', 'json', data=manifest))
     except subprocess.SubprocessError:
         # A lost create response is not proof that no workload was started.
         candidate = json.loads(base.kube('get', 'job', job_name, '-n', 'trafficxx', '-o', 'json'))
         require(candidate['metadata'].get('labels', {}).get('trafficxx.io/run-id') == run_id,
                 'AMBIGUOUS_JOB_OWNERSHIP')
-        return candidate
+    if DURABLE_EVIDENCE:
+        evidence.bind(base, candidate)
+        emit('BROWSE_EVIDENCE_CREATED', configmap=evidence.name(run_id), run_id=run_id,
+             note='Retained independently of the Job and Cloud Shell; no automatic deletion.')
+    return candidate
+
+
+def workload_logs(job, job_name=None):
+    if DURABLE_EVIDENCE:
+        try:
+            row = evidence.read(base, job, 'summary.json')
+        except ValueError as error:
+            if str(error) != 'EVIDENCE_RECORD_MISSING':
+                raise
+        else:
+            # An incomplete generator exception is evidence, never a pass.
+            require(row.get('run_id') == job['metadata']['labels']['trafficxx.io/run-id'],
+                    'EVIDENCE_IDENTITY_MISMATCH')
+            return json.dumps(row)
+    return base.kube('logs', '-n', 'trafficxx', 'job/' + (job_name or job['metadata']['name']), '-c', 'check')
 
 
 def idle_two(uid, query):
@@ -955,7 +987,12 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
         outcome = {}
     run_id = job['metadata'].get('labels', {}).get('trafficxx.io/run-id')
     require(isinstance(run_id, str) and re.fullmatch(r'[0-9a-f]{12}', run_id), 'DIAGNOSTIC_RUN_MISMATCH')
-    if isinstance(outcome, dict) and outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK'):
+    incomplete = (DURABLE_EVIDENCE and isinstance(outcome, dict)
+                  and outcome.get('result') == 'BROWSE_SCALING_LOAD_FAILED'
+                  and outcome.get('final_workload_summary_available') is False)
+    if incomplete:
+        require(outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
+    if not incomplete and isinstance(outcome, dict) and outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK'):
         require(outcome.get('users') == users and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
         return outcome
     # Missing summaries never establish workload counts or success. The queue
@@ -1068,6 +1105,12 @@ def observation_path(run_id):
 
 
 def saved_observation(job, run_id):
+    if DURABLE_EVIDENCE:
+        try:
+            return {'available': True, **evidence.read(base, job, 'observer.json')}
+        except ValueError as error:
+            if str(error) != 'EVIDENCE_RECORD_MISSING':
+                raise
     path = observation_path(run_id)
     if not path.exists():
         return {'available': False, 'note': 'No saved observer audit in this Cloud Shell workspace. '
@@ -1114,7 +1157,7 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     start, end, window = diagnostic_window(job)
     log_capture = {'available': True}
     try:
-        logs = base.kube('logs', '-n', 'trafficxx', 'job/' + name, '-c', 'check')
+        logs = workload_logs(job, name)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         if not (faster_scale_up or verify_waiting_samples or duration in (300, 420)):
             raise
@@ -1140,6 +1183,13 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     counter_when, counter_window = str(int(counter_end.timestamp())), window + 60
     with prometheus() as query:
         extra = {}
+        if DURABLE_EVIDENCE:
+            extra['retained_records'] = {}
+            for key in ('progress.json', 'summary.json', 'pod.json'):
+                try:
+                    extra['retained_records'][key] = evidence.read(base, job, key)
+                except Exception as error:
+                    extra['retained_records'][key] = {'available': False, **failure_details(error)}
         if outcome.get('result') == 'BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY':
             extra['retained_pod_evidence'] = failed_pod_evidence(job)
         counters = {}
@@ -1335,7 +1385,7 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                 job_terminal = bool(terminal & {'Complete', 'Failed'})
                 if 'Failed' in terminal:
                     stage = 'read_failed_load_logs'
-                    print(base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check'), flush=True)
+                    print(workload_logs(job, job_name), flush=True)
                 require('Failed' not in terminal, 'LOAD_JOB_FAILED')
                 # A completed generator no longer has live container usage.
                 # Validate its final workload evidence below, rather than
@@ -1403,9 +1453,17 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                     database_pressure()
                     last_database = time.monotonic()
                 require(time.monotonic() < deadline, 'LOAD_JOB_TIMEOUT')
+                if DURABLE_EVIDENCE:
+                    evidence.save(base, run_id, 'observer.json', {
+                        'run_id': run_id, 'job': job_name, 'job_uid': job['metadata']['uid'],
+                        'captured_utc': datetime.now(timezone.utc).isoformat(), 'stage': stage,
+                        'resource_gate_released': released, 'peak_ready_replicas': peak,
+                        'resources': resource_watch.summary(),
+                        'hpa_metric_observations': metric_readiness.summary(),
+                        'pool_waiting_observations': waiting_watch.summary()})
                 time.sleep(5)
             stage = 'validate_completed_workload'
-            logs = base.kube('logs', '-n', 'trafficxx', 'job/' + job_name, '-c', 'check')
+            logs = workload_logs(job, job_name)
             print(logs, flush=True)
             outcome = json.loads(logs.splitlines()[-1])
             validate_load(outcome, run_id, users, released, slower_ramp=slower_ramp, duration=duration)
@@ -1462,9 +1520,16 @@ def drill(*, retry_metric_gap=False, verification_run=False, users=250, slower_r
                              'note': 'Observed during this invocation; CPU/memory peaks are sampled. '
                                      'Local Cloud Shell file may be lost after a session reset.'}
                     path.write_text(json.dumps(audit, indent=2) + '\n', encoding='utf-8')
+                    if DURABLE_EVIDENCE:
+                        evidence.save(base, run_id, 'observer.json', audit)
                 except Exception:
                     emit('BROWSE_OBSERVER_AUDIT_UNAVAILABLE', run_id=run_id)
             if job is not None:
+                if DURABLE_EVIDENCE:
+                    try:
+                        evidence.save(base, run_id, 'pod.json', failed_pod_evidence(job))
+                    except Exception:
+                        emit('BROWSE_POD_EVIDENCE_UNAVAILABLE', run_id=run_id)
                 try:
                     cleanup = cleanup_load(job, job_name, terminal=job_terminal)
                     if primary_error is not None:

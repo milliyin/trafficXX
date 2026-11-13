@@ -2,6 +2,8 @@
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import json
+import importlib.util
+import os
 from pathlib import Path
 import re
 import sys
@@ -11,6 +13,14 @@ import time
 import read_probe as read
 
 URL = 'http://browse.trafficxx.svc.cluster.local'
+
+
+def publish(key, row):
+    if os.environ.get('BROWSE_EVIDENCE_CONFIGMAP'):
+        spec = importlib.util.spec_from_file_location('evidence', Path(__file__).with_name('browse_evidence.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.publish(key, row)
 
 
 def user_window(index, users=1000):
@@ -88,7 +98,13 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
                         sample = {'elapsed_seconds': round(elapsed, 3), 'phase': profile_phase(elapsed),
                                   'active_users': active, 'attempts': len(rows)}
                         progress.append(sample)
-                        print(json.dumps({'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample}), flush=True)
+                        record = {'result': 'BROWSE_USER_PROFILE_PROGRESS', 'run_id': run_id, **sample}
+                        print(json.dumps(record), flush=True)
+                        try:
+                            publish('progress.json', record)
+                        except Exception:
+                            stop.set()
+                            raise
             pause = min(think, max(0, user_deadline - time.monotonic())) if ramp_down else think
             if stop.wait(pause):
                 return
@@ -115,6 +131,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
                                      'latency_ms': read.percentiles([r[1] for r in rows if r[2] == phase])
                                          if any(r[2] == phase for r in rows) else {}}
                               for phase in ('ramp_up', 'hold', 'ramp_down')})
+    publish('summary.json', result)
     print(json.dumps(result), flush=True)
     return result
 
@@ -122,6 +139,7 @@ def run(run_id, *, duration=180, users=250, think=2, ramp_seconds=None, http=rea
 if __name__ == '__main__':
     try:
         deadline = time.monotonic() + 240
+        publish('progress.json', {'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES', 'run_id': sys.argv[1]})
         print(json.dumps({'result': 'BROWSE_SCALING_WAITING_FOR_RESOURCES'}), flush=True)
         while not Path('/state/start').exists():
             read.require(time.monotonic() < deadline, 'RESOURCE_GATE_TIMEOUT')
@@ -132,5 +150,11 @@ if __name__ == '__main__':
                      ramp_down=len(sys.argv) == 6 and sys.argv[5] == 'ramp-down')
         raise SystemExit(0 if result['result'] == 'BROWSE_SCALING_LOAD_OK' else 1)
     except Exception as error:
-        print(json.dumps({'result': 'BROWSE_SCALING_LOAD_FAILED', 'error_type': type(error).__name__}), flush=True)
+        failure = {'result': 'BROWSE_SCALING_LOAD_FAILED', 'run_id': sys.argv[1],
+                   'error_type': type(error).__name__, 'final_workload_summary_available': False}
+        try:
+            publish('summary.json', failure)
+        except Exception:
+            pass
+        print(json.dumps(failure), flush=True)
         raise SystemExit(1)
