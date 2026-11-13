@@ -798,6 +798,79 @@ class Scaling(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'INTERRUPTED_JOB_ARGUMENTS_MISMATCH'):
             scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
 
+    @staticmethod
+    def queue_backoff_job():
+        run_id = '729adc848e73'
+        return {'metadata': {'name': scaling.QUEUE32_PROFILE_JOB, 'uid': 'owned',
+                             'labels': {'trafficxx.io/run-id': run_id}},
+                'spec': {'template': {'spec': {'containers': [{'name': 'check',
+                    'args': [run_id, '1000', '120', '420', 'ramp-down']}]}}},
+                'status': {'startTime': '2026-11-09T19:30:00Z', 'conditions': [
+                    {'type': kind, 'status': 'True', 'reason': 'BackoffLimitExceeded',
+                     'lastTransitionTime': '2026-11-09T19:40:09Z'} for kind in ('FailureTarget', 'Failed')]}}
+
+    def test_queue_backoff_metadata_reports_unknown_workload_without_widening_other_jobs(self):
+        job = self.queue_backoff_job()
+        row = scaling.diagnostic_outcome(job, '', allow_interrupted=True, users=1000, duration=420)
+        self.assertEqual(row['result'], 'BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY')
+        self.assertEqual(row['job_failure_reason'], 'BackoffLimitExceeded')
+        self.assertFalse(row['final_workload_summary_available'])
+        self.assertTrue(all(k not in row for k in ('attempts', 'errors', 'status_counts', 'users_with_requests', 'latency_ms')))
+        for change in (
+                lambda j: j['metadata'].update(name=scaling.RECENT_CHECK_PROFILE_JOB),
+                lambda j: j['metadata']['labels'].update({'trafficxx.io/run-id': 'b' * 12}),
+                lambda j: j['spec']['template']['spec']['containers'][0]['args'].pop(),
+                lambda j: j['status'].update(conditions=[{'type': 'Complete', 'status': 'True'}]),
+                lambda j: j['status'].update(conditions=[{'type': 'Failed', 'status': 'True', 'reason': 'Other'}])):
+            wrong = deepcopy(job)
+            change(wrong)
+            with self.assertRaises(ValueError):
+                scaling.diagnostic_outcome(wrong, '', allow_interrupted=True, users=1000, duration=420)
+        with self.assertRaises(ValueError):
+            scaling.diagnostic_outcome(job, '', users=1000, duration=420)
+
+    def test_retained_pod_evidence_filters_owner_and_omits_raw_container_data(self):
+        job = self.queue_backoff_job()
+        def pod(uid, name):
+            return {'metadata': {'name': name, 'ownerReferences': [{'kind': 'Job', 'uid': uid, 'controller': True}]},
+                    'status': {'phase': 'Failed', 'containerStatuses': [{'name': 'check', 'state': {
+                        'terminated': {'reason': 'OOMKilled', 'exitCode': 137, 'message': 'PRIVATE'}}}]}}
+        payload = {'items': [pod('owned', 'owned-pod'), pod('foreign', 'foreign-pod')]}
+        with patch.object(scaling.base, 'kube', return_value=json.dumps(payload)) as kube:
+            evidence = scaling.failed_pod_evidence(job)
+        self.assertEqual(kube.call_args.args[:2], ('get', 'pods'))
+        self.assertTrue(evidence['terminated_container_found'])
+        self.assertEqual(evidence['skipped_foreign_owner_count'], 1)
+        self.assertEqual(evidence['pods'], [{'pod': 'owned-pod', 'phase': 'Failed',
+                                           'termination': {'reason': 'OOMKilled', 'exit_code': 137}}])
+        self.assertNotIn('PRIVATE', json.dumps(evidence))
+        with patch.object(scaling.base, 'kube', return_value='{"items": []}'):
+            self.assertFalse(scaling.failed_pod_evidence(job)['terminated_container_found'])
+        with patch.object(scaling.base, 'kube', side_effect=subprocess.CalledProcessError(
+                1, ['kubectl', 'get', 'pods'], stderr='PRIVATE')):
+            evidence = scaling.failed_pod_evidence(job)
+        self.assertFalse(evidence['query_succeeded'])
+        self.assertNotIn('PRIVATE', json.dumps(evidence))
+
+    def test_queue_backoff_capture_continues_read_only_when_logs_and_pods_are_missing(self):
+        job = self.queue_backoff_job()
+        def kube(*args):
+            self.assertIn(args[0], ('get', 'logs'))
+            if args[0] == 'logs':
+                raise subprocess.CalledProcessError(1, ['kubectl', 'logs'])
+            return json.dumps({'items': []} if args[1] == 'pods' else job)
+        with patch.object(scaling.trial, 'context'), patch.object(scaling.trial, 'no_active_load'), \
+                patch.object(scaling.base, 'kube', side_effect=kube), patch.object(scaling, 'prometheus') as connection, \
+                redirect_stdout(io.StringIO()) as output:
+            connection.return_value.__enter__.return_value = lambda _: []
+            scaling.diagnose_500(users=1000, duration=420, prewarmed=True, distribution=True, measured='queue32')
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['result'], 'BROWSE_1000_DIAGNOSTICS_OK')
+        self.assertEqual(row['workload']['result'], 'BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY')
+        self.assertFalse(row['workload_log_capture']['available'])
+        self.assertFalse(row['retained_pod_evidence']['terminated_container_found'])
+        self.assertIsNone(row['counter_increases']['queue_full_total'])
+
     def test_combined_database_window_is_historical_and_failure_redacted(self):
         start = datetime(2026, 11, 3, 16, 46, tzinfo=timezone.utc)
         end = start + timedelta(minutes=5)

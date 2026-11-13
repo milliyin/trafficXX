@@ -1683,6 +1683,37 @@ queue-specific restore command: it recovers both the marked prewarm minimum
 and the marked queue policy. Do not restart the comparison or delete its Job.
 The queue-32 outcome remains pending until actual Cloud Shell evidence arrives.
 
+The operator later confirmed that the preserved queue-32 Job had run label
+`729adc848e73`, exact arguments `[run-id,1000,120,420,ramp-down]`, and terminal
+`Failed=True` / `BackoffLimitExceeded` at 19:40:09 UTC on 9 November. Its logs
+were unavailable. This means the Job exhausted its allowed retries; it does
+not identify whether a workload check failed, the generator crashed, or a
+container was killed. Restoration had already reported queue 16, two ready
+pods and eight connections each.
+
+The earlier diagnostic fallback admitted only `DeadlineExceeded`, causing
+`DIAGNOSTIC_RUN_MISMATCH` for this saved Job. It now also captures the exact
+queue-32 profile with terminal `BackoffLimitExceeded` after the same fixed
+name, run-label and argument checks. Other profiles retain their previous
+fallback rules. This produces `BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY`
+with the Job reason; it cannot establish request counts, HTTP errors,
+participation, latency, phase completion or workload success.
+
+After pulling the helper correction, rerun only the read-only capture:
+
+```bash
+git pull --ff-only origin main &&
+python3 scripts/browse-queue-comparison.py diagnose
+```
+
+The report attempts to include retained `check` container exit codes/reasons,
+filtered by the exact Job owner UID. Missing pods or unavailable metadata
+remain explicit; raw container messages, environment and logs are omitted.
+Queue and database metrics still use the Job's historical window and the
+post-terminal scrape coverage checks. Diagnostic capture success is separate
+from the failed Job result. This helper correction needs no application build,
+rollout or new load, and the prior successful restoration needs no repeat.
+
 For a new instrumented measurement trial, the entire release/test/report
 sequence is available as one Cloud Shell command:
 

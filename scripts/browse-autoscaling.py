@@ -958,27 +958,70 @@ def diagnostic_outcome(job, logs, *, allow_interrupted=False, users=500, duratio
     if isinstance(outcome, dict) and outcome.get('result') in ('BROWSE_SCALING_LOAD_FAILED', 'BROWSE_SCALING_LOAD_OK'):
         require(outcome.get('users') == users and outcome.get('run_id') == run_id, 'DIAGNOSTIC_RUN_MISMATCH')
         return outcome
-    # Our stop shortens the deadline while retaining logs. Admit missing final
-    # summaries only for reviewed, deadline-stopped Jobs with exact args.
+    # Missing summaries never establish workload counts or success. The queue
+    # comparison also permits its confirmed retry-limit failure for capture.
     allowed_names = (('browse-users-500-autoscaling-step30', 'browse-users-500-autoscaling-sourcewait')
                      if users == 500 and duration == 180 else
                      ('browse-users-1000-autoscaling-5m', 'browse-users-1000-prewarmed-5m')
                      if users == 1000 and duration == 300 else
                      ('browse-users-1000-autocommit-profile', MEASURED_PROFILE_JOB, RECENT_CHECK_PROFILE_JOB,
                       RECENT_CHECK_VERIFY_JOB, QUEUE32_PROFILE_JOB) if users == 1000 and duration == 420 else ())
+    failed_reasons = {c.get('reason') for c in job.get('status', {}).get('conditions', [])
+                      if c.get('type') == 'Failed' and c.get('status') == 'True'}
+    queue_backoff = (users == 1000 and duration == 420 and job['metadata'].get('name') == QUEUE32_PROFILE_JOB
+                     and failed_reasons == {'BackoffLimitExceeded'})
     require(allow_interrupted and job['metadata'].get('name') in allowed_names
-            and any(c.get('type') == 'Failed' and c.get('status') == 'True' and c.get('reason') == 'DeadlineExceeded'
-                    for c in job.get('status', {}).get('conditions', [])), 'DIAGNOSTIC_RUN_MISMATCH')
+            and (failed_reasons == {'DeadlineExceeded'} or queue_backoff), 'DIAGNOSTIC_RUN_MISMATCH')
     containers = job.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
     require(len(containers) == 1 and containers[0].get('name') == 'check'
             and containers[0].get('args') == [run_id, str(users), '120']
                 + ([str(duration)] if duration in (300, 420) else [])
                 + (['ramp-down'] if duration == 420 else []),
             'INTERRUPTED_JOB_ARGUMENTS_MISMATCH')
-    return {'result': 'BROWSE_SCALING_WORKLOAD_INTERRUPTED', 'run_id': run_id,
+    return {'result': 'BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY' if queue_backoff else 'BROWSE_SCALING_WORKLOAD_INTERRUPTED', 'run_id': run_id,
             'users': users, 'start_ramp_seconds': 120, 'scheduled_duration_seconds': duration,
             'max_workload_attempts': users * (duration // 2), 'final_workload_summary_available': False,
-            'note': 'Deadline-stopped Job without a final summary. HTTP counts, errors and participation are unknown.'}
+            **({'job_failure_reason': 'BackoffLimitExceeded'} if queue_backoff else {}),
+            'note': ('Job failed at its retry limit; the workload cause is unknown. ' if queue_backoff else
+                     'Deadline-stopped Job without a final summary. ') +
+                    'HTTP counts, errors and participation are unknown.'}
+
+
+def failed_pod_evidence(job):
+    """Optional retained container evidence, filtered by the exact Job owner UID."""
+    try:
+        payload = json.loads(base.kube('get', 'pods', '-n', 'trafficxx', '-l',
+                                      'job-name=' + job['metadata']['name'], '-o', 'json'))
+        require(isinstance(payload.get('items'), list) and len(payload['items']) <= 16,
+                'UNEXPECTED_DIAGNOSTIC_POD_COUNT')
+        pods, skipped = [], 0
+        for pod in payload['items']:
+            if not any(owner.get('uid') == job['metadata']['uid'] and owner.get('kind') == 'Job'
+                       and owner.get('controller') is True
+                       for owner in pod.get('metadata', {}).get('ownerReferences', [])):
+                skipped += 1
+                continue
+            name = pod['metadata']['name']
+            require(re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', name) is not None, 'INVALID_DIAGNOSTIC_POD_NAME')
+            statuses = [r for r in pod.get('status', {}).get('containerStatuses', []) if r.get('name') == 'check']
+            require(len(statuses) <= 1, 'UNEXPECTED_CHECK_CONTAINER_COUNT')
+            terminated = statuses[0].get('state', {}).get('terminated') if statuses else None
+            evidence = None
+            if terminated is not None:
+                code = terminated.get('exitCode')
+                require(type(code) is int and 0 <= code <= 255, 'INVALID_DIAGNOSTIC_EXIT_CODE')
+                reason = terminated.get('reason')
+                evidence = {'exit_code': code, 'reason': reason if reason in (
+                    'OOMKilled', 'Error', 'Completed', 'ContainerCannotRun', 'StartError', 'DeadlineExceeded') else 'Other'}
+            phase = pod.get('status', {}).get('phase')
+            pods.append({'pod': name, 'phase': phase if phase in (
+                'Pending', 'Running', 'Succeeded', 'Failed', 'Unknown') else None, 'termination': evidence})
+        return {'query_succeeded': True, 'pods': pods, 'skipped_foreign_owner_count': skipped,
+                'terminated_container_found': any(p['termination'] is not None for p in pods),
+                'note': 'Retained check-container metadata only. Missing pods do not prove an exit reason or HTTP result. '
+                        'Raw container messages, logs and environment are omitted.'}
+    except Exception as error:
+        return {'query_succeeded': False, **failure_details(error)}
 
 
 def timing_diagnostics(query, window, when):
@@ -1097,6 +1140,8 @@ def diagnose_500(*, slower_ramp=False, earlier_scaling=False, verify_early=False
     counter_when, counter_window = str(int(counter_end.timestamp())), window + 60
     with prometheus() as query:
         extra = {}
+        if outcome.get('result') == 'BROWSE_SCALING_WORKLOAD_FAILED_WITHOUT_SUMMARY':
+            extra['retained_pod_evidence'] = failed_pod_evidence(job)
         counters = {}
         for field in ('queue_full_total', 'acquire_timeouts_total', 'closed_rejections_total',
                       'borrow_errors_total', 'connection_errors_total', 'connections_lost_total', 'bad_returns_total'):
